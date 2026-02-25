@@ -330,7 +330,7 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
 export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
-  const [panelExpanded, setPanelExpanded] = useState(true);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("assets");
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
@@ -645,6 +645,26 @@ export default function Home() {
     }
   }, [selectedCandles, selectedSymbol, selectedTimeframe]);
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    const container = chartContainerRef.current;
+
+    if (!chart || !container) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      chart.applyOptions({
+        width: Math.floor(container.clientWidth),
+        height: Math.floor(container.clientHeight)
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [panelExpanded, activePanelTab]);
+
   return (
     <main className="terminal">
       <header className="topbar">
@@ -709,7 +729,7 @@ export default function Home() {
           <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
         </section>
 
-        <aside className="side-panel">
+        <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
           <nav className="panel-rail" aria-label="sidebar tabs">
             {sidebarTabs.map((tab) => (
               <button
@@ -717,6 +737,11 @@ export default function Home() {
                 type="button"
                 className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}`}
                 onClick={() => {
+                  if (panelExpanded && activePanelTab === tab.id) {
+                    setPanelExpanded(false);
+                    return;
+                  }
+
                   setActivePanelTab(tab.id);
                   setPanelExpanded(true);
                 }}
@@ -726,18 +751,6 @@ export default function Home() {
                 <TabIcon tab={tab.id} />
               </button>
             ))}
-
-            {panelExpanded ? (
-              <button
-                type="button"
-                className="rail-btn rail-collapse"
-                onClick={() => setPanelExpanded(false)}
-                title="Collapse panel"
-                aria-label="Collapse panel"
-              >
-                <span>‹</span>
-              </button>
-            ) : null}
           </nav>
 
           {panelExpanded ? (

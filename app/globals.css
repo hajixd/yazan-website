@@ -141,6 +141,7 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 350px;
+  position: relative;
 }
 
 .workspace.panel-collapsed {
@@ -153,6 +154,8 @@ button {
   display: grid;
   grid-template-rows: 34px 1fr;
   border-right: 1px solid var(--line);
+  position: relative;
+  z-index: 1;
 }
 
 .chart-toolbar {
@@ -187,19 +190,22 @@ button {
   min-height: 0;
   height: 100%;
   background: #090d13;
+  overflow: hidden;
 }
 
 .side-panel {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 52px;
   background: var(--bg-elev);
+  position: relative;
+  z-index: 3;
 }
 
 .panel-rail {
-  border-left: 1px solid var(--line);
-  border-right: 1px solid var(--line-soft);
+  grid-column: 2;
+  border-left: 1px solid var(--line-soft);
   background: #0b1017;
   display: flex;
   flex-direction: column;
@@ -241,16 +247,14 @@ button {
   background: rgba(45, 108, 255, 0.14);
 }
 
-.rail-btn.rail-collapse {
-  margin-top: auto;
-  color: #b4bfd6;
-}
-
 .panel-content {
+  grid-column: 1;
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  border-left: 1px solid var(--line);
+  background: var(--bg-elev);
 }
 
 .tab-view {
@@ -451,17 +455,18 @@ button {
   }
 
   .panel-rail {
+    grid-column: 1;
     border-left: 0;
-    border-right: 0;
     border-bottom: 1px solid var(--line-soft);
     flex-direction: row;
     justify-content: flex-start;
     padding: 0.42rem 0.58rem;
   }
 
-  .rail-btn.rail-collapse {
-    margin-top: 0;
-    margin-left: auto;
+  .panel-content {
+    grid-column: 1;
+    border-left: 0;
+    border-top: 1px solid var(--line-soft);
   }
 }
 
