@@ -1,12 +1,18 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent
-} from "react";
+  ColorType,
+  CrosshairMode,
+  createChart,
+  type CandlestickData,
+  type HistogramData,
+  type IChartApi,
+  type ISeriesApi,
+  type MouseEventParams,
+  type Time,
+  type UTCTimestamp
+} from "lightweight-charts";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -26,13 +32,6 @@ type Candle = {
   low: number;
   volume: number;
   time: number;
-};
-
-type HoverState = {
-  x: number;
-  y: number;
-  index: number;
-  height: number;
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -141,20 +140,16 @@ const timeframeVolatility: Record<Timeframe, number> = {
 };
 
 const timeframeVisibleCount: Record<Timeframe, number> = {
-  "1m": 140,
-  "5m": 125,
-  "15m": 110,
-  "1H": 95,
-  "4H": 84,
-  "1D": 72,
-  "1W": 60
+  "1m": 150,
+  "5m": 130,
+  "15m": 115,
+  "1H": 100,
+  "4H": 88,
+  "1D": 74,
+  "1W": 62
 };
 
 const REFERENCE_TS = Date.UTC(2026, 1, 25, 0, 0, 0);
-
-const clamp = (value: number, min: number, max: number) => {
-  return Math.max(min, Math.min(max, value));
-};
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
@@ -205,35 +200,33 @@ const formatPrice = (value: number): string => {
   });
 };
 
-const formatTimeLabel = (timestamp: number, timeframe: Timeframe): string => {
-  const d = new Date(timestamp);
-  const hour = d.getUTCHours().toString().padStart(2, "0");
-  const minute = d.getUTCMinutes().toString().padStart(2, "0");
+const toUtcTimestamp = (ms: number): UTCTimestamp => {
+  return Math.floor(ms / 1000) as UTCTimestamp;
+};
 
-  if (timeframe === "1D" || timeframe === "1W") {
-    return d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC"
-    });
+const parseTimeFromCrosshair = (time: Time): number | null => {
+  if (typeof time === "number") {
+    return time;
   }
 
-  if (timeframe === "1H" || timeframe === "4H") {
-    return `${d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC"
-    })} ${hour}:00`;
+  if (typeof time === "string") {
+    const parsed = Date.parse(time);
+
+    return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
   }
 
-  return `${hour}:${minute}`;
+  if ("year" in time) {
+    return Math.floor(Date.UTC(time.year, time.month - 1, time.day) / 1000);
+  }
+
+  return null;
 };
 
 const generateFakeCandles = (
   basePrice: number,
   symbol: string,
   timeframe: Timeframe,
-  count = 320
+  count = 340
 ): Candle[] => {
   const series: Candle[] = [];
   const timeframeMs = timeframeMinutes[timeframe] * 60_000;
@@ -247,19 +240,17 @@ const generateFakeCandles = (
 
   for (let i = 0; i < count; i += 1) {
     const open = close;
-    const wave = Math.sin(i / 12 + phaseA) * volatility * 1.2;
-    const secondaryWave = Math.cos(i / 25 + phaseB) * volatility * 0.7;
-    const noise = (rand() - 0.5) * volatility * 1.8;
-    const drift = wave + secondaryWave + noise;
+    const wave = Math.sin(i / 11 + phaseA) * volatility * 1.15;
+    const secondary = Math.cos(i / 24 + phaseB) * volatility * 0.7;
+    const noise = (rand() - 0.5) * volatility * 1.75;
+    const drift = wave + secondary + noise;
 
     close = Math.max(0.000001, open * (1 + drift));
 
-    const wickUp = 1 + rand() * volatility * 0.9;
-    const wickDown = 1 - rand() * volatility * 0.9;
-    const high = Math.max(open, close) * wickUp;
-    const low = Math.max(0.000001, Math.min(open, close) * wickDown);
+    const high = Math.max(open, close) * (1 + rand() * volatility * 0.85);
+    const low = Math.max(0.000001, Math.min(open, close) * (1 - rand() * volatility * 0.85));
     const bodyRatio = Math.abs(close - open) / Math.max(open, 0.000001);
-    const volume = (40 + rand() * 110) * (1 + bodyRatio * 75);
+    const volume = (35 + rand() * 120) * (1 + bodyRatio * 75);
 
     series.push({
       open,
@@ -274,13 +265,15 @@ const generateFakeCandles = (
   return series;
 };
 
-const getAssetBySymbol = (symbol: string) => {
+const getAssetBySymbol = (symbol: string): FutureAsset => {
   return futuresAssets.find((asset) => asset.symbol === symbol) ?? futuresAssets[0];
 };
 
 export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
+  const [panelExpanded, setPanelExpanded] = useState(true);
+  const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
 
@@ -291,67 +284,40 @@ export default function Home() {
 
     return initial;
   });
-  const [visibleCount, setVisibleCount] = useState(timeframeVisibleCount["15m"]);
-  const [panOffset, setPanOffset] = useState(0);
-  const [hoverState, setHoverState] = useState<HoverState | null>(null);
-  const dragRef = useRef({
-    isDragging: false,
-    pointerId: -1,
-    startX: 0,
-    startOffset: 0
-  });
-  const liveStepRef = useRef(0);
+
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const selectionRef = useRef<string>("");
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
 
-  useEffect(() => {
-    setSeriesMap((prev) => {
-      const next = { ...prev };
-      let changed = false;
-
-      for (const asset of futuresAssets) {
-        const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-
-        if (!next[key]) {
-          next[key] = generateFakeCandles(asset.basePrice, asset.symbol, selectedTimeframe);
-          changed = true;
-        }
-      }
-
-      return changed ? next : prev;
-    });
-
-    setVisibleCount(timeframeVisibleCount[selectedTimeframe]);
-    setPanOffset(0);
-    setHoverState(null);
-  }, [selectedTimeframe]);
+  const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   useEffect(() => {
-    const key = symbolTimeframeKey(selectedAsset.symbol, selectedTimeframe);
-
     setSeriesMap((prev) => {
-      if (prev[key]) {
+      if (prev[selectedKey]) {
         return prev;
       }
 
       return {
         ...prev,
-        [key]: generateFakeCandles(
+        [selectedKey]: generateFakeCandles(
           selectedAsset.basePrice,
-          selectedAsset.symbol,
+          selectedSymbol,
           selectedTimeframe
         )
       };
     });
 
-    setPanOffset(0);
-    setHoverState(null);
-  }, [selectedAsset.basePrice, selectedAsset.symbol, selectedTimeframe]);
+    setHoveredTime(null);
+  }, [selectedAsset.basePrice, selectedKey, selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
-    const key = symbolTimeframeKey(selectedAsset.symbol, selectedTimeframe);
+    const key = selectedKey;
 
     const timer = window.setInterval(() => {
       setSeriesMap((prev) => {
@@ -366,9 +332,7 @@ export default function Home() {
         const volatility = timeframeVolatility[selectedTimeframe];
         const drift = (Math.random() - 0.5) * volatility * 1.7;
 
-        liveStepRef.current += 1;
-
-        if (liveStepRef.current % 5 === 0) {
+        if (Math.random() > 0.72) {
           const open = last.close;
           const close = Math.max(0.000001, open * (1 + drift));
           const high = Math.max(open, close) * (1 + Math.random() * volatility * 0.8);
@@ -376,18 +340,17 @@ export default function Home() {
             0.000001,
             Math.min(open, close) * (1 - Math.random() * volatility * 0.8)
           );
-          const volume = Math.max(10, last.volume * (0.75 + Math.random() * 0.9));
 
           nextSeries.push({
             open,
             close,
             high,
             low,
-            volume,
+            volume: Math.max(12, last.volume * (0.7 + Math.random() * 0.95)),
             time: last.time + timeframeMinutes[selectedTimeframe] * 60_000
           });
 
-          if (nextSeries.length > 360) {
+          if (nextSeries.length > 420) {
             nextSeries.shift();
           }
         } else {
@@ -395,7 +358,7 @@ export default function Home() {
           last.close = close;
           last.high = Math.max(last.high, close, last.open);
           last.low = Math.max(0.000001, Math.min(last.low, close, last.open));
-          last.volume = last.volume * (1 + Math.random() * 0.12);
+          last.volume = last.volume * (1 + Math.random() * 0.13);
           nextSeries[nextSeries.length - 1] = last;
         }
 
@@ -404,95 +367,42 @@ export default function Home() {
           [key]: nextSeries
         };
       });
-    }, 1400);
+    }, 1450);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [selectedAsset.symbol, selectedTimeframe]);
+  }, [selectedKey, selectedTimeframe]);
 
-  const selectedKey = symbolTimeframeKey(selectedAsset.symbol, selectedTimeframe);
   const fallbackCandles = useMemo(() => {
-    return generateFakeCandles(selectedAsset.basePrice, selectedAsset.symbol, selectedTimeframe);
-  }, [selectedAsset.basePrice, selectedAsset.symbol, selectedTimeframe]);
+    return generateFakeCandles(selectedAsset.basePrice, selectedSymbol, selectedTimeframe);
+  }, [selectedAsset.basePrice, selectedSymbol, selectedTimeframe]);
 
-  const candles = seriesMap[selectedKey] ?? fallbackCandles;
-  const boundedVisibleCount = clamp(visibleCount, 24, Math.max(24, candles.length));
-  const maxPanOffset = Math.max(0, candles.length - boundedVisibleCount);
-  const safePanOffset = clamp(panOffset, 0, maxPanOffset);
+  const selectedCandles = seriesMap[selectedKey] ?? fallbackCandles;
 
-  useEffect(() => {
-    setPanOffset((prev) => clamp(prev, 0, maxPanOffset));
-  }, [maxPanOffset]);
+  const candleByUnix = useMemo(() => {
+    const map = new Map<number, Candle>();
 
-  const start = Math.max(0, candles.length - boundedVisibleCount - safePanOffset);
-  const visibleCandles = candles.slice(start, start + boundedVisibleCount);
-  const slotWidth = 100 / Math.max(visibleCandles.length, 1);
-  const candleWidthPx = Math.max(3, Math.min(8, 560 / Math.max(visibleCandles.length, 1)));
-
-  const visibleMaxPrice = Math.max(...visibleCandles.map((candle) => candle.high));
-  const visibleMinPrice = Math.min(...visibleCandles.map((candle) => candle.low));
-  const rawRange = Math.max(visibleMaxPrice - visibleMinPrice, visibleMaxPrice * 0.002);
-  const padding = Math.max(rawRange * 0.15, visibleMaxPrice * 0.001);
-  const chartMax = visibleMaxPrice + padding;
-  const chartMin = Math.max(0.000001, visibleMinPrice - padding);
-  const chartRange = Math.max(chartMax - chartMin, 0.000001);
-  const maxVolume = Math.max(...visibleCandles.map((candle) => candle.volume), 1);
-
-  const yAxisLevels = Array.from({ length: 8 }, (_, index) => {
-    return chartMax - ((chartMax - chartMin) * index) / 7;
-  });
-
-  const xAxisTicks = useMemo(() => {
-    const ticks: Array<{ left: number; label: string }> = [];
-    const count = visibleCandles.length;
-
-    if (count === 0) {
-      return ticks;
+    for (const candle of selectedCandles) {
+      map.set(toUtcTimestamp(candle.time), candle);
     }
 
-    const step = Math.max(1, Math.floor(count / 7));
+    return map;
+  }, [selectedCandles]);
 
-    for (let i = 0; i < count; i += step) {
-      ticks.push({
-        left: ((i + 0.5) / count) * 100,
-        label: formatTimeLabel(visibleCandles[i].time, selectedTimeframe)
-      });
-    }
+  const latestCandle = selectedCandles[selectedCandles.length - 1];
+  const previousCandle = selectedCandles[selectedCandles.length - 2] ?? latestCandle;
 
-    const lastIndex = count - 1;
-    const lastLeft = ((lastIndex + 0.5) / count) * 100;
-
-    if (ticks[ticks.length - 1]?.left !== lastLeft) {
-      ticks.push({
-        left: lastLeft,
-        label: formatTimeLabel(visibleCandles[lastIndex].time, selectedTimeframe)
-      });
-    }
-
-    return ticks;
-  }, [selectedTimeframe, visibleCandles]);
-
-  const hoveredCandle =
-    hoverState && visibleCandles[hoverState.index]
-      ? visibleCandles[hoverState.index]
-      : visibleCandles[visibleCandles.length - 1];
-
-  const hoverPrice =
-    hoverState && hoverState.height > 0
-      ? chartMax - (hoverState.y / hoverState.height) * chartRange
-      : null;
-
-  const hoveredChangePct =
-    hoveredCandle && hoveredCandle.open > 0
-      ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
+  const quoteChange =
+    previousCandle.close > 0
+      ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : 0;
 
-  const latestCandle = candles[candles.length - 1];
-  const prevCandle = candles[candles.length - 2] ?? latestCandle;
-  const quoteChangePct =
-    prevCandle && prevCandle.close > 0
-      ? ((latestCandle.close - prevCandle.close) / prevCandle.close) * 100
+  const hoveredCandle = hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
+
+  const hoveredChange =
+    hoveredCandle.open > 0
+      ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : 0;
 
   const watchlistRows = useMemo(() => {
@@ -512,30 +422,169 @@ export default function Home() {
     });
   }, [selectedTimeframe, seriesMap]);
 
-  const handlePlotPointerMove = (event: ReactPointerEvent<HTMLDivElement>, allowPan: boolean) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const localX = clamp(event.clientX - rect.left, 0, rect.width);
-    const localY = clamp(event.clientY - rect.top, 0, rect.height);
-    const index = clamp(
-      Math.floor((localX / Math.max(rect.width, 1)) * visibleCandles.length),
-      0,
-      Math.max(visibleCandles.length - 1, 0)
-    );
+  useEffect(() => {
+    const container = chartContainerRef.current;
 
-    if (allowPan && dragRef.current.isDragging && dragRef.current.pointerId === event.pointerId) {
-      const pixelPerCandle = Math.max(rect.width / Math.max(visibleCandles.length, 1), 2);
-      const shift = Math.round((event.clientX - dragRef.current.startX) / pixelPerCandle);
-      const nextOffset = clamp(dragRef.current.startOffset + shift, 0, maxPanOffset);
-      setPanOffset(nextOffset);
+    if (!container || chartRef.current) {
+      return;
     }
 
-    setHoverState({
-      x: localX,
-      y: localY,
-      index,
-      height: rect.height
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: container.clientHeight,
+      layout: {
+        background: { type: ColorType.Solid, color: "#090d13" },
+        textColor: "#7f889d"
+      },
+      grid: {
+        vertLines: { visible: false },
+        horzLines: { visible: false }
+      },
+      rightPriceScale: {
+        borderVisible: true,
+        borderColor: "#182131"
+      },
+      leftPriceScale: {
+        visible: false
+      },
+      timeScale: {
+        borderVisible: true,
+        borderColor: "#182131",
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 3
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: "rgba(198, 208, 228, 0.28)",
+          width: 1,
+          style: 3,
+          labelBackgroundColor: "#141c2a"
+        },
+        horzLine: {
+          color: "rgba(198, 208, 228, 0.28)",
+          width: 1,
+          style: 3,
+          labelBackgroundColor: "#141c2a"
+        }
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true
+      }
     });
-  };
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: "#1bae8a",
+      downColor: "#f0455a",
+      wickUpColor: "#1bae8a",
+      wickDownColor: "#f0455a",
+      borderUpColor: "#1bae8a",
+      borderDownColor: "#f0455a",
+      priceLineVisible: false,
+      lastValueVisible: true
+    });
+
+    const volumeSeries = chart.addHistogramSeries({
+      priceFormat: {
+        type: "volume"
+      },
+      priceScaleId: "",
+      lastValueVisible: false,
+      priceLineVisible: false
+    });
+
+    chart.priceScale("").applyOptions({
+      scaleMargins: {
+        top: 0.76,
+        bottom: 0
+      }
+    });
+
+    const onCrosshairMove = (param: MouseEventParams<Time>) => {
+      if (!param.point || !param.time) {
+        setHoveredTime(null);
+        return;
+      }
+
+      setHoveredTime(parseTimeFromCrosshair(param.time));
+    };
+
+    chart.subscribeCrosshairMove(onCrosshairMove);
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+
+      if (!entry) {
+        return;
+      }
+
+      chart.applyOptions({
+        width: Math.floor(entry.contentRect.width),
+        height: Math.floor(entry.contentRect.height)
+      });
+    });
+
+    resizeObserver.observe(container);
+
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+
+    if (!chart || !candleSeries || !volumeSeries || selectedCandles.length === 0) {
+      return;
+    }
+
+    const candleData: CandlestickData[] = selectedCandles.map((candle) => ({
+      time: toUtcTimestamp(candle.time),
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close
+    }));
+
+    const volumeData: HistogramData[] = selectedCandles.map((candle) => ({
+      time: toUtcTimestamp(candle.time),
+      value: candle.volume,
+      color: candle.close >= candle.open ? "rgba(27, 174, 138, 0.75)" : "rgba(240, 69, 90, 0.75)"
+    }));
+
+    candleSeries.setData(candleData);
+    volumeSeries.setData(volumeData);
+
+    const selection = `${selectedSymbol}-${selectedTimeframe}`;
+
+    if (selectionRef.current !== selection) {
+      const to = candleData.length - 1;
+      const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
+
+      chart.timeScale().setVisibleLogicalRange({ from, to });
+      selectionRef.current = selection;
+    }
+  }, [selectedCandles, selectedSymbol, selectedTimeframe]);
 
   return (
     <main className="terminal">
@@ -548,53 +597,48 @@ export default function Home() {
           </div>
           <div className="live-quote">
             <span>${formatPrice(latestCandle.close)}</span>
-            <span className={quoteChangePct >= 0 ? "up" : "down"}>
-              {quoteChangePct >= 0 ? "+" : ""}
-              {quoteChangePct.toFixed(2)}%
+            <span className={quoteChange >= 0 ? "up" : "down"}>
+              {quoteChange >= 0 ? "+" : ""}
+              {quoteChange.toFixed(2)}%
             </span>
           </div>
         </div>
 
-        <nav className="timeframe-row" aria-label="timeframes">
-          {timeframes.map((timeframe) => (
-            <button
-              key={timeframe}
-              type="button"
-              className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
-              onClick={() => setSelectedTimeframe(timeframe)}
-            >
-              {timeframe}
-            </button>
-          ))}
-        </nav>
+        <div className="top-controls">
+          <nav className="timeframe-row" aria-label="timeframes">
+            {timeframes.map((timeframe) => (
+              <button
+                key={timeframe}
+                type="button"
+                className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
+                onClick={() => setSelectedTimeframe(timeframe)}
+              >
+                {timeframe}
+              </button>
+            ))}
+          </nav>
+          <span className="site-tag">yazan.trades</span>
+        </div>
       </header>
 
-      <section className="workspace">
-        <aside className="left-tools" aria-label="chart tools">
-          {["+", "x", "T", "R", "L", "M", "P", "F"].map((tool, index) => (
-            <button type="button" key={`${tool}-${index}`} className="tool-btn" title="Tool">
-              {tool}
-            </button>
-          ))}
-        </aside>
-
+      <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
         <section className="chart-wrap">
           <div className="chart-toolbar">
             <span>
-              O <strong>{formatPrice(hoveredCandle?.open ?? latestCandle.open)}</strong>
+              O <strong>{formatPrice(hoveredCandle.open)}</strong>
             </span>
             <span>
-              H <strong>{formatPrice(hoveredCandle?.high ?? latestCandle.high)}</strong>
+              H <strong>{formatPrice(hoveredCandle.high)}</strong>
             </span>
             <span>
-              L <strong>{formatPrice(hoveredCandle?.low ?? latestCandle.low)}</strong>
+              L <strong>{formatPrice(hoveredCandle.low)}</strong>
             </span>
             <span>
-              C <strong>{formatPrice(hoveredCandle?.close ?? latestCandle.close)}</strong>
+              C <strong>{formatPrice(hoveredCandle.close)}</strong>
             </span>
-            <span className={hoveredChangePct >= 0 ? "up" : "down"}>
-              {hoveredChangePct >= 0 ? "+" : ""}
-              {hoveredChangePct.toFixed(2)}%
+            <span className={hoveredChange >= 0 ? "up" : "down"}>
+              {hoveredChange >= 0 ? "+" : ""}
+              {hoveredChange.toFixed(2)}%
             </span>
             <span>
               Funding <strong>{selectedAsset.funding}</strong>
@@ -602,183 +646,77 @@ export default function Home() {
             <span>
               OI <strong>{selectedAsset.openInterest}</strong>
             </span>
-            <span className="chart-hint">Drag: pan | Wheel: zoom</span>
+            <span className="chart-hint">Scroll: zoom | Drag: pan</span>
           </div>
-
-          <div className="chart-surface">
-            <div className="plot-axis-wrap">
-              <div
-                className="plot"
-                onWheel={(event) => {
-                  event.preventDefault();
-                  const direction = event.deltaY > 0 ? 1 : -1;
-
-                  setVisibleCount((prev) => {
-                    return clamp(prev + direction * 6, 24, 240);
-                  });
-                }}
-                onPointerDown={(event) => {
-                  dragRef.current = {
-                    isDragging: true,
-                    pointerId: event.pointerId,
-                    startX: event.clientX,
-                    startOffset: safePanOffset
-                  };
-
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  handlePlotPointerMove(event, false);
-                }}
-                onPointerMove={(event) => {
-                  handlePlotPointerMove(event, true);
-                }}
-                onPointerUp={(event) => {
-                  if (dragRef.current.pointerId === event.pointerId) {
-                    dragRef.current.isDragging = false;
-                    dragRef.current.pointerId = -1;
-                  }
-
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }}
-                onPointerLeave={() => {
-                  if (!dragRef.current.isDragging) {
-                    setHoverState(null);
-                  }
-                }}
-                onPointerCancel={() => {
-                  dragRef.current.isDragging = false;
-                  dragRef.current.pointerId = -1;
-                }}
-              >
-                <div className="candles-layer">
-                  {visibleCandles.map((candle, index) => {
-                    const isUp = candle.close >= candle.open;
-                    const highTop = ((chartMax - candle.high) / chartRange) * 100;
-                    const lowTop = ((chartMax - candle.low) / chartRange) * 100;
-                    const openTop = ((chartMax - candle.open) / chartRange) * 100;
-                    const closeTop = ((chartMax - candle.close) / chartRange) * 100;
-                    const bodyTop = Math.min(openTop, closeTop);
-                    const bodyHeight = Math.max(1.2, Math.abs(closeTop - openTop));
-                    const wickHeight = Math.max(1.2, lowTop - highTop);
-                    const left = (index + 0.5) * slotWidth;
-
-                    return (
-                      <div
-                        key={`${candle.time}-${index}`}
-                        className={`candle ${isUp ? "up" : "down"}`}
-                        style={{ left: `${left}%` }}
-                      >
-                        <span
-                          className="wick"
-                          style={{ top: `${highTop}%`, height: `${wickHeight}%` }}
-                        />
-                        <span
-                          className="body"
-                          style={{
-                            top: `${bodyTop}%`,
-                            height: `${bodyHeight}%`,
-                            width: `${candleWidthPx}px`
-                          }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="volume-layer" aria-hidden>
-                  {visibleCandles.map((candle, index) => {
-                    const height = (candle.volume / maxVolume) * 100;
-                    const isUp = candle.close >= candle.open;
-                    const left = (index + 0.5) * slotWidth;
-
-                    return (
-                      <span
-                        key={`volume-${candle.time}-${index}`}
-                        className={`volume ${isUp ? "up" : "down"}`}
-                        style={{
-                          left: `${left}%`,
-                          height: `${Math.max(3, height)}%`,
-                          width: `${Math.max(2, candleWidthPx - 1)}px`
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-
-                {hoverState && visibleCandles[hoverState.index] ? (
-                  <>
-                    <span className="crosshair-x" style={{ top: `${hoverState.y}px` }} />
-                    <span className="crosshair-y" style={{ left: `${hoverState.x}px` }} />
-
-                    {hoverPrice !== null ? (
-                      <span className="crosshair-price" style={{ top: `${hoverState.y}px` }}>
-                        {formatPrice(hoverPrice)}
-                      </span>
-                    ) : null}
-                  </>
-                ) : null}
-
-                <div className="time-axis" aria-hidden>
-                  {xAxisTicks.map((tick) => (
-                    <span key={`${tick.left}-${tick.label}`} style={{ left: `${tick.left}%` }}>
-                      {tick.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="price-axis" aria-hidden>
-                {yAxisLevels.map((level, index) => (
-                  <span key={`${level}-${index}`}>${formatPrice(level)}</span>
-                ))}
-              </div>
-            </div>
-          </div>
+          <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
         </section>
 
-        <aside className="watchlist">
-          <div className="watchlist-head">
-            <h2>Futures</h2>
-            <p>Perpetual Contracts</p>
-          </div>
-
-          <div className="watchlist-labels" aria-hidden>
-            <span>Symbol</span>
-            <span>Last</span>
-            <span>Chg%</span>
-            <span>Vol</span>
-          </div>
-
-          <ul className="watchlist-body">
-            {watchlistRows.map((row) => (
-              <li key={row.symbol}>
+        <aside className={`watchlist ${panelExpanded ? "expanded" : "collapsed"}`}>
+          {panelExpanded ? (
+            <>
+              <div className="watchlist-head">
+                <div>
+                  <h2>Futures</h2>
+                  <p>Perpetual Contracts</p>
+                </div>
                 <button
                   type="button"
-                  className={`watchlist-row ${row.symbol === selectedSymbol ? "selected" : ""}`}
-                  onClick={() => setSelectedSymbol(row.symbol)}
+                  className="panel-toggle"
+                  onClick={() => setPanelExpanded(false)}
+                  aria-label="Collapse watchlist"
                 >
-                  <span className="symbol-col">
-                    <span>{row.symbol}</span>
-                    <small>{row.name}</small>
-                  </span>
-
-                  <span className="num-col">{formatPrice(row.lastPrice)}</span>
-                  <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
-                    {row.change >= 0 ? "+" : ""}
-                    {row.change.toFixed(2)}
-                  </span>
-                  <span className="num-col">{row.volume}</span>
+                  ‹
                 </button>
-              </li>
-            ))}
-          </ul>
+              </div>
+
+              <div className="watchlist-labels" aria-hidden>
+                <span>Symbol</span>
+                <span>Last</span>
+                <span>Chg%</span>
+                <span>Vol</span>
+              </div>
+
+              <ul className="watchlist-body">
+                {watchlistRows.map((row) => (
+                  <li key={row.symbol}>
+                    <button
+                      type="button"
+                      className={`watchlist-row ${row.symbol === selectedSymbol ? "selected" : ""}`}
+                      onClick={() => setSelectedSymbol(row.symbol)}
+                    >
+                      <span className="symbol-col">
+                        <span>{row.symbol}</span>
+                        <small>{row.name}</small>
+                      </span>
+
+                      <span className="num-col">{formatPrice(row.lastPrice)}</span>
+                      <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
+                        {row.change >= 0 ? "+" : ""}
+                        {row.change.toFixed(2)}
+                      </span>
+                      <span className="num-col">{row.volume}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="collapsed-expand"
+              onClick={() => setPanelExpanded(true)}
+              aria-label="Expand watchlist"
+            >
+              <span>Markets</span>
+            </button>
+          )}
         </aside>
       </section>
 
       <footer className="statusbar">
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
-        <span>Fake feed: live</span>
-        <span>Candles: {visibleCandles.length}</span>
+        <span>Feed: simulated</span>
         <span>UTC</span>
       </footer>
     </main>
