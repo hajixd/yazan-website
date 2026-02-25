@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
+  LineStyle,
   createChart,
   type CandlestickData,
   type IChartApi,
@@ -35,16 +36,6 @@ type Candle = {
 
 type TradeResult = "Win" | "Loss";
 
-type HistorySeed = {
-  id: string;
-  symbol: string;
-  result: TradeResult;
-  pnl: string;
-  candleOffset: number;
-  holdingBars: number;
-  riskScale: number;
-};
-
 type HistoryItem = {
   id: string;
   symbol: string;
@@ -57,7 +48,6 @@ type HistoryItem = {
   targetPrice: number;
   stopPrice: number;
   outcomePrice: number;
-  markerTime: UTCTimestamp;
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -173,62 +163,15 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "ai", label: "AI" }
 ];
 
-const historySeeds: HistorySeed[] = [
-  {
-    id: "h1",
-    symbol: "BTCUSDT.P",
-    result: "Win",
-    pnl: "+2.10%",
-    candleOffset: 18,
-    holdingBars: 13,
-    riskScale: 1.05
-  },
-  {
-    id: "h2",
-    symbol: "ETHUSDT.P",
-    result: "Loss",
-    pnl: "-0.84%",
-    candleOffset: 27,
-    holdingBars: 11,
-    riskScale: 0.92
-  },
-  {
-    id: "h3",
-    symbol: "SOLUSDT.P",
-    result: "Win",
-    pnl: "+1.35%",
-    candleOffset: 33,
-    holdingBars: 9,
-    riskScale: 0.98
-  },
-  {
-    id: "h4",
-    symbol: "XRPUSDT.P",
-    result: "Loss",
-    pnl: "-0.48%",
-    candleOffset: 41,
-    holdingBars: 10,
-    riskScale: 0.86
-  },
-  {
-    id: "h5",
-    symbol: "BNBUSDT.P",
-    result: "Win",
-    pnl: "+0.93%",
-    candleOffset: 49,
-    holdingBars: 12,
-    riskScale: 0.9
-  },
-  {
-    id: "h6",
-    symbol: "DOGEUSDT.P",
-    result: "Win",
-    pnl: "+2.74%",
-    candleOffset: 57,
-    holdingBars: 14,
-    riskScale: 1.15
-  }
-];
+const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
+  "1m": 9000,
+  "5m": 7800,
+  "15m": 6400,
+  "1H": 4800,
+  "4H": 3400,
+  "1D": 2200,
+  "1W": 900
+};
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
@@ -305,29 +248,47 @@ const generateFakeCandles = (
   basePrice: number,
   symbol: string,
   timeframe: Timeframe,
-  count = 340
+  count = candleHistoryCountByTimeframe[timeframe]
 ): Candle[] => {
   const series: Candle[] = [];
   const timeframeMs = timeframeMinutes[timeframe] * 60_000;
-  const volatility = timeframeVolatility[timeframe];
+  const baseVolatility = timeframeVolatility[timeframe];
   const seed = hashString(`${symbol}-${timeframe}`);
   const rand = createSeededRng(seed);
-  const phaseA = rand() * Math.PI;
-  const phaseB = rand() * Math.PI;
   const startTime = REFERENCE_TS - count * timeframeMs;
-  let close = basePrice * (0.95 + rand() * 0.08);
+  let close = basePrice * (0.9 + rand() * 0.22);
+  let regimeBarsLeft = 0;
+  let driftBias = 0;
+  let volMultiplier = 1;
+  let momentumCarry = 0;
 
   for (let i = 0; i < count; i += 1) {
+    if (regimeBarsLeft <= 0) {
+      regimeBarsLeft = 35 + Math.floor(rand() * 150);
+      driftBias = (rand() - 0.5) * baseVolatility * (0.9 + rand() * 1.5);
+      volMultiplier = 0.65 + rand() * 2.2;
+    } else {
+      regimeBarsLeft -= 1;
+    }
+
     const open = close;
-    const wave = Math.sin(i / 11 + phaseA) * volatility * 1.15;
-    const secondary = Math.cos(i / 24 + phaseB) * volatility * 0.7;
-    const noise = (rand() - 0.5) * volatility * 1.75;
-    const drift = wave + secondary + noise;
+    const shock =
+      rand() < 0.008
+        ? (rand() > 0.5 ? 1 : -1) * baseVolatility * (4 + rand() * 7)
+        : 0;
+    const microNoise = (rand() - 0.5) * baseVolatility * 2.4 * volMultiplier;
+    const trendNoise = Math.sin(i / (15 + rand() * 14)) * baseVolatility * 0.32;
+    const returnMove = driftBias + microNoise + trendNoise + momentumCarry + shock;
 
-    close = Math.max(0.000001, open * (1 + drift));
+    close = Math.max(0.000001, open * (1 + returnMove));
+    momentumCarry = returnMove * 0.22;
 
-    const high = Math.max(open, close) * (1 + rand() * volatility * 0.85);
-    const low = Math.max(0.000001, Math.min(open, close) * (1 - rand() * volatility * 0.85));
+    const wickVol = baseVolatility * (0.45 + rand() * 2.2) * volMultiplier;
+    const high = Math.max(open, close) * (1 + wickVol * (0.35 + rand() * 0.8));
+    const low = Math.max(
+      0.000001,
+      Math.min(open, close) * (1 - wickVol * (0.35 + rand() * 0.8))
+    );
 
     series.push({
       open,
@@ -387,7 +348,6 @@ export default function Home() {
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("assets");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
-  const [overlayVersion, setOverlayVersion] = useState(0);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
 
@@ -402,6 +362,12 @@ export default function Home() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const tradeLossZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const tradeEntryLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const tradeTargetLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const tradeStopLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const tradePathLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const selectionRef = useRef<string>("");
 
   const selectedAsset = useMemo(() => {
@@ -534,48 +500,111 @@ export default function Home() {
   }, [selectedTimeframe, seriesMap]);
 
   const historyRows = useMemo(() => {
-    return historySeeds.map((seed) => {
-      const asset = getAssetBySymbol(seed.symbol);
-      const key = symbolTimeframeKey(seed.symbol, selectedTimeframe);
-      const list =
-        seriesMap[key] ?? generateFakeCandles(asset.basePrice, seed.symbol, selectedTimeframe);
-      const entryIndex = Math.max(6, Math.min(list.length - 4, list.length - 1 - seed.candleOffset));
-      const exitIndex = Math.min(list.length - 2, entryIndex + seed.holdingBars);
-      const entryCandle = list[entryIndex];
-      const exitCandle = list[exitIndex];
-      const riskRange =
-        entryCandle.close *
-        timeframeVolatility[selectedTimeframe] *
-        (5.8 + (seed.candleOffset % 5) * 0.7) *
-        seed.riskScale;
-      const entryPrice = entryCandle.close;
-      const stopPrice = Math.max(0.000001, entryPrice - riskRange);
-      const targetPrice = entryPrice + riskRange * 1.85;
-      const outcomePrice =
-        seed.result === "Win"
-          ? entryPrice + riskRange * 1.55
-          : Math.max(0.000001, entryPrice - riskRange * 0.9);
+    const rows: HistoryItem[] = [];
+    const maxTrades = 14;
+    const rand = createSeededRng(hashString(`history-${selectedTimeframe}`));
+    let tradeId = 1;
 
-      return {
-        id: seed.id,
-        symbol: seed.symbol,
-        result: seed.result,
-        pnl: seed.pnl,
-        entryTime: toUtcTimestamp(entryCandle.time),
-        exitTime: toUtcTimestamp(exitCandle.time),
+    while (rows.length < maxTrades) {
+      const asset = futuresAssets[Math.floor(rand() * futuresAssets.length)];
+      const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+      const list = seriesMap[key] ?? generateFakeCandles(asset.basePrice, asset.symbol, selectedTimeframe);
+
+      if (list.length < 140) {
+        break;
+      }
+
+      const minEntry = Math.floor(list.length * 0.45);
+      const maxEntry = list.length - 52;
+      const entryIndex = Math.floor(minEntry + rand() * Math.max(1, maxEntry - minEntry));
+      const maxHold = 8 + Math.floor(rand() * 32);
+      const entryPrice = list[entryIndex].close;
+
+      let atr = 0;
+      let atrCount = 0;
+
+      for (let i = Math.max(1, entryIndex - 18); i <= entryIndex; i += 1) {
+        atr += list[i].high - list[i].low;
+        atrCount += 1;
+      }
+
+      atr /= Math.max(1, atrCount);
+
+      const risk =
+        Math.max(
+          atr * (0.7 + rand() * 0.9),
+          entryPrice * timeframeVolatility[selectedTimeframe] * (3.4 + rand() * 2.2)
+        ) || entryPrice * 0.0025;
+      const rr = 1.2 + rand() * 1.6;
+      const stopPrice = Math.max(0.000001, entryPrice - risk);
+      const targetPrice = entryPrice + risk * rr;
+
+      let exitIndex = Math.min(list.length - 1, entryIndex + maxHold);
+      let result: TradeResult | null = null;
+      let outcomePrice = list[exitIndex].close;
+
+      for (let i = entryIndex + 1; i <= Math.min(list.length - 1, entryIndex + maxHold); i += 1) {
+        const candle = list[i];
+        const hitTarget = candle.high >= targetPrice;
+        const hitStop = candle.low <= stopPrice;
+
+        if (hitTarget || hitStop) {
+          exitIndex = i;
+
+          if (hitTarget && hitStop) {
+            const distTarget = Math.abs(candle.open - targetPrice);
+            const distStop = Math.abs(candle.open - stopPrice);
+            const targetFirst = distTarget <= distStop;
+            result = targetFirst ? "Win" : "Loss";
+            outcomePrice = targetFirst ? targetPrice : stopPrice;
+          } else if (hitTarget) {
+            result = "Win";
+            outcomePrice = targetPrice;
+          } else {
+            result = "Loss";
+            outcomePrice = stopPrice;
+          }
+
+          break;
+        }
+      }
+
+      if (!result) {
+        const finalPrice = list[exitIndex].close;
+        if (finalPrice >= entryPrice) {
+          result = "Win";
+          outcomePrice = Math.min(finalPrice, targetPrice);
+        } else {
+          result = "Loss";
+          outcomePrice = Math.max(finalPrice, stopPrice);
+        }
+      }
+
+      const pnlPct = ((outcomePrice - entryPrice) / entryPrice) * 100;
+
+      rows.push({
+        id: `h${tradeId}`,
+        symbol: asset.symbol,
+        result,
+        pnl: `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`,
+        entryTime: toUtcTimestamp(list[entryIndex].time),
+        exitTime: toUtcTimestamp(list[exitIndex].time),
         entryPrice,
         targetPrice,
         stopPrice,
         outcomePrice,
-        markerTime: toUtcTimestamp(exitCandle.time),
-        time: new Date(exitCandle.time).toLocaleTimeString("en-US", {
+        time: new Date(list[exitIndex].time).toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
           hour12: false,
           timeZone: "UTC"
         })
-      } satisfies HistoryItem;
-    });
+      });
+
+      tradeId += 1;
+    }
+
+    return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [selectedTimeframe, seriesMap]);
 
   const selectedHistoryTrade = useMemo(() => {
@@ -584,6 +613,16 @@ export default function Home() {
     }
 
     return historyRows.find((row) => row.id === selectedHistoryId) ?? null;
+  }, [historyRows, selectedHistoryId]);
+
+  useEffect(() => {
+    if (!selectedHistoryId) {
+      return;
+    }
+
+    if (!historyRows.some((row) => row.id === selectedHistoryId)) {
+      setSelectedHistoryId(null);
+    }
   }, [historyRows, selectedHistoryId]);
 
   useEffect(() => {
@@ -660,6 +699,63 @@ export default function Home() {
       lastValueVisible: true
     });
 
+    const tradeEntryLine = chart.addLineSeries({
+      color: "rgba(232, 238, 250, 0.72)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const tradeTargetLine = chart.addLineSeries({
+      color: "rgba(53, 201, 113, 0.95)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const tradeStopLine = chart.addLineSeries({
+      color: "rgba(255, 76, 104, 0.95)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const tradePathLine = chart.addLineSeries({
+      color: "rgba(220, 230, 248, 0.82)",
+      lineWidth: 2,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const tradeProfitZone = chart.addBaselineSeries({
+      baseValue: { type: "price", price: 0 },
+      topLineColor: "rgba(0,0,0,0)",
+      topFillColor1: "rgba(53, 201, 113, 0.22)",
+      topFillColor2: "rgba(53, 201, 113, 0.05)",
+      bottomLineColor: "rgba(0,0,0,0)",
+      bottomFillColor1: "rgba(0,0,0,0)",
+      bottomFillColor2: "rgba(0,0,0,0)",
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const tradeLossZone = chart.addBaselineSeries({
+      baseValue: { type: "price", price: 0 },
+      topLineColor: "rgba(0,0,0,0)",
+      topFillColor1: "rgba(0,0,0,0)",
+      topFillColor2: "rgba(0,0,0,0)",
+      bottomLineColor: "rgba(0,0,0,0)",
+      bottomFillColor1: "rgba(240, 69, 90, 0.24)",
+      bottomFillColor2: "rgba(240, 69, 90, 0.07)",
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false
+    });
+
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (!param.point || !param.time) {
         setHoveredTime(null);
@@ -670,10 +766,6 @@ export default function Home() {
     };
 
     chart.subscribeCrosshairMove(onCrosshairMove);
-    const onRangeChange = () => {
-      setOverlayVersion((current) => current + 1);
-    };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -692,14 +784,25 @@ export default function Home() {
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
+    tradeProfitZoneRef.current = tradeProfitZone;
+    tradeLossZoneRef.current = tradeLossZone;
+    tradeEntryLineRef.current = tradeEntryLine;
+    tradeTargetLineRef.current = tradeTargetLine;
+    tradeStopLineRef.current = tradeStopLine;
+    tradePathLineRef.current = tradePathLine;
 
     return () => {
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(onCrosshairMove);
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
+      tradeProfitZoneRef.current = null;
+      tradeLossZoneRef.current = null;
+      tradeEntryLineRef.current = null;
+      tradeTargetLineRef.current = null;
+      tradeStopLineRef.current = null;
+      tradePathLineRef.current = null;
     };
   }, []);
 
@@ -754,26 +857,52 @@ export default function Home() {
 
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
+    const tradeProfitZone = tradeProfitZoneRef.current;
+    const tradeLossZone = tradeLossZoneRef.current;
+    const tradeEntryLine = tradeEntryLineRef.current;
+    const tradeTargetLine = tradeTargetLineRef.current;
+    const tradeStopLine = tradeStopLineRef.current;
+    const tradePathLine = tradePathLineRef.current;
 
-    if (!candleSeries) {
+    if (
+      !candleSeries ||
+      !tradeProfitZone ||
+      !tradeLossZone ||
+      !tradeEntryLine ||
+      !tradeTargetLine ||
+      !tradeStopLine ||
+      !tradePathLine
+    ) {
       return;
     }
 
     if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
       candleSeries.setMarkers([]);
+      tradeProfitZone.setData([]);
+      tradeLossZone.setData([]);
+      tradeEntryLine.setData([]);
+      tradeTargetLine.setData([]);
+      tradeStopLine.setData([]);
+      tradePathLine.setData([]);
       return;
     }
 
+    const startTime = selectedHistoryTrade.entryTime;
+    const endTime =
+      selectedHistoryTrade.exitTime > selectedHistoryTrade.entryTime
+        ? selectedHistoryTrade.exitTime
+        : ((selectedHistoryTrade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
+
     const markers: SeriesMarker<Time>[] = [
       {
-        time: selectedHistoryTrade.entryTime,
+        time: startTime,
         position: "belowBar",
         shape: "arrowUp",
         color: "#30b76f",
         text: "Entry"
       },
       {
-        time: selectedHistoryTrade.exitTime,
+        time: endTime,
         position: selectedHistoryTrade.result === "Win" ? "aboveBar" : "belowBar",
         shape: "circle",
         color: selectedHistoryTrade.result === "Win" ? "#35c971" : "#f0455a",
@@ -782,79 +911,35 @@ export default function Home() {
     ];
 
     candleSeries.setMarkers(markers);
-  }, [selectedHistoryTrade, selectedSymbol, selectedTimeframe, selectedCandles]);
+    tradeProfitZone.applyOptions({
+      baseValue: { type: "price", price: selectedHistoryTrade.entryPrice }
+    });
+    tradeLossZone.applyOptions({
+      baseValue: { type: "price", price: selectedHistoryTrade.entryPrice }
+    });
 
-  const tradeOverlay = useMemo(() => {
-    const overlayDependency = overlayVersion + selectedCandles.length;
+    const tradeZoneData = [
+      { time: startTime, value: selectedHistoryTrade.targetPrice },
+      { time: endTime, value: selectedHistoryTrade.targetPrice }
+    ];
+    const stopZoneData = [
+      { time: startTime, value: selectedHistoryTrade.stopPrice },
+      { time: endTime, value: selectedHistoryTrade.stopPrice }
+    ];
 
-    if (overlayDependency < 0) {
-      return null;
-    }
-
-    if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
-      return null;
-    }
-
-    const chart = chartRef.current;
-    const candleSeries = candleSeriesRef.current;
-    const container = chartContainerRef.current;
-
-    if (!chart || !candleSeries || !container) {
-      return null;
-    }
-
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const entryX = chart.timeScale().timeToCoordinate(selectedHistoryTrade.entryTime);
-    const exitX = chart.timeScale().timeToCoordinate(selectedHistoryTrade.exitTime);
-    const entryY = candleSeries.priceToCoordinate(selectedHistoryTrade.entryPrice);
-    const targetY = candleSeries.priceToCoordinate(selectedHistoryTrade.targetPrice);
-    const stopY = candleSeries.priceToCoordinate(selectedHistoryTrade.stopPrice);
-    const outcomeY = candleSeries.priceToCoordinate(selectedHistoryTrade.outcomePrice);
-
-    if (
-      entryX === null ||
-      exitX === null ||
-      entryY === null ||
-      targetY === null ||
-      stopY === null ||
-      outcomeY === null
-    ) {
-      return null;
-    }
-
-    const clampY = (value: number) => Math.max(0, Math.min(height, value));
-    const left = Math.max(0, Math.min(entryX, exitX));
-    const right = Math.min(width, Math.max(entryX, exitX));
-    const safeWidth = Math.max(8, right - left);
-    const entryLineY = clampY(entryY);
-    const targetLineY = clampY(targetY);
-    const stopLineY = clampY(stopY);
-    const outcomeLineY = clampY(outcomeY);
-    const profitTop = Math.min(targetLineY, entryLineY);
-    const profitBottom = Math.max(targetLineY, entryLineY);
-    const lossTop = Math.min(entryLineY, stopLineY);
-    const lossBottom = Math.max(entryLineY, stopLineY);
-    const markerBaseY = Math.min(height - 8, stopLineY + 16);
-
-    return {
-      width,
-      height,
-      left,
-      right: left + safeWidth,
-      entryX: Math.max(0, Math.min(width, entryX)),
-      exitX: Math.max(0, Math.min(width, exitX)),
-      entryLineY,
-      targetLineY,
-      stopLineY,
-      outcomeLineY,
-      profitTop,
-      profitBottom,
-      lossTop,
-      lossBottom,
-      markerBaseY
-    };
-  }, [overlayVersion, selectedCandles, selectedHistoryTrade, selectedSymbol]);
+    tradeProfitZone.setData(tradeZoneData);
+    tradeLossZone.setData(stopZoneData);
+    tradeEntryLine.setData([
+      { time: startTime, value: selectedHistoryTrade.entryPrice },
+      { time: endTime, value: selectedHistoryTrade.entryPrice }
+    ]);
+    tradeTargetLine.setData(tradeZoneData);
+    tradeStopLine.setData(stopZoneData);
+    tradePathLine.setData([
+      { time: startTime, value: selectedHistoryTrade.entryPrice },
+      { time: endTime, value: selectedHistoryTrade.outcomePrice }
+    ]);
+  }, [selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
 
   return (
     <main className="terminal">
@@ -919,68 +1004,6 @@ export default function Home() {
           </div>
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
-            {tradeOverlay ? (
-              <svg
-                className="trade-overlay"
-                viewBox={`0 0 ${tradeOverlay.width} ${tradeOverlay.height}`}
-                preserveAspectRatio="none"
-                aria-hidden
-              >
-                <rect
-                  x={tradeOverlay.left}
-                  y={tradeOverlay.profitTop}
-                  width={tradeOverlay.right - tradeOverlay.left}
-                  height={Math.max(2, tradeOverlay.profitBottom - tradeOverlay.profitTop)}
-                  className="trade-zone-profit"
-                />
-                <rect
-                  x={tradeOverlay.left}
-                  y={tradeOverlay.lossTop}
-                  width={tradeOverlay.right - tradeOverlay.left}
-                  height={Math.max(2, tradeOverlay.lossBottom - tradeOverlay.lossTop)}
-                  className="trade-zone-loss"
-                />
-                <line
-                  x1={tradeOverlay.left}
-                  y1={tradeOverlay.targetLineY}
-                  x2={tradeOverlay.right}
-                  y2={tradeOverlay.targetLineY}
-                  className="trade-line-target"
-                />
-                <line
-                  x1={tradeOverlay.left}
-                  y1={tradeOverlay.entryLineY}
-                  x2={tradeOverlay.right}
-                  y2={tradeOverlay.entryLineY}
-                  className="trade-line-entry"
-                />
-                <line
-                  x1={tradeOverlay.left}
-                  y1={tradeOverlay.stopLineY}
-                  x2={tradeOverlay.right}
-                  y2={tradeOverlay.stopLineY}
-                  className="trade-line-stop"
-                />
-                <line
-                  x1={tradeOverlay.entryX}
-                  y1={tradeOverlay.entryLineY}
-                  x2={tradeOverlay.exitX}
-                  y2={tradeOverlay.outcomeLineY}
-                  className="trade-path"
-                />
-                <polygon
-                  points={`${tradeOverlay.entryX},${tradeOverlay.markerBaseY - 11} ${tradeOverlay.entryX - 7},${tradeOverlay.markerBaseY + 1} ${tradeOverlay.entryX + 7},${tradeOverlay.markerBaseY + 1}`}
-                  className="trade-entry-marker"
-                />
-                <text
-                  x={tradeOverlay.exitX + 5}
-                  y={tradeOverlay.outcomeLineY - 5}
-                  className="trade-exit-marker"
-                >
-                  x
-                </text>
-              </svg>
-            ) : null}
           </div>
         </section>
 
@@ -1072,15 +1095,20 @@ export default function Home() {
                             setSelectedSymbol(item.symbol);
                           }}
                         >
-                          <span className="history-main">
-                            <span
-                              className={`history-action ${
-                                item.result === "Loss" ? "down" : "up"
-                              }`}
-                            >
-                              {item.result}
+                          <span className="history-info">
+                            <span className="history-main">
+                              <span
+                                className={`history-action ${
+                                  item.result === "Loss" ? "down" : "up"
+                                }`}
+                              >
+                                {item.result}
+                              </span>
+                              <span className="history-symbol">{item.symbol}</span>
                             </span>
-                            <span>{item.symbol}</span>
+                            <span className="history-levels">
+                              TP {formatPrice(item.targetPrice)} | SL {formatPrice(item.stopPrice)}
+                            </span>
                           </span>
                           <span className="history-meta">
                             <span className={item.result === "Loss" ? "down" : "up"}>

@@ -199,56 +199,6 @@ button {
   overflow: hidden;
 }
 
-.trade-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 5;
-}
-
-.trade-zone-profit {
-  fill: rgba(53, 201, 113, 0.14);
-}
-
-.trade-zone-loss {
-  fill: rgba(240, 69, 90, 0.16);
-}
-
-.trade-line-target {
-  stroke: rgba(53, 201, 113, 0.92);
-  stroke-width: 1.2;
-}
-
-.trade-line-entry {
-  stroke: rgba(230, 237, 249, 0.72);
-  stroke-width: 1.1;
-}
-
-.trade-line-stop {
-  stroke: rgba(255, 76, 104, 0.95);
-  stroke-width: 1.2;
-}
-
-.trade-path {
-  stroke: rgba(228, 236, 252, 0.78);
-  stroke-width: 1.5;
-  stroke-dasharray: 3.4 7;
-}
-
-.trade-entry-marker {
-  fill: rgba(53, 201, 113, 0.98);
-}
-
-.trade-exit-marker {
-  fill: rgba(53, 201, 113, 0.98);
-  font-size: 16px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
 .side-panel {
   min-width: 0;
   min-height: 0;
@@ -472,6 +422,27 @@ button {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.history-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+}
+
+.history-symbol {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.history-levels {
+  color: var(--text-faint);
+  font-size: 0.62rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-meta {
