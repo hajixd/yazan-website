@@ -764,14 +764,13 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="watchlist-labels" aria-hidden>
-                    <span>Symbol</span>
-                    <span>Last</span>
-                    <span>Chg%</span>
-                    <span>Vol</span>
-                  </div>
-
                   <ul className="watchlist-body">
+                    <li className="watchlist-labels" aria-hidden>
+                      <span>Symbol</span>
+                      <span>Last</span>
+                      <span>Chg%</span>
+                      <span>Vol</span>
+                    </li>
                     {watchlistRows.map((row) => (
                       <li key={row.symbol}>
                         <button
