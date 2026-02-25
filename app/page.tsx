@@ -345,6 +345,7 @@ export default function Home() {
   });
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const panelContentRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -665,6 +666,20 @@ export default function Home() {
     };
   }, [panelExpanded, activePanelTab]);
 
+  useEffect(() => {
+    if (!panelExpanded || !panelContentRef.current) {
+      return;
+    }
+
+    const scrollables = panelContentRef.current.querySelectorAll<HTMLElement>(
+      ".watchlist-body, .history-list"
+    );
+
+    scrollables.forEach((node) => {
+      node.scrollTop = 0;
+    });
+  }, [panelExpanded, activePanelTab]);
+
   return (
     <main className="terminal">
       <header className="topbar">
@@ -754,7 +769,7 @@ export default function Home() {
           </nav>
 
           {panelExpanded ? (
-            <div className="panel-content">
+            <div ref={panelContentRef} className="panel-content">
               {activePanelTab === "assets" ? (
                 <div className="tab-view">
                   <div className="watchlist-head">

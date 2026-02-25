@@ -201,6 +201,7 @@ button {
   background: var(--bg-elev);
   position: relative;
   z-index: 3;
+  align-self: stretch;
 }
 
 .panel-rail {
@@ -255,12 +256,21 @@ button {
   grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--line);
   background: var(--bg-elev);
+  align-self: stretch;
+  overflow: hidden;
+  transform-origin: top right;
+}
+
+.side-panel.expanded .panel-content {
+  animation: panel-drop-in 150ms ease-out both;
 }
 
 .tab-view {
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-rows: auto auto 1fr;
+  align-content: start;
 }
 
 .watchlist-head {
@@ -302,6 +312,7 @@ button {
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .watchlist-body li {
@@ -358,6 +369,7 @@ button {
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .history-row {
@@ -403,6 +415,17 @@ button {
 
 .ai-placeholder p {
   margin: 0;
+}
+
+@keyframes panel-drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .statusbar {
