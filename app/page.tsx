@@ -41,6 +41,8 @@ type HistorySeed = {
   result: TradeResult;
   pnl: string;
   candleOffset: number;
+  holdingBars: number;
+  riskScale: number;
 };
 
 type HistoryItem = {
@@ -49,6 +51,12 @@ type HistoryItem = {
   result: TradeResult;
   pnl: string;
   time: string;
+  entryTime: UTCTimestamp;
+  exitTime: UTCTimestamp;
+  entryPrice: number;
+  targetPrice: number;
+  stopPrice: number;
+  outcomePrice: number;
   markerTime: UTCTimestamp;
 };
 
@@ -166,12 +174,60 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 ];
 
 const historySeeds: HistorySeed[] = [
-  { id: "h1", symbol: "BTCUSDT.P", result: "Win", pnl: "+2.10%", candleOffset: 18 },
-  { id: "h2", symbol: "ETHUSDT.P", result: "Loss", pnl: "-0.84%", candleOffset: 27 },
-  { id: "h3", symbol: "SOLUSDT.P", result: "Win", pnl: "+1.35%", candleOffset: 33 },
-  { id: "h4", symbol: "XRPUSDT.P", result: "Loss", pnl: "-0.48%", candleOffset: 41 },
-  { id: "h5", symbol: "BNBUSDT.P", result: "Win", pnl: "+0.93%", candleOffset: 49 },
-  { id: "h6", symbol: "DOGEUSDT.P", result: "Win", pnl: "+2.74%", candleOffset: 57 }
+  {
+    id: "h1",
+    symbol: "BTCUSDT.P",
+    result: "Win",
+    pnl: "+2.10%",
+    candleOffset: 18,
+    holdingBars: 13,
+    riskScale: 1.05
+  },
+  {
+    id: "h2",
+    symbol: "ETHUSDT.P",
+    result: "Loss",
+    pnl: "-0.84%",
+    candleOffset: 27,
+    holdingBars: 11,
+    riskScale: 0.92
+  },
+  {
+    id: "h3",
+    symbol: "SOLUSDT.P",
+    result: "Win",
+    pnl: "+1.35%",
+    candleOffset: 33,
+    holdingBars: 9,
+    riskScale: 0.98
+  },
+  {
+    id: "h4",
+    symbol: "XRPUSDT.P",
+    result: "Loss",
+    pnl: "-0.48%",
+    candleOffset: 41,
+    holdingBars: 10,
+    riskScale: 0.86
+  },
+  {
+    id: "h5",
+    symbol: "BNBUSDT.P",
+    result: "Win",
+    pnl: "+0.93%",
+    candleOffset: 49,
+    holdingBars: 12,
+    riskScale: 0.9
+  },
+  {
+    id: "h6",
+    symbol: "DOGEUSDT.P",
+    result: "Win",
+    pnl: "+2.74%",
+    candleOffset: 57,
+    holdingBars: 14,
+    riskScale: 1.15
+  }
 ];
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -331,6 +387,7 @@ export default function Home() {
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("assets");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+  const [overlayVersion, setOverlayVersion] = useState(0);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
 
@@ -482,16 +539,36 @@ export default function Home() {
       const key = symbolTimeframeKey(seed.symbol, selectedTimeframe);
       const list =
         seriesMap[key] ?? generateFakeCandles(asset.basePrice, seed.symbol, selectedTimeframe);
-      const index = Math.max(4, list.length - 1 - seed.candleOffset);
-      const candle = list[index];
+      const entryIndex = Math.max(6, Math.min(list.length - 4, list.length - 1 - seed.candleOffset));
+      const exitIndex = Math.min(list.length - 2, entryIndex + seed.holdingBars);
+      const entryCandle = list[entryIndex];
+      const exitCandle = list[exitIndex];
+      const riskRange =
+        entryCandle.close *
+        timeframeVolatility[selectedTimeframe] *
+        (5.8 + (seed.candleOffset % 5) * 0.7) *
+        seed.riskScale;
+      const entryPrice = entryCandle.close;
+      const stopPrice = Math.max(0.000001, entryPrice - riskRange);
+      const targetPrice = entryPrice + riskRange * 1.85;
+      const outcomePrice =
+        seed.result === "Win"
+          ? entryPrice + riskRange * 1.55
+          : Math.max(0.000001, entryPrice - riskRange * 0.9);
 
       return {
         id: seed.id,
         symbol: seed.symbol,
         result: seed.result,
         pnl: seed.pnl,
-        markerTime: toUtcTimestamp(candle.time),
-        time: new Date(candle.time).toLocaleTimeString("en-US", {
+        entryTime: toUtcTimestamp(entryCandle.time),
+        exitTime: toUtcTimestamp(exitCandle.time),
+        entryPrice,
+        targetPrice,
+        stopPrice,
+        outcomePrice,
+        markerTime: toUtcTimestamp(exitCandle.time),
+        time: new Date(exitCandle.time).toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
           hour12: false,
@@ -593,6 +670,10 @@ export default function Home() {
     };
 
     chart.subscribeCrosshairMove(onCrosshairMove);
+    const onRangeChange = () => {
+      setOverlayVersion((current) => current + 1);
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -615,6 +696,7 @@ export default function Home() {
     return () => {
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(onCrosshairMove);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -684,16 +766,95 @@ export default function Home() {
 
     const markers: SeriesMarker<Time>[] = [
       {
-        time: selectedHistoryTrade.markerTime,
-        position: selectedHistoryTrade.result === "Win" ? "belowBar" : "aboveBar",
-        shape: selectedHistoryTrade.result === "Win" ? "arrowUp" : "arrowDown",
-        color: selectedHistoryTrade.result === "Win" ? "#1bae8a" : "#f0455a",
-        text: `${selectedHistoryTrade.result} ${selectedHistoryTrade.pnl}`
+        time: selectedHistoryTrade.entryTime,
+        position: "belowBar",
+        shape: "arrowUp",
+        color: "#30b76f",
+        text: "Entry"
+      },
+      {
+        time: selectedHistoryTrade.exitTime,
+        position: selectedHistoryTrade.result === "Win" ? "aboveBar" : "belowBar",
+        shape: "circle",
+        color: selectedHistoryTrade.result === "Win" ? "#35c971" : "#f0455a",
+        text: selectedHistoryTrade.result
       }
     ];
 
     candleSeries.setMarkers(markers);
   }, [selectedHistoryTrade, selectedSymbol, selectedTimeframe, selectedCandles]);
+
+  const tradeOverlay = useMemo(() => {
+    const overlayDependency = overlayVersion + selectedCandles.length;
+
+    if (overlayDependency < 0) {
+      return null;
+    }
+
+    if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
+      return null;
+    }
+
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    const container = chartContainerRef.current;
+
+    if (!chart || !candleSeries || !container) {
+      return null;
+    }
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const entryX = chart.timeScale().timeToCoordinate(selectedHistoryTrade.entryTime);
+    const exitX = chart.timeScale().timeToCoordinate(selectedHistoryTrade.exitTime);
+    const entryY = candleSeries.priceToCoordinate(selectedHistoryTrade.entryPrice);
+    const targetY = candleSeries.priceToCoordinate(selectedHistoryTrade.targetPrice);
+    const stopY = candleSeries.priceToCoordinate(selectedHistoryTrade.stopPrice);
+    const outcomeY = candleSeries.priceToCoordinate(selectedHistoryTrade.outcomePrice);
+
+    if (
+      entryX === null ||
+      exitX === null ||
+      entryY === null ||
+      targetY === null ||
+      stopY === null ||
+      outcomeY === null
+    ) {
+      return null;
+    }
+
+    const clampY = (value: number) => Math.max(0, Math.min(height, value));
+    const left = Math.max(0, Math.min(entryX, exitX));
+    const right = Math.min(width, Math.max(entryX, exitX));
+    const safeWidth = Math.max(8, right - left);
+    const entryLineY = clampY(entryY);
+    const targetLineY = clampY(targetY);
+    const stopLineY = clampY(stopY);
+    const outcomeLineY = clampY(outcomeY);
+    const profitTop = Math.min(targetLineY, entryLineY);
+    const profitBottom = Math.max(targetLineY, entryLineY);
+    const lossTop = Math.min(entryLineY, stopLineY);
+    const lossBottom = Math.max(entryLineY, stopLineY);
+    const markerBaseY = Math.min(height - 8, stopLineY + 16);
+
+    return {
+      width,
+      height,
+      left,
+      right: left + safeWidth,
+      entryX: Math.max(0, Math.min(width, entryX)),
+      exitX: Math.max(0, Math.min(width, exitX)),
+      entryLineY,
+      targetLineY,
+      stopLineY,
+      outcomeLineY,
+      profitTop,
+      profitBottom,
+      lossTop,
+      lossBottom,
+      markerBaseY
+    };
+  }, [overlayVersion, selectedCandles, selectedHistoryTrade, selectedSymbol]);
 
   return (
     <main className="terminal">
@@ -756,7 +917,71 @@ export default function Home() {
             </span>
             <span className="chart-hint">Scroll: zoom | Drag: pan</span>
           </div>
-          <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+          <div className="chart-stage">
+            <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+            {tradeOverlay ? (
+              <svg
+                className="trade-overlay"
+                viewBox={`0 0 ${tradeOverlay.width} ${tradeOverlay.height}`}
+                preserveAspectRatio="none"
+                aria-hidden
+              >
+                <rect
+                  x={tradeOverlay.left}
+                  y={tradeOverlay.profitTop}
+                  width={tradeOverlay.right - tradeOverlay.left}
+                  height={Math.max(2, tradeOverlay.profitBottom - tradeOverlay.profitTop)}
+                  className="trade-zone-profit"
+                />
+                <rect
+                  x={tradeOverlay.left}
+                  y={tradeOverlay.lossTop}
+                  width={tradeOverlay.right - tradeOverlay.left}
+                  height={Math.max(2, tradeOverlay.lossBottom - tradeOverlay.lossTop)}
+                  className="trade-zone-loss"
+                />
+                <line
+                  x1={tradeOverlay.left}
+                  y1={tradeOverlay.targetLineY}
+                  x2={tradeOverlay.right}
+                  y2={tradeOverlay.targetLineY}
+                  className="trade-line-target"
+                />
+                <line
+                  x1={tradeOverlay.left}
+                  y1={tradeOverlay.entryLineY}
+                  x2={tradeOverlay.right}
+                  y2={tradeOverlay.entryLineY}
+                  className="trade-line-entry"
+                />
+                <line
+                  x1={tradeOverlay.left}
+                  y1={tradeOverlay.stopLineY}
+                  x2={tradeOverlay.right}
+                  y2={tradeOverlay.stopLineY}
+                  className="trade-line-stop"
+                />
+                <line
+                  x1={tradeOverlay.entryX}
+                  y1={tradeOverlay.entryLineY}
+                  x2={tradeOverlay.exitX}
+                  y2={tradeOverlay.outcomeLineY}
+                  className="trade-path"
+                />
+                <polygon
+                  points={`${tradeOverlay.entryX},${tradeOverlay.markerBaseY - 11} ${tradeOverlay.entryX - 7},${tradeOverlay.markerBaseY + 1} ${tradeOverlay.entryX + 7},${tradeOverlay.markerBaseY + 1}`}
+                  className="trade-entry-marker"
+                />
+                <text
+                  x={tradeOverlay.exitX + 5}
+                  y={tradeOverlay.outcomeLineY - 5}
+                  className="trade-exit-marker"
+                >
+                  x
+                </text>
+              </svg>
+            ) : null}
+          </div>
         </section>
 
         <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
