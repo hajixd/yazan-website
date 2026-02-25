@@ -14,6 +14,7 @@ type Candle = {
   high: number;
   low: number;
   volume: number;
+  time: string;
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -22,8 +23,8 @@ const futuresAssets: FutureAsset[] = [
     name: "Bitcoin Perpetual",
     price: 64238.7,
     change: 2.42,
-    volume: "$7.8B",
-    openInterest: "$20.4B",
+    volume: "7.8B",
+    openInterest: "20.4B",
     funding: "+0.012%"
   },
   {
@@ -31,8 +32,8 @@ const futuresAssets: FutureAsset[] = [
     name: "Ethereum Perpetual",
     price: 3421.85,
     change: 1.88,
-    volume: "$4.2B",
-    openInterest: "$10.1B",
+    volume: "4.2B",
+    openInterest: "10.1B",
     funding: "+0.009%"
   },
   {
@@ -40,8 +41,8 @@ const futuresAssets: FutureAsset[] = [
     name: "Solana Perpetual",
     price: 187.54,
     change: -0.74,
-    volume: "$1.6B",
-    openInterest: "$2.8B",
+    volume: "1.6B",
+    openInterest: "2.8B",
     funding: "-0.004%"
   },
   {
@@ -49,8 +50,8 @@ const futuresAssets: FutureAsset[] = [
     name: "XRP Perpetual",
     price: 0.6943,
     change: 0.58,
-    volume: "$1.1B",
-    openInterest: "$1.9B",
+    volume: "1.1B",
+    openInterest: "1.9B",
     funding: "+0.003%"
   },
   {
@@ -58,8 +59,8 @@ const futuresAssets: FutureAsset[] = [
     name: "BNB Perpetual",
     price: 585.19,
     change: -1.12,
-    volume: "$760M",
-    openInterest: "$1.3B",
+    volume: "760M",
+    openInterest: "1.3B",
     funding: "-0.001%"
   },
   {
@@ -67,8 +68,8 @@ const futuresAssets: FutureAsset[] = [
     name: "Dogecoin Perpetual",
     price: 0.1921,
     change: 3.17,
-    volume: "$950M",
-    openInterest: "$1.4B",
+    volume: "950M",
+    openInterest: "1.4B",
     funding: "+0.015%"
   },
   {
@@ -76,8 +77,8 @@ const futuresAssets: FutureAsset[] = [
     name: "Avalanche Perpetual",
     price: 42.16,
     change: -2.06,
-    volume: "$480M",
-    openInterest: "$780M",
+    volume: "480M",
+    openInterest: "780M",
     funding: "-0.008%"
   },
   {
@@ -85,45 +86,72 @@ const futuresAssets: FutureAsset[] = [
     name: "Chainlink Perpetual",
     price: 19.84,
     change: 0.94,
-    volume: "$420M",
-    openInterest: "$640M",
+    volume: "420M",
+    openInterest: "640M",
     funding: "+0.006%"
+  },
+  {
+    symbol: "ADAUSDT.P",
+    name: "Cardano Perpetual",
+    price: 0.7862,
+    change: -0.22,
+    volume: "390M",
+    openInterest: "590M",
+    funding: "-0.002%"
+  },
+  {
+    symbol: "SUIUSDT.P",
+    name: "Sui Perpetual",
+    price: 1.79,
+    change: 2.04,
+    volume: "280M",
+    openInterest: "410M",
+    funding: "+0.011%"
   }
 ];
 
 const timeframes = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
 const selectedTimeframe = "4H";
-const closes = [
-  63880, 63922, 63908, 63966, 64014, 63991, 64052, 64083, 64045, 64092, 64138,
-  64108, 64172, 64144, 64196, 64208, 64180, 64236, 64222, 64258, 64214, 64281,
-  64308, 64267, 64314, 64294, 64336, 64381, 64348, 64394, 64422, 64397
+const closeSeries = [
+  63880, 63910, 63896, 63944, 63990, 63972, 64018, 64074, 64040, 64083, 64122,
+  64096, 64144, 64122, 64181, 64198, 64156, 64204, 64184, 64232, 64192, 64262,
+  64296, 64250, 64288, 64261, 64308, 64354, 64327, 64385, 64418, 64378, 64412,
+  64390, 64444, 64422, 64469, 64446
 ];
 
-const candles: Candle[] = closes.map((close, index) => {
-  const open = index === 0 ? 63842 : closes[index - 1];
-  const high = Math.max(open, close) + 20 + (index % 4) * 5;
-  const low = Math.min(open, close) - 18 - (index % 3) * 4;
-  const volume = 52 + Math.abs(close - open) * 0.9 + (index % 5) * 7;
+const candles: Candle[] = closeSeries.map((close, index) => {
+  const open = index === 0 ? 63840 : closeSeries[index - 1];
+  const high = Math.max(open, close) + 18 + (index % 4) * 4;
+  const low = Math.min(open, close) - 16 - (index % 3) * 3;
+  const volume = 60 + Math.abs(close - open) * 0.9 + (index % 6) * 8;
+  const hour = (8 + index) % 24;
 
-  return { open, close, high, low, volume };
+  return {
+    open,
+    close,
+    high,
+    low,
+    volume,
+    time: `${hour.toString().padStart(2, "0")}:00`
+  };
 });
 
-const formatPrice = (price: number) => {
-  if (price < 1) {
-    return price.toLocaleString("en-US", {
+const formatPrice = (value: number): string => {
+  if (value < 1) {
+    return value.toLocaleString("en-US", {
       minimumFractionDigits: 4,
       maximumFractionDigits: 4
     });
   }
 
-  if (price < 100) {
-    return price.toLocaleString("en-US", {
+  if (value < 100) {
+    return value.toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     });
   }
 
-  return price.toLocaleString("en-US", {
+  return value.toLocaleString("en-US", {
     minimumFractionDigits: 1,
     maximumFractionDigits: 2
   });
@@ -131,177 +159,195 @@ const formatPrice = (price: number) => {
 
 export default function Home() {
   const currentAsset = futuresAssets[0];
-  const maxPrice = Math.max(...candles.map((candle) => candle.high));
-  const minPrice = Math.min(...candles.map((candle) => candle.low));
+  const lastCandle = candles[candles.length - 1];
+  const maxPrice = Math.max(...candles.map((c) => c.high));
+  const minPrice = Math.min(...candles.map((c) => c.low));
   const priceSpan = maxPrice - minPrice;
-  const maxVolume = Math.max(...candles.map((candle) => candle.volume));
+  const maxVolume = Math.max(...candles.map((c) => c.volume));
   const candleStep = 100 / (candles.length - 1);
 
-  const yAxisLevels = Array.from({ length: 6 }, (_, index) => {
-    return maxPrice - ((maxPrice - minPrice) * index) / 5;
+  const yAxis = Array.from({ length: 8 }, (_, index) => {
+    return maxPrice - ((maxPrice - minPrice) * index) / 7;
   });
 
+  const xAxis = candles.filter((_, index) => index % 6 === 0);
+
   return (
-    <main className="page-shell">
-      <div className="ambient-glow ambient-glow--one" />
-      <div className="ambient-glow ambient-glow--two" />
+    <main className="terminal">
+      <header className="topbar">
+        <div className="brand-area">
+          <div className="brand-mark">TV</div>
+          <div className="asset-meta">
+            <h1>{currentAsset.symbol}</h1>
+            <p>{currentAsset.name}</p>
+          </div>
+          <div className="live-quote">
+            <span>${formatPrice(currentAsset.price)}</span>
+            <span className={currentAsset.change >= 0 ? "up" : "down"}>
+              {currentAsset.change >= 0 ? "+" : ""}
+              {currentAsset.change.toFixed(2)}%
+            </span>
+          </div>
+        </div>
 
-      <div className="trading-layout">
-        <section className="chart-section">
-          <header className="chart-header">
-            <div className="asset-title-block">
-              <p className="label">Current Asset</p>
-              <h1>{currentAsset.symbol}</h1>
-              <p className="asset-subtitle">{currentAsset.name}</p>
+        <nav className="timeframe-row" aria-label="timeframes">
+          {timeframes.map((frame) => (
+            <button
+              key={frame}
+              type="button"
+              className={`timeframe ${frame === selectedTimeframe ? "active" : ""}`}
+            >
+              {frame}
+            </button>
+          ))}
+        </nav>
+      </header>
 
-              <div className="spot-line">
-                <span className="spot-price">${formatPrice(currentAsset.price)}</span>
-                <span
-                  className={`delta ${
-                    currentAsset.change >= 0 ? "positive" : "negative"
-                  }`}
-                >
-                  {currentAsset.change >= 0 ? "+" : ""}
-                  {currentAsset.change.toFixed(2)}%
-                </span>
-                <span className="subtle">24h</span>
-              </div>
-            </div>
+      <section className="workspace">
+        <aside className="left-tools" aria-label="chart tools">
+          {[
+            "Cursor",
+            "Cross",
+            "Trend",
+            "Fib",
+            "Brush",
+            "Text",
+            "Measure",
+            "Zoom"
+          ].map((tool) => (
+            <button type="button" key={tool} className="tool-btn" title={tool}>
+              {tool.slice(0, 1)}
+            </button>
+          ))}
+        </aside>
 
-            <nav className="timeframe-tabs" aria-label="Chart timeframes">
-              {timeframes.map((frame) => (
-                <button
-                  type="button"
-                  key={frame}
-                  className={`timeframe-tab ${
-                    frame === selectedTimeframe ? "active" : ""
-                  }`}
-                >
-                  {frame}
-                </button>
+        <section className="chart-wrap">
+          <div className="chart-toolbar">
+            <span>
+              O <strong>{formatPrice(lastCandle.open)}</strong>
+            </span>
+            <span>
+              H <strong>{formatPrice(lastCandle.high)}</strong>
+            </span>
+            <span>
+              L <strong>{formatPrice(lastCandle.low)}</strong>
+            </span>
+            <span>
+              C <strong>{formatPrice(lastCandle.close)}</strong>
+            </span>
+            <span>
+              Funding <strong>{currentAsset.funding}</strong>
+            </span>
+            <span>
+              OI <strong>{currentAsset.openInterest}</strong>
+            </span>
+          </div>
+
+          <div className="chart-surface">
+            <div className="price-axis" aria-hidden>
+              {yAxis.map((level, index) => (
+                <span key={`${level}-${index}`}>${formatPrice(level)}</span>
               ))}
-            </nav>
-          </header>
-
-          <div className="chart-card">
-            <div className="chart-meta-row">
-              <div className="meta-chip">
-                Mark <strong>${formatPrice(currentAsset.price - 11.6)}</strong>
-              </div>
-              <div className="meta-chip">
-                Index <strong>${formatPrice(currentAsset.price - 29.3)}</strong>
-              </div>
-              <div className="meta-chip">
-                Funding <strong>{currentAsset.funding}</strong>
-              </div>
-              <div className="meta-chip">
-                OI <strong>{currentAsset.openInterest}</strong>
-              </div>
             </div>
 
-            <div className="chart-area">
-              <div className="y-axis" aria-hidden>
-                {yAxisLevels.map((level, index) => (
-                  <span key={`${level}-${index}`}>${formatPrice(level)}</span>
-                ))}
+            <div className="plot" aria-label="candlestick chart">
+              <div className="candles-layer">
+                {candles.map((candle, index) => {
+                  const isUp = candle.close >= candle.open;
+                  const highTop = ((maxPrice - candle.high) / priceSpan) * 100;
+                  const lowTop = ((maxPrice - candle.low) / priceSpan) * 100;
+                  const openTop = ((maxPrice - candle.open) / priceSpan) * 100;
+                  const closeTop = ((maxPrice - candle.close) / priceSpan) * 100;
+                  const bodyTop = Math.min(openTop, closeTop);
+                  const bodyHeight = Math.max(1.2, Math.abs(closeTop - openTop));
+                  const wickHeight = Math.max(1.2, lowTop - highTop);
+
+                  return (
+                    <div
+                      key={`${index}-${candle.close}`}
+                      className={`candle ${isUp ? "up" : "down"}`}
+                      style={{ left: `${index * candleStep}%` }}
+                    >
+                      <span
+                        className="wick"
+                        style={{ top: `${highTop}%`, height: `${wickHeight}%` }}
+                      />
+                      <span
+                        className="body"
+                        style={{ top: `${bodyTop}%`, height: `${bodyHeight}%` }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
 
-              <div className="plot-area" aria-label="candlestick chart">
-                <div className="candles-layer">
-                  {candles.map((candle, index) => {
-                    const isUp = candle.close >= candle.open;
-                    const highTop = ((maxPrice - candle.high) / priceSpan) * 100;
-                    const lowTop = ((maxPrice - candle.low) / priceSpan) * 100;
-                    const openTop = ((maxPrice - candle.open) / priceSpan) * 100;
-                    const closeTop = ((maxPrice - candle.close) / priceSpan) * 100;
-                    const bodyTop = Math.min(openTop, closeTop);
-                    const bodyHeight = Math.max(1.2, Math.abs(closeTop - openTop));
-                    const wickHeight = Math.max(1.2, lowTop - highTop);
+              <div className="volume-layer" aria-hidden>
+                {candles.map((candle, index) => {
+                  const height = (candle.volume / maxVolume) * 100;
+                  const isUp = candle.close >= candle.open;
 
-                    return (
-                      <div
-                        key={`${index}-${candle.close}`}
-                        className={`candle ${isUp ? "up" : "down"}`}
-                        style={{ left: `${index * candleStep}%` }}
-                      >
-                        <span
-                          className="wick"
-                          style={{ top: `${highTop}%`, height: `${wickHeight}%` }}
-                        />
-                        <span
-                          className="body"
-                          style={{ top: `${bodyTop}%`, height: `${bodyHeight}%` }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                  return (
+                    <span
+                      key={`${index}-${candle.volume}`}
+                      className={`volume ${isUp ? "up" : "down"}`}
+                      style={{
+                        left: `${index * candleStep}%`,
+                        height: `${Math.max(5, height)}%`
+                      }}
+                    />
+                  );
+                })}
+              </div>
 
-                <div className="volume-layer" aria-hidden>
-                  {candles.map((candle, index) => {
-                    const height = (candle.volume / maxVolume) * 100;
-                    const isUp = candle.close >= candle.open;
-
-                    return (
-                      <span
-                        key={`${index}-volume`}
-                        className={`volume-bar ${isUp ? "up" : "down"}`}
-                        style={{
-                          left: `${index * candleStep}%`,
-                          height: `${Math.max(6, height)}%`
-                        }}
-                      />
-                    );
-                  })}
-                </div>
+              <div className="time-axis" aria-hidden>
+                {xAxis.map((item, index) => (
+                  <span key={`${index}-${item.time}`}>{item.time}</span>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        <aside className="futures-panel">
-          <div className="panel-header">
-            <div>
-              <p className="label">Markets</p>
-              <h2>Futures Watchlist</h2>
-            </div>
-            <button type="button" className="ghost-btn">
-              Filter
-            </button>
+        <aside className="watchlist">
+          <div className="watchlist-head">
+            <h2>Futures</h2>
+            <p>Perpetual Contracts</p>
           </div>
 
-          <ul className="asset-list">
+          <div className="watchlist-labels" aria-hidden>
+            <span>Symbol</span>
+            <span>Last</span>
+            <span>Chg%</span>
+            <span>Vol</span>
+          </div>
+
+          <ul className="watchlist-body">
             {futuresAssets.map((asset) => (
-              <li key={asset.symbol} className="asset-item">
-                <div className="asset-row">
-                  <div>
-                    <p className="asset-symbol">{asset.symbol}</p>
-                    <p className="asset-name">{asset.name}</p>
-                  </div>
-
-                  <div className="asset-price-wrap">
-                    <p className="asset-price">${formatPrice(asset.price)}</p>
-                    <p
-                      className={`asset-change ${
-                        asset.change >= 0 ? "positive" : "negative"
-                      }`}
-                    >
-                      {asset.change >= 0 ? "+" : ""}
-                      {asset.change.toFixed(2)}%
-                    </p>
-                  </div>
+              <li key={asset.symbol} className="watchlist-row">
+                <div className="symbol-col">
+                  <p>{asset.symbol}</p>
+                  <small>{asset.name}</small>
                 </div>
 
-                <div className="asset-stats">
-                  <span>Vol {asset.volume}</span>
-                  <span>OI {asset.openInterest}</span>
-                  <span>Funding {asset.funding}</span>
+                <div className="num-col">{formatPrice(asset.price)}</div>
+                <div className={`num-col ${asset.change >= 0 ? "up" : "down"}`}>
+                  {asset.change >= 0 ? "+" : ""}
+                  {asset.change.toFixed(2)}
                 </div>
+                <div className="num-col">{asset.volume}</div>
               </li>
             ))}
           </ul>
         </aside>
-      </div>
+      </section>
+
+      <footer className="statusbar">
+        <span>{currentAsset.symbol}</span>
+        <span>{selectedTimeframe}</span>
+        <span>UTC</span>
+        <span>Volume profile</span>
+        <span>Auto</span>
+      </footer>
     </main>
   );
 }
