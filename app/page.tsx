@@ -495,6 +495,9 @@ export default function Home() {
         background: { type: ColorType.Solid, color: "#090d13" },
         textColor: "#7f889d"
       },
+      localization: {
+        priceFormatter: (price: number) => formatPrice(price)
+      },
       grid: {
         vertLines: { visible: false },
         horzLines: { visible: false }

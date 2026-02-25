@@ -315,7 +315,7 @@ button {
   z-index: 1;
 }
 
-.watchlist-labels span:nth-child(n + 2) {
+.watchlist-labels span {
   text-align: right;
 }
 
