@@ -15,6 +15,7 @@ import {
 } from "lightweight-charts";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
+type PanelTab = "assets" | "history" | "ai";
 
 type FutureAsset = {
   symbol: string;
@@ -32,6 +33,14 @@ type Candle = {
   low: number;
   volume: number;
   time: number;
+};
+
+type HistoryItem = {
+  id: string;
+  action: "Long" | "Short" | "Exit";
+  symbol: string;
+  pnl: string;
+  time: string;
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -151,6 +160,20 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
 
 const REFERENCE_TS = Date.UTC(2026, 1, 25, 0, 0, 0);
 
+const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
+  { id: "assets", label: "Assets" },
+  { id: "history", label: "History" },
+  { id: "ai", label: "AI" }
+];
+
+const historyItems: HistoryItem[] = [
+  { id: "h1", action: "Long", symbol: "BTCUSDT.P", pnl: "+$842", time: "13:42" },
+  { id: "h2", action: "Short", symbol: "ETHUSDT.P", pnl: "+$219", time: "12:58" },
+  { id: "h3", action: "Exit", symbol: "SOLUSDT.P", pnl: "-$54", time: "11:27" },
+  { id: "h4", action: "Long", symbol: "XRPUSDT.P", pnl: "+$126", time: "10:19" },
+  { id: "h5", action: "Exit", symbol: "BNBUSDT.P", pnl: "+$63", time: "09:46" }
+];
+
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
 };
@@ -269,10 +292,46 @@ const getAssetBySymbol = (symbol: string): FutureAsset => {
   return futuresAssets.find((asset) => asset.symbol === symbol) ?? futuresAssets[0];
 };
 
+const TabIcon = ({ tab }: { tab: PanelTab }) => {
+  if (tab === "assets") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <path d="M4 17l4-5 3 3 5-7 4 9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      </svg>
+    );
+  }
+
+  if (tab === "history") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <path d="M6 7v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path
+          d="M7.5 16.5a7 7 0 1 0-1.5-4.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+      <path
+        d="M12 4l2.2 4.8L19 10l-3.6 3.3.9 4.7-4.3-2.4-4.3 2.4.9-4.7L5 10l4.8-1.2L12 4z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+};
+
 export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(true);
+  const [activePanelTab, setActivePanelTab] = useState<PanelTab>("assets");
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
@@ -590,7 +649,6 @@ export default function Home() {
     <main className="terminal">
       <header className="topbar">
         <div className="brand-area">
-          <div className="brand-mark">TV</div>
           <div className="asset-meta">
             <h1>{selectedAsset.symbol}</h1>
             <p>{selectedAsset.name}</p>
@@ -651,65 +709,126 @@ export default function Home() {
           <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
         </section>
 
-        <aside className={`watchlist ${panelExpanded ? "expanded" : "collapsed"}`}>
+        <aside className="side-panel">
+          <nav className="panel-rail" aria-label="sidebar tabs">
+            {sidebarTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}`}
+                onClick={() => {
+                  setActivePanelTab(tab.id);
+                  setPanelExpanded(true);
+                }}
+                title={tab.label}
+                aria-label={tab.label}
+              >
+                <TabIcon tab={tab.id} />
+              </button>
+            ))}
+
+            {panelExpanded ? (
+              <button
+                type="button"
+                className="rail-btn rail-collapse"
+                onClick={() => setPanelExpanded(false)}
+                title="Collapse panel"
+                aria-label="Collapse panel"
+              >
+                <span>‹</span>
+              </button>
+            ) : null}
+          </nav>
+
           {panelExpanded ? (
-            <>
-              <div className="watchlist-head">
-                <div>
-                  <h2>Futures</h2>
-                  <p>Perpetual Contracts</p>
+            <div className="panel-content">
+              {activePanelTab === "assets" ? (
+                <div className="tab-view">
+                  <div className="watchlist-head">
+                    <div>
+                      <h2>Assets</h2>
+                      <p>Perpetual Contracts</p>
+                    </div>
+                  </div>
+
+                  <div className="watchlist-labels" aria-hidden>
+                    <span>Symbol</span>
+                    <span>Last</span>
+                    <span>Chg%</span>
+                    <span>Vol</span>
+                  </div>
+
+                  <ul className="watchlist-body">
+                    {watchlistRows.map((row) => (
+                      <li key={row.symbol}>
+                        <button
+                          type="button"
+                          className={`watchlist-row ${
+                            row.symbol === selectedSymbol ? "selected" : ""
+                          }`}
+                          onClick={() => setSelectedSymbol(row.symbol)}
+                        >
+                          <span className="symbol-col">
+                            <span>{row.symbol}</span>
+                            <small>{row.name}</small>
+                          </span>
+
+                          <span className="num-col">{formatPrice(row.lastPrice)}</span>
+                          <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
+                            {row.change >= 0 ? "+" : ""}
+                            {row.change.toFixed(2)}
+                          </span>
+                          <span className="num-col">{row.volume}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <button
-                  type="button"
-                  className="panel-toggle"
-                  onClick={() => setPanelExpanded(false)}
-                  aria-label="Collapse watchlist"
-                >
-                  ‹
-                </button>
-              </div>
+              ) : null}
 
-              <div className="watchlist-labels" aria-hidden>
-                <span>Symbol</span>
-                <span>Last</span>
-                <span>Chg%</span>
-                <span>Vol</span>
-              </div>
+              {activePanelTab === "history" ? (
+                <div className="tab-view">
+                  <div className="watchlist-head">
+                    <div>
+                      <h2>History</h2>
+                      <p>Recent simulated trades</p>
+                    </div>
+                  </div>
+                  <ul className="history-list">
+                    {historyItems.map((item) => (
+                      <li key={item.id} className="history-row">
+                        <div className="history-main">
+                          <span className={`history-action ${item.action === "Short" ? "down" : "up"}`}>
+                            {item.action}
+                          </span>
+                          <span>{item.symbol}</span>
+                        </div>
+                        <div className="history-meta">
+                          <span className={item.pnl.startsWith("-") ? "down" : "up"}>{item.pnl}</span>
+                          <span>{item.time}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
-              <ul className="watchlist-body">
-                {watchlistRows.map((row) => (
-                  <li key={row.symbol}>
-                    <button
-                      type="button"
-                      className={`watchlist-row ${row.symbol === selectedSymbol ? "selected" : ""}`}
-                      onClick={() => setSelectedSymbol(row.symbol)}
-                    >
-                      <span className="symbol-col">
-                        <span>{row.symbol}</span>
-                        <small>{row.name}</small>
-                      </span>
-
-                      <span className="num-col">{formatPrice(row.lastPrice)}</span>
-                      <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
-                        {row.change >= 0 ? "+" : ""}
-                        {row.change.toFixed(2)}
-                      </span>
-                      <span className="num-col">{row.volume}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="collapsed-expand"
-              onClick={() => setPanelExpanded(true)}
-              aria-label="Expand watchlist"
-            >
-              <span>Markets</span>
-            </button>
-          )}
+              {activePanelTab === "ai" ? (
+                <div className="tab-view ai-tab">
+                  <div className="watchlist-head">
+                    <div>
+                      <h2>AI</h2>
+                      <p>Assistant module</p>
+                    </div>
+                  </div>
+                  <div className="ai-placeholder">
+                    <p>AI panel is reserved for upcoming features.</p>
+                    <p>No actions are connected yet.</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
       </section>
 
