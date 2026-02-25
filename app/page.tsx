@@ -6,10 +6,10 @@ import {
   CrosshairMode,
   createChart,
   type CandlestickData,
-  type HistogramData,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
+  type SeriesMarker,
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
@@ -21,7 +21,6 @@ type FutureAsset = {
   symbol: string;
   name: string;
   basePrice: number;
-  volume: string;
   openInterest: string;
   funding: string;
 };
@@ -31,16 +30,26 @@ type Candle = {
   close: number;
   high: number;
   low: number;
-  volume: number;
   time: number;
+};
+
+type TradeResult = "Win" | "Loss";
+
+type HistorySeed = {
+  id: string;
+  symbol: string;
+  result: TradeResult;
+  pnl: string;
+  candleOffset: number;
 };
 
 type HistoryItem = {
   id: string;
-  action: "Long" | "Short" | "Exit";
   symbol: string;
+  result: TradeResult;
   pnl: string;
   time: string;
+  markerTime: UTCTimestamp;
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -48,7 +57,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "BTCUSDT.P",
     name: "Bitcoin Perpetual",
     basePrice: 64238.7,
-    volume: "7.8B",
     openInterest: "20.4B",
     funding: "+0.012%"
   },
@@ -56,7 +64,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "ETHUSDT.P",
     name: "Ethereum Perpetual",
     basePrice: 3421.85,
-    volume: "4.2B",
     openInterest: "10.1B",
     funding: "+0.009%"
   },
@@ -64,7 +71,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "SOLUSDT.P",
     name: "Solana Perpetual",
     basePrice: 187.54,
-    volume: "1.6B",
     openInterest: "2.8B",
     funding: "-0.004%"
   },
@@ -72,7 +78,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "XRPUSDT.P",
     name: "XRP Perpetual",
     basePrice: 0.6943,
-    volume: "1.1B",
     openInterest: "1.9B",
     funding: "+0.003%"
   },
@@ -80,7 +85,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "BNBUSDT.P",
     name: "BNB Perpetual",
     basePrice: 585.19,
-    volume: "760M",
     openInterest: "1.3B",
     funding: "-0.001%"
   },
@@ -88,7 +92,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "DOGEUSDT.P",
     name: "Dogecoin Perpetual",
     basePrice: 0.1921,
-    volume: "950M",
     openInterest: "1.4B",
     funding: "+0.015%"
   },
@@ -96,7 +99,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "AVAXUSDT.P",
     name: "Avalanche Perpetual",
     basePrice: 42.16,
-    volume: "480M",
     openInterest: "780M",
     funding: "-0.008%"
   },
@@ -104,7 +106,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "LINKUSDT.P",
     name: "Chainlink Perpetual",
     basePrice: 19.84,
-    volume: "420M",
     openInterest: "640M",
     funding: "+0.006%"
   },
@@ -112,7 +113,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "ADAUSDT.P",
     name: "Cardano Perpetual",
     basePrice: 0.7862,
-    volume: "390M",
     openInterest: "590M",
     funding: "-0.002%"
   },
@@ -120,7 +120,6 @@ const futuresAssets: FutureAsset[] = [
     symbol: "SUIUSDT.P",
     name: "Sui Perpetual",
     basePrice: 1.79,
-    volume: "280M",
     openInterest: "410M",
     funding: "+0.011%"
   }
@@ -166,12 +165,13 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "ai", label: "AI" }
 ];
 
-const historyItems: HistoryItem[] = [
-  { id: "h1", action: "Long", symbol: "BTCUSDT.P", pnl: "+$842", time: "13:42" },
-  { id: "h2", action: "Short", symbol: "ETHUSDT.P", pnl: "+$219", time: "12:58" },
-  { id: "h3", action: "Exit", symbol: "SOLUSDT.P", pnl: "-$54", time: "11:27" },
-  { id: "h4", action: "Long", symbol: "XRPUSDT.P", pnl: "+$126", time: "10:19" },
-  { id: "h5", action: "Exit", symbol: "BNBUSDT.P", pnl: "+$63", time: "09:46" }
+const historySeeds: HistorySeed[] = [
+  { id: "h1", symbol: "BTCUSDT.P", result: "Win", pnl: "+2.10%", candleOffset: 18 },
+  { id: "h2", symbol: "ETHUSDT.P", result: "Loss", pnl: "-0.84%", candleOffset: 27 },
+  { id: "h3", symbol: "SOLUSDT.P", result: "Win", pnl: "+1.35%", candleOffset: 33 },
+  { id: "h4", symbol: "XRPUSDT.P", result: "Loss", pnl: "-0.48%", candleOffset: 41 },
+  { id: "h5", symbol: "BNBUSDT.P", result: "Win", pnl: "+0.93%", candleOffset: 49 },
+  { id: "h6", symbol: "DOGEUSDT.P", result: "Win", pnl: "+2.74%", candleOffset: 57 }
 ];
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -272,15 +272,12 @@ const generateFakeCandles = (
 
     const high = Math.max(open, close) * (1 + rand() * volatility * 0.85);
     const low = Math.max(0.000001, Math.min(open, close) * (1 - rand() * volatility * 0.85));
-    const bodyRatio = Math.abs(close - open) / Math.max(open, 0.000001);
-    const volume = (35 + rand() * 120) * (1 + bodyRatio * 75);
 
     series.push({
       open,
       close,
       high,
       low,
-      volume,
       time: startTime + i * timeframeMs
     });
   }
@@ -332,6 +329,7 @@ export default function Home() {
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("assets");
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
@@ -347,7 +345,6 @@ export default function Home() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const selectionRef = useRef<string>("");
 
   const selectedAsset = useMemo(() => {
@@ -405,7 +402,6 @@ export default function Home() {
             close,
             high,
             low,
-            volume: Math.max(12, last.volume * (0.7 + Math.random() * 0.95)),
             time: last.time + timeframeMinutes[selectedTimeframe] * 60_000
           });
 
@@ -417,7 +413,6 @@ export default function Home() {
           last.close = close;
           last.high = Math.max(last.high, close, last.open);
           last.low = Math.max(0.000001, Math.min(last.low, close, last.open));
-          last.volume = last.volume * (1 + Math.random() * 0.13);
           nextSeries[nextSeries.length - 1] = last;
         }
 
@@ -480,6 +475,39 @@ export default function Home() {
       };
     });
   }, [selectedTimeframe, seriesMap]);
+
+  const historyRows = useMemo(() => {
+    return historySeeds.map((seed) => {
+      const asset = getAssetBySymbol(seed.symbol);
+      const key = symbolTimeframeKey(seed.symbol, selectedTimeframe);
+      const list =
+        seriesMap[key] ?? generateFakeCandles(asset.basePrice, seed.symbol, selectedTimeframe);
+      const index = Math.max(4, list.length - 1 - seed.candleOffset);
+      const candle = list[index];
+
+      return {
+        id: seed.id,
+        symbol: seed.symbol,
+        result: seed.result,
+        pnl: seed.pnl,
+        markerTime: toUtcTimestamp(candle.time),
+        time: new Date(candle.time).toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+          timeZone: "UTC"
+        })
+      } satisfies HistoryItem;
+    });
+  }, [selectedTimeframe, seriesMap]);
+
+  const selectedHistoryTrade = useMemo(() => {
+    if (!selectedHistoryId) {
+      return null;
+    }
+
+    return historyRows.find((row) => row.id === selectedHistoryId) ?? null;
+  }, [historyRows, selectedHistoryId]);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -555,22 +583,6 @@ export default function Home() {
       lastValueVisible: true
     });
 
-    const volumeSeries = chart.addHistogramSeries({
-      priceFormat: {
-        type: "volume"
-      },
-      priceScaleId: "",
-      lastValueVisible: false,
-      priceLineVisible: false
-    });
-
-    chart.priceScale("").applyOptions({
-      scaleMargins: {
-        top: 0.76,
-        bottom: 0
-      }
-    });
-
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (!param.point || !param.time) {
         setHoveredTime(null);
@@ -599,7 +611,6 @@ export default function Home() {
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
 
     return () => {
       resizeObserver.disconnect();
@@ -607,16 +618,14 @@ export default function Home() {
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
 
-    if (!chart || !candleSeries || !volumeSeries || selectedCandles.length === 0) {
+    if (!chart || !candleSeries || selectedCandles.length === 0) {
       return;
     }
 
@@ -628,14 +637,7 @@ export default function Home() {
       close: candle.close
     }));
 
-    const volumeData: HistogramData[] = selectedCandles.map((candle) => ({
-      time: toUtcTimestamp(candle.time),
-      value: candle.volume,
-      color: candle.close >= candle.open ? "rgba(27, 174, 138, 0.75)" : "rgba(240, 69, 90, 0.75)"
-    }));
-
     candleSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
 
     const selection = `${selectedSymbol}-${selectedTimeframe}`;
 
@@ -667,6 +669,31 @@ export default function Home() {
       window.cancelAnimationFrame(frame);
     };
   }, [panelExpanded, activePanelTab]);
+
+  useEffect(() => {
+    const candleSeries = candleSeriesRef.current;
+
+    if (!candleSeries) {
+      return;
+    }
+
+    if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
+      candleSeries.setMarkers([]);
+      return;
+    }
+
+    const markers: SeriesMarker<Time>[] = [
+      {
+        time: selectedHistoryTrade.markerTime,
+        position: selectedHistoryTrade.result === "Win" ? "belowBar" : "aboveBar",
+        shape: selectedHistoryTrade.result === "Win" ? "arrowUp" : "arrowDown",
+        color: selectedHistoryTrade.result === "Win" ? "#1bae8a" : "#f0455a",
+        text: `${selectedHistoryTrade.result} ${selectedHistoryTrade.pnl}`
+      }
+    ];
+
+    candleSeries.setMarkers(markers);
+  }, [selectedHistoryTrade, selectedSymbol, selectedTimeframe, selectedCandles]);
 
   return (
     <main className="terminal">
@@ -772,7 +799,6 @@ export default function Home() {
                       <span>Symbol</span>
                       <span>Last</span>
                       <span>Chg%</span>
-                      <span>Vol</span>
                     </li>
                     {watchlistRows.map((row) => (
                       <li key={row.symbol}>
@@ -793,7 +819,6 @@ export default function Home() {
                             {row.change >= 0 ? "+" : ""}
                             {row.change.toFixed(2)}
                           </span>
-                          <span className="num-col">{row.volume}</span>
                         </button>
                       </li>
                     ))}
@@ -806,22 +831,39 @@ export default function Home() {
                   <div className="watchlist-head">
                     <div>
                       <h2>History</h2>
-                      <p>Recent simulated trades</p>
+                      <p>Simulated trade outcomes</p>
                     </div>
                   </div>
                   <ul className="history-list">
-                    {historyItems.map((item) => (
-                      <li key={item.id} className="history-row">
-                        <div className="history-main">
-                          <span className={`history-action ${item.action === "Short" ? "down" : "up"}`}>
-                            {item.action}
+                    {historyRows.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          className={`history-row ${
+                            selectedHistoryId === item.id ? "selected" : ""
+                          }`}
+                          onClick={() => {
+                            setSelectedHistoryId(item.id);
+                            setSelectedSymbol(item.symbol);
+                          }}
+                        >
+                          <span className="history-main">
+                            <span
+                              className={`history-action ${
+                                item.result === "Loss" ? "down" : "up"
+                              }`}
+                            >
+                              {item.result}
+                            </span>
+                            <span>{item.symbol}</span>
                           </span>
-                          <span>{item.symbol}</span>
-                        </div>
-                        <div className="history-meta">
-                          <span className={item.pnl.startsWith("-") ? "down" : "up"}>{item.pnl}</span>
-                          <span>{item.time}</span>
-                        </div>
+                          <span className="history-meta">
+                            <span className={item.result === "Loss" ? "down" : "up"}>
+                              {item.pnl}
+                            </span>
+                            <span>{item.time}</span>
+                          </span>
+                        </button>
                       </li>
                     ))}
                   </ul>

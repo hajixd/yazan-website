@@ -294,10 +294,9 @@ button {
 .watchlist-row {
   display: grid;
   grid-template-columns:
-    minmax(0, 1.55fr)
-    minmax(88px, 0.95fr)
-    minmax(76px, 0.85fr)
-    minmax(68px, 0.74fr);
+    minmax(0, 1.75fr)
+    minmax(92px, 1fr)
+    minmax(84px, 0.92fr);
   align-items: center;
   gap: 0.32rem;
 }
@@ -393,10 +392,23 @@ button {
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   padding: 0.58rem 0.72rem;
   border-bottom: 1px solid var(--line-soft);
   font-size: 0.71rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.history-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.history-row.selected {
+  background: rgba(45, 108, 255, 0.16);
 }
 
 .history-main,
@@ -457,10 +469,9 @@ button {
   .watchlist-labels,
   .watchlist-row {
     grid-template-columns:
-      minmax(0, 1.45fr)
-      minmax(74px, 0.95fr)
-      minmax(62px, 0.82fr)
-      minmax(54px, 0.74fr);
+      minmax(0, 1.62fr)
+      minmax(76px, 0.96fr)
+      minmax(62px, 0.84fr);
   }
 }
 
