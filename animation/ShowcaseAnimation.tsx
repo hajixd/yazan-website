@@ -911,40 +911,42 @@ export default function ShowcaseAnimation() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.35, ease: "easeOut" }}
         >
-          <div className={styles.browserChrome}>
-            <div className={styles.browserDots}>
-              <span />
-              <span />
-              <span />
+          <div className={styles.browserWindow}>
+            <div className={styles.browserChrome}>
+              <div className={styles.browserDots}>
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className={styles.addressBar}>
+                {introPhase === "search" ? "google.com" : "yazan.trade"}
+              </div>
             </div>
-            <div className={styles.addressBar}>
-              {introPhase === "search" ? "google.com" : "yazan.trade"}
-            </div>
+
+            {introPhase === "search" ? (
+              <div className={styles.googlePane}>
+                <h2>Google</h2>
+                <p>yazan.trade</p>
+                <button ref={introSearchRef} type="button" className={styles.googleAction}>
+                  Search
+                </button>
+              </div>
+            ) : null}
+
+            {introPhase === "results" ? (
+              <div className={styles.resultsPane}>
+                <span className={styles.resultTag}>Top Result</span>
+                <button ref={introResultRef} type="button" className={styles.resultLink}>
+                  yazan.trade - Trading Workspace
+                </button>
+                <p>Open live assets, copy people/models, and view history overlays.</p>
+              </div>
+            ) : null}
+
+            {introPhase === "loading" ? (
+              <div className={styles.loadingPane}>Opening yazan.trade...</div>
+            ) : null}
           </div>
-
-          {introPhase === "search" ? (
-            <div className={styles.googlePane}>
-              <h2>Google</h2>
-              <p>yazan.trade</p>
-              <button ref={introSearchRef} type="button" className={styles.googleAction}>
-                Search
-              </button>
-            </div>
-          ) : null}
-
-          {introPhase === "results" ? (
-            <div className={styles.resultsPane}>
-              <span className={styles.resultTag}>Top Result</span>
-              <button ref={introResultRef} type="button" className={styles.resultLink}>
-                yazan.trade - Trading Workspace
-              </button>
-              <p>Open live assets, copy people/models, and view history overlays.</p>
-            </div>
-          ) : null}
-
-          {introPhase === "loading" ? (
-            <div className={styles.loadingPane}>Opening yazan.trade...</div>
-          ) : null}
         </motion.div>
       ) : null}
     </section>
