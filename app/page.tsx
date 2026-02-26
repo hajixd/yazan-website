@@ -1081,7 +1081,27 @@ export default function Home() {
         blueprint.side === "Long"
           ? entryPrice + riskPerUnit * blueprint.rr
           : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
-      const outcomePrice = blueprint.result === "Win" ? targetPrice : stopPrice;
+      const path = evaluateTpSlPath(
+        list,
+        blueprint.side,
+        entryIndex,
+        targetPrice,
+        stopPrice,
+        exitIndex
+      );
+
+      const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
+      const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
+      const outcomePrice = Math.max(0.000001, rawOutcomePrice);
+      const result: TradeResult = path.hit
+        ? (path.result ?? "Loss")
+        : blueprint.side === "Long"
+          ? outcomePrice >= entryPrice
+            ? "Win"
+            : "Loss"
+          : outcomePrice <= entryPrice
+            ? "Win"
+            : "Loss";
       const pnlPct =
         blueprint.side === "Long"
           ? ((outcomePrice - entryPrice) / entryPrice) * 100
@@ -1095,19 +1115,19 @@ export default function Home() {
         id: blueprint.id,
         symbol: blueprint.symbol,
         side: blueprint.side,
-        result: blueprint.result,
+        result,
         pnlPct,
         pnlUsd,
         entryTime: toUtcTimestamp(list[entryIndex].time),
-        exitTime: toUtcTimestamp(list[exitIndex].time),
+        exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
         entryPrice,
         targetPrice,
         stopPrice,
         outcomePrice,
         units: blueprint.units,
         entryAt: formatDateTime(list[entryIndex].time),
-        exitAt: formatDateTime(list[exitIndex].time),
-        time: formatDateTime(list[exitIndex].time)
+        exitAt: formatDateTime(list[resolvedExitIndex].time),
+        time: formatDateTime(list[resolvedExitIndex].time)
       });
     }
 
@@ -1744,8 +1764,7 @@ export default function Home() {
       ];
       const isPositiveTrade =
         trade.status === "pending" ? trade.pnlUsd >= 0 : trade.result === "Win";
-      const exitPrefix =
-        trade.status === "pending" ? "Pending" : trade.result === "Win" ? "✓" : "x";
+      const exitPrefix = isPositiveTrade ? "✓" : "x";
 
       candleSeries.setMarkers([
         {
@@ -1758,13 +1777,8 @@ export default function Home() {
         {
           time: endTime,
           position: isPositiveTrade ? "aboveBar" : "belowBar",
-          shape: "circle",
-          color:
-            trade.status === "pending"
-              ? "#2d6cff"
-              : trade.result === "Win"
-                ? "#35c971"
-                : "#f0455a",
+          shape: "square",
+          color: isPositiveTrade ? "#35c971" : "#f0455a",
           text: `${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
         }
       ]);
@@ -1814,7 +1828,7 @@ export default function Home() {
         allMarkers.push({
           time: endTime,
           position: trade.result === "Win" ? "aboveBar" : "belowBar",
-          shape: "circle",
+          shape: "square",
           color: trade.result === "Win" ? "#35c971" : "#f0455a",
           text: `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
         });

@@ -99,18 +99,49 @@ const buildTrade = (
   candles: Candle[],
   id: string,
   side: TradeSide,
-  result: TradeResult,
   entryIndex: number,
-  exitIndex: number,
+  plannedExitIndex: number,
   rr: number,
   units: number
 ): TradeOverlay => {
+  const safeExitIndex = Math.min(candles.length - 1, Math.max(entryIndex + 1, plannedExitIndex));
   const entryPrice = candles[entryIndex].close;
   const risk = Math.max(58, Math.abs(candles[entryIndex].high - candles[entryIndex].low));
   const targetPrice =
     side === "Long" ? entryPrice + risk * rr : Math.max(0.000001, entryPrice - risk * rr);
   const stopPrice = side === "Long" ? entryPrice - risk : entryPrice + risk;
-  const outcomePrice = result === "Win" ? targetPrice : stopPrice;
+  let exitIndex = safeExitIndex;
+  let outcomePrice = candles[safeExitIndex].close;
+  let result: TradeResult =
+    side === "Long" ? (outcomePrice >= entryPrice ? "Win" : "Loss") : outcomePrice <= entryPrice ? "Win" : "Loss";
+
+  for (let i = entryIndex + 1; i <= safeExitIndex; i += 1) {
+    const candle = candles[i];
+    const hitTarget = side === "Long" ? candle.high >= targetPrice : candle.low <= targetPrice;
+    const hitStop = side === "Long" ? candle.low <= stopPrice : candle.high >= stopPrice;
+
+    if (!hitTarget && !hitStop) {
+      continue;
+    }
+
+    exitIndex = i;
+
+    if (hitTarget && hitStop) {
+      const targetFirst =
+        Math.abs(candle.open - targetPrice) <= Math.abs(candle.open - stopPrice);
+      result = targetFirst ? "Win" : "Loss";
+      outcomePrice = targetFirst ? targetPrice : stopPrice;
+    } else if (hitTarget) {
+      result = "Win";
+      outcomePrice = targetPrice;
+    } else {
+      result = "Loss";
+      outcomePrice = stopPrice;
+    }
+
+    break;
+  }
+
   const pnlUsd =
     side === "Long"
       ? (outcomePrice - entryPrice) * units
@@ -219,9 +250,9 @@ export default function ShowcaseAnimation() {
 
   const closedTrades = useMemo(() => {
     return [
-      buildTrade(candles, "h1", "Long", "Win", 16, 31, 1.7, 0.72),
-      buildTrade(candles, "h2", "Short", "Loss", 28, 39, 1.55, 0.64),
-      buildTrade(candles, "h3", "Long", "Win", 41, 53, 1.8, 0.66)
+      buildTrade(candles, "h1", "Long", 16, 31, 1.7, 0.72),
+      buildTrade(candles, "h2", "Short", 28, 39, 1.55, 0.64),
+      buildTrade(candles, "h3", "Long", 41, 53, 1.8, 0.66)
     ];
   }, [candles]);
 
@@ -229,9 +260,33 @@ export default function ShowcaseAnimation() {
     const entryIndex = 44;
     const exitIndex = 58;
     const entryPrice = candles[entryIndex].close;
-    const risk = Math.max(56, Math.abs(candles[entryIndex].high - candles[entryIndex].low));
-    const targetPrice = entryPrice + risk * 1.9;
-    const stopPrice = entryPrice - risk;
+    let risk = Math.max(56, Math.abs(candles[entryIndex].high - candles[entryIndex].low));
+    let targetPrice = entryPrice + risk * 1.9;
+    let stopPrice = entryPrice - risk;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      let hit = false;
+
+      for (let i = entryIndex + 1; i <= exitIndex; i += 1) {
+        const candle = candles[i];
+        const hitTarget = candle.high >= targetPrice;
+        const hitStop = candle.low <= stopPrice;
+
+        if (hitTarget || hitStop) {
+          hit = true;
+          break;
+        }
+      }
+
+      if (!hit) {
+        break;
+      }
+
+      risk *= 1.24;
+      targetPrice = entryPrice + risk * 1.9;
+      stopPrice = entryPrice - risk;
+    }
+
     const outcomePrice = candles[exitIndex].close;
     const units = 0.74;
     const pnlUsd = (outcomePrice - entryPrice) * units;
@@ -489,6 +544,11 @@ export default function ShowcaseAnimation() {
                       const exitX = toChartX(trade.exitIndex);
                       const entryY = toChartY(trade.entryPrice, minPrice, maxPrice);
                       const exitY = toChartY(trade.outcomePrice, minPrice, maxPrice);
+                      const isPositiveExit = showActiveTrade ? trade.pnlUsd >= 0 : trade.result === "Win";
+                      const exitLabel = `${isPositiveExit ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`;
+                      const exitStroke = isPositiveExit ? "#1ec8a6" : "#ff4f6d";
+                      const exitRectY = isPositiveExit ? exitY - 20 : exitY + 4;
+                      const exitTextY = isPositiveExit ? exitY - 7 : exitY + 17;
 
                       return (
                         <>
@@ -543,24 +603,22 @@ export default function ShowcaseAnimation() {
 
                           <rect
                             x={Math.min(exitX + 8, 695)}
-                            y={exitY - 20}
+                            y={exitRectY}
                             width={168}
                             height={19}
                             rx={5}
                             fill="rgba(8, 18, 34, 0.88)"
-                            stroke={showActiveTrade ? "#4c86ff" : trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
+                            stroke={exitStroke}
                             strokeWidth={1}
                           />
                           <text
                             x={Math.min(exitX + 14, 701)}
-                            y={exitY - 7}
+                            y={exitTextY}
                             fontSize="8"
-                            fill={showActiveTrade ? "#4c86ff" : trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
+                            fill={exitStroke}
                             fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
                           >
-                            {showActiveTrade
-                              ? `Pending ${formatSignedUsd(trade.pnlUsd)}`
-                              : `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`}
+                            {exitLabel}
                           </text>
                         </>
                       );
