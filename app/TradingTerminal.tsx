@@ -100,8 +100,6 @@ type ModelProfile = {
   name: string;
   kind: "Person" | "Model";
   accountNumber?: string;
-  style: string;
-  description: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -272,8 +270,6 @@ const modelProfiles: ModelProfile[] = [
     name: "Yazan",
     kind: "Person",
     accountNumber: createPseudoAccountNumber("yazan"),
-    style: "Momentum Pullback",
-    description: "Trend continuation entries with clean invalidation.",
     riskMin: 0.0018,
     riskMax: 0.0048,
     rrMin: 1.35,
@@ -285,8 +281,6 @@ const modelProfiles: ModelProfile[] = [
     id: "ict",
     name: "ICT",
     kind: "Model",
-    style: "Liquidity Sweep",
-    description: "Displacement after liquidity grabs and fair value gaps.",
     riskMin: 0.0015,
     riskMax: 0.004,
     rrMin: 1.6,
@@ -298,8 +292,6 @@ const modelProfiles: ModelProfile[] = [
     id: "lyra",
     name: "Lyra",
     kind: "Model",
-    style: "Session Mean Revert",
-    description: "Fade stretched moves around session extremes.",
     riskMin: 0.0012,
     riskMax: 0.0032,
     rrMin: 1.15,
@@ -311,8 +303,6 @@ const modelProfiles: ModelProfile[] = [
     id: "atlas",
     name: "Atlas",
     kind: "Model",
-    style: "Breakout Pressure",
-    description: "Continuation breakouts with volatility expansion.",
     riskMin: 0.002,
     riskMax: 0.0055,
     rrMin: 1.25,
@@ -324,8 +314,6 @@ const modelProfiles: ModelProfile[] = [
     id: "orion",
     name: "Orion",
     kind: "Model",
-    style: "Structure Rotation",
-    description: "Swing-to-swing structure shifts across key levels.",
     riskMin: 0.0017,
     riskMax: 0.0044,
     rrMin: 1.3,
@@ -690,6 +678,51 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
+const generateShowcaseTradeBlueprints = (
+  model: ModelProfile,
+  total = 84,
+  nowMs = floorToTimeframe(SHOWCASE_REFERENCE_NOW_MS, "1m")
+): TradeBlueprint[] => {
+  const curatedSymbols = [
+    "BTCUSDT.P",
+    "ETHUSDT.P",
+    "SOLUSDT.P",
+    "XRPUSDT.P",
+    "BNBUSDT.P",
+    "DOGEUSDT.P",
+    "AVAXUSDT.P",
+    "LINKUSDT.P"
+  ] as const;
+  const blueprints: TradeBlueprint[] = [];
+
+  for (let i = 0; i < total; i += 1) {
+    const symbol = curatedSymbols[i % curatedSymbols.length];
+    const side: TradeSide = i % 3 === 0 || i % 3 === 1 ? "Long" : "Short";
+    const rr = model.rrMin + (model.rrMax - model.rrMin) * (0.58 + ((i % 7) / 18));
+    const riskPct = model.riskMin + (model.riskMax - model.riskMin) * (0.44 + ((i % 5) / 16));
+    const holdMinutes = 55 + (i % 6) * 36;
+    const exitOffsetMinutes = 30 + i * 54;
+    const exitMs = nowMs - exitOffsetMinutes * 60_000;
+    const entryMs = exitMs - holdMinutes * 60_000;
+    const units = 0.7 + (i % 9) * 0.29;
+
+    blueprints.push({
+      id: `${model.id}-show-${String(i + 1).padStart(2, "0")}`,
+      modelId: model.id,
+      symbol,
+      side,
+      result: "Win",
+      entryMs,
+      exitMs,
+      riskPct,
+      rr,
+      units
+    });
+  }
+
+  return blueprints;
+};
+
 const generateTradeBlueprints = (
   model: ModelProfile,
   total = 64,
@@ -1004,10 +1037,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [referenceNowMs, selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
+    if (showcaseMode) {
+      return generateShowcaseTradeBlueprints(
+        selectedModel,
+        84,
+        floorToTimeframe(referenceNowMs, "1m")
+      );
+    }
+
     return generateTradeBlueprints(
       selectedModel,
-      showcaseMode ? 84 : 64,
-      showcaseMode ? floorToTimeframe(referenceNowMs, "1m") : undefined
+      64,
+      floorToTimeframe(referenceNowMs, "1m")
     );
   }, [referenceNowMs, selectedModel, showcaseMode]);
 
@@ -1087,8 +1128,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
     const curatedMarkPrice =
       side === "Long"
-        ? entryPrice + (targetPrice - entryPrice) * 0.74
-        : entryPrice - (entryPrice - targetPrice) * 0.74;
+        ? entryPrice + (targetPrice - entryPrice) * 0.86
+        : entryPrice - (entryPrice - targetPrice) * 0.86;
     const markPrice = showcaseMode
       ? clamp(
           curatedMarkPrice,
@@ -1239,26 +1280,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return byRecent.slice(0, 60);
     }
 
-    const showcaseRows = byRecent
-      .filter((row) => row.result === "Win")
-      .sort((a, b) => {
-        if (b.pnlPct !== a.pnlPct) {
-          return b.pnlPct - a.pnlPct;
-        }
-
-        return Number(b.exitTime) - Number(a.exitTime);
-      });
-
-    if (showcaseRows.length > 12) {
-      return showcaseRows.slice(0, 48);
-    }
-
     return byRecent
       .map((row) => {
-        if (row.result === "Win") {
-          return row;
-        }
-
         const outcomePrice = row.targetPrice;
         const pnlPct =
           row.side === "Long"
@@ -1276,6 +1299,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           pnlPct,
           pnlUsd
         };
+      })
+      .sort((a, b) => {
+        if (b.pnlPct !== a.pnlPct) {
+          return b.pnlPct - a.pnlPct;
+        }
+
+        return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
   }, [referenceNowMs, showcaseMode, tradeBlueprints, selectedTimeframe, seriesMap]);
@@ -1585,9 +1615,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
+    const initialWidth = Math.max(1, Math.floor(container.clientWidth));
+    const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+
     const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
+      width: initialWidth,
+      height: initialHeight,
       layout: {
         background: { type: ColorType.Solid, color: "#090d13" },
         textColor: "#7f889d"
@@ -1727,13 +1760,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
+      const width = Math.max(1, Math.floor(entry.contentRect.width));
+      const height = Math.max(1, Math.floor(entry.contentRect.height));
+
       chart.applyOptions({
-        width: Math.floor(entry.contentRect.width),
-        height: Math.floor(entry.contentRect.height)
+        width,
+        height
       });
     });
 
     resizeObserver.observe(container);
+
+    const settleResize = () => {
+      chart.applyOptions({
+        width: Math.max(1, Math.floor(container.clientWidth)),
+        height: Math.max(1, Math.floor(container.clientHeight))
+      });
+    };
+    const resizeFrameA = window.requestAnimationFrame(settleResize);
+    const resizeFrameB = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(settleResize);
+    });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
@@ -1745,6 +1792,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     tradePathLineRef.current = tradePathLine;
 
     return () => {
+      window.cancelAnimationFrame(resizeFrameA);
+      window.cancelAnimationFrame(resizeFrameB);
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       chart.remove();

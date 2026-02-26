@@ -17,6 +17,7 @@ type TourStep = {
   calloutTitle?: string;
   calloutDetail?: string;
   calloutSide?: CalloutSide;
+  calloutFocus?: string;
 };
 
 type CursorState = {
@@ -49,6 +50,11 @@ type CalloutState = {
   detail: string;
   targetX: number;
   targetY: number;
+  targetLeft: number;
+  targetTop: number;
+  targetRight: number;
+  targetBottom: number;
+  focusLabel?: string;
 };
 
 type HighlightRect = {
@@ -67,6 +73,7 @@ type ClickOptions = {
   calloutTitle?: string;
   calloutDetail?: string;
   calloutSide?: CalloutSide;
+  calloutFocus?: string;
 };
 
 const sleep = (ms: number) => {
@@ -169,10 +176,10 @@ export default function ShowcaseAnimation() {
   const [introPhase, setIntroPhase] = useState<IntroPhase>("search");
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, scale: 1 });
   const [rig, setRig] = useState<RigState>({
-    scale: 0.9,
-    y: 32,
-    rotateX: 7,
-    rotateY: -8
+    scale: 0.97,
+    y: 16,
+    rotateX: 1.6,
+    rotateY: -1.6
   });
   const [followCursor, setFollowCursor] = useState(false);
   const [callout, setCallout] = useState<CalloutState | null>(null);
@@ -191,8 +198,8 @@ export default function ShowcaseAnimation() {
     }
 
     return {
-      x: (viewport.width / 2 - cursor.x) * 0.06,
-      y: (viewport.height / 2 - cursor.y) * 0.06
+      x: (viewport.width / 2 - cursor.x) * 0.018,
+      y: (viewport.height / 2 - cursor.y) * 0.018
     };
   }, [cursor.x, cursor.y, followCursor, viewport.height, viewport.width]);
 
@@ -221,7 +228,8 @@ export default function ShowcaseAnimation() {
       rect: DOMRect,
       title?: string,
       detail?: string,
-      side: CalloutSide = "right"
+      side: CalloutSide = "right",
+      focusLabel?: string
     ) => {
       if (!title || !detail) {
         return;
@@ -229,8 +237,8 @@ export default function ShowcaseAnimation() {
 
       const innerWidth = window.innerWidth;
       const innerHeight = window.innerHeight;
-      const cardWidth = innerWidth < 760 ? 220 : 290;
-      const cardHeight = 112;
+      const cardWidth = innerWidth < 760 ? 244 : 360;
+      const cardHeight = innerWidth < 760 ? 128 : 152;
       const gap = 20;
       let x = rect.right + gap;
       let y = rect.top + rect.height / 2 - cardHeight / 2;
@@ -255,7 +263,12 @@ export default function ShowcaseAnimation() {
         title,
         detail,
         targetX: rect.left + rect.width / 2,
-        targetY: rect.top + rect.height / 2
+        targetY: rect.top + rect.height / 2,
+        targetLeft: rect.left,
+        targetTop: rect.top,
+        targetRight: rect.right,
+        targetBottom: rect.bottom,
+        focusLabel
       });
       setHighlightRect({
         x: rect.left - 6,
@@ -265,29 +278,30 @@ export default function ShowcaseAnimation() {
       });
     };
 
-    const setCameraToTarget = async (target: HTMLElement, zoom = 1.18, follow = false) => {
+    const setCameraToTarget = async (target: HTMLElement, zoom = 1.14, follow = false) => {
       const host = hostRef.current;
       if (!host || cancelled) {
         return;
       }
 
+      const safeZoom = clamp(zoom, 1, 1.18);
       const hostRect = host.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
       const centerX = targetRect.left - hostRect.left + targetRect.width / 2;
       const centerY = targetRect.top - hostRect.top + targetRect.height / 2;
 
-      const minX = hostRect.width - hostRect.width * zoom;
-      const minY = hostRect.height - hostRect.height * zoom;
+      const minX = hostRect.width - hostRect.width * safeZoom;
+      const minY = hostRect.height - hostRect.height * safeZoom;
 
       const nextCamera: CameraState = {
-        scale: zoom,
-        x: clamp(hostRect.width / 2 - centerX * zoom, minX, 0),
-        y: clamp(hostRect.height / 2 - centerY * zoom, minY, 0)
+        scale: safeZoom,
+        x: clamp(hostRect.width / 2 - centerX * safeZoom, minX, 0),
+        y: clamp(hostRect.height / 2 - centerY * safeZoom, minY, 0)
       };
 
       setCamera(nextCamera);
       setFollowCursor(follow);
-      await sleep(320);
+      await sleep(520);
     };
 
     const resetCamera = async (wait = 240) => {
@@ -326,7 +340,8 @@ export default function ShowcaseAnimation() {
         rect,
         options.calloutTitle,
         options.calloutDetail,
-        options.calloutSide ?? "right"
+        options.calloutSide ?? "right",
+        options.calloutFocus
       );
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;
@@ -357,8 +372,6 @@ export default function ShowcaseAnimation() {
       if (step.waitBefore) {
         await sleep(step.waitBefore);
       }
-
-      await resetCamera(180);
 
       let target: HTMLElement | null = null;
 
@@ -391,13 +404,14 @@ export default function ShowcaseAnimation() {
         followCursor: step.followCursor,
         calloutTitle: step.calloutTitle,
         calloutDetail: step.calloutDetail,
-        calloutSide: step.calloutSide
+        calloutSide: step.calloutSide,
+        calloutFocus: step.calloutFocus
       });
 
       if (step.waitAfter) {
         await sleep(step.waitAfter);
       } else {
-        await sleep(720);
+        await sleep(980);
       }
 
       return true;
@@ -413,6 +427,7 @@ export default function ShowcaseAnimation() {
         title: string;
         detail: string;
         side?: CalloutSide;
+        focus?: string;
       }
     ) => {
       if (cancelled) {
@@ -431,11 +446,17 @@ export default function ShowcaseAnimation() {
         return;
       }
 
-      await resetCamera(150);
+      await resetCamera(220);
       await setCameraToTarget(target, zoom, follow);
       if (annotation) {
         const rect = target.getBoundingClientRect();
-        showAnnotation(rect, annotation.title, annotation.detail, annotation.side ?? "right");
+        showAnnotation(
+          rect,
+          annotation.title,
+          annotation.detail,
+          annotation.side ?? "right",
+          annotation.focus
+        );
       }
       await sleep(holdMs);
     };
@@ -452,18 +473,19 @@ export default function ShowcaseAnimation() {
         return;
       }
 
-      await setCameraToTarget(list, 1.28, true);
+      await setCameraToTarget(list, 1.12, false);
       const rect = list.getBoundingClientRect();
       showAnnotation(
         rect,
         "Large Asset Coverage",
-        "The watchlist scroll demonstrates broad market coverage in one workspace.",
-        "left"
+        "The watchlist can be scanned quickly without leaving the chart.",
+        "left",
+        "Scrollable Asset List"
       );
       list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
-      await sleep(900);
+      await sleep(1300);
       list.scrollTo({ top: 0, behavior: "smooth" });
-      await sleep(680);
+      await sleep(1200);
     };
 
     const setScene = (
@@ -473,11 +495,11 @@ export default function ShowcaseAnimation() {
       rigOverride?: Partial<RigState>
     ) => {
       const presets: Record<number, RigState> = {
-        1: { scale: 0.88, y: 40, rotateX: 8, rotateY: -9 },
-        2: { scale: 0.93, y: 28, rotateX: 5, rotateY: -6 },
-        3: { scale: 0.94, y: 24, rotateX: 4, rotateY: 6 },
-        4: { scale: 0.96, y: 20, rotateX: 2, rotateY: -3 },
-        5: { scale: 0.93, y: 26, rotateX: 5, rotateY: 7 }
+        1: { scale: 0.97, y: 16, rotateX: 1.6, rotateY: -1.6 },
+        2: { scale: 0.975, y: 14, rotateX: 1.2, rotateY: -1.2 },
+        3: { scale: 0.978, y: 12, rotateX: 1.1, rotateY: -0.9 },
+        4: { scale: 0.98, y: 11, rotateX: 0.9, rotateY: -0.6 },
+        5: { scale: 0.982, y: 10, rotateX: 0.7, rotateY: -0.4 }
       };
 
       setSceneNumber(index);
@@ -488,17 +510,18 @@ export default function ShowcaseAnimation() {
     };
 
     const runTour = async () => {
-      await sleep(880);
+      await sleep(900);
       if (cancelled) {
         return;
       }
 
       setCursor((prev) => ({ ...prev, visible: true }));
+      await resetCamera(260);
 
       setScene(
         1,
-        "From Search to Signal",
-        "Discover yazan.trade and enter a fully loaded market workspace."
+        "Step 1 · From Google to yazan.trade",
+        "A familiar discovery path: search, open the result, and land on the platform."
       );
       setIntroVisible(true);
       setIntroPhase("search");
@@ -506,16 +529,29 @@ export default function ShowcaseAnimation() {
         x: 18,
         y: 86,
         side: "bottom",
-        title: "First Impression",
-        detail: "A familiar entry path makes onboarding immediate for new users.",
+        title: "Discovery Flow",
+        detail: "This intro simulates how a new user finds the platform.",
         targetX: Math.min(window.innerWidth * 0.5, 520),
-        targetY: Math.min(window.innerHeight * 0.28, 260)
+        targetY: Math.min(window.innerHeight * 0.28, 260),
+        targetLeft: Math.min(window.innerWidth * 0.5, 520) - 40,
+        targetTop: Math.min(window.innerHeight * 0.28, 260) - 16,
+        targetRight: Math.min(window.innerWidth * 0.5, 520) + 40,
+        targetBottom: Math.min(window.innerHeight * 0.28, 260) + 16,
+        focusLabel: "Entry Journey"
       });
-      await sleep(320);
+      await sleep(620);
 
       const searchButton = introSearchRef.current;
       if (searchButton) {
-        await performClick(searchButton, { zoom: 1.06, followCursor: true, skipScroll: true });
+        await performClick(searchButton, {
+          zoom: 1.02,
+          followCursor: false,
+          skipScroll: true,
+          calloutTitle: "Search Query",
+          calloutDetail: "Entering the brand query starts the journey.",
+          calloutSide: "bottom",
+          calloutFocus: "google.com"
+        });
       }
 
       if (cancelled) {
@@ -523,12 +559,20 @@ export default function ShowcaseAnimation() {
       }
 
       setIntroPhase("results");
-      setStatus("Top result. One click away.");
-      await sleep(440);
+      setStatus("Step 1 of 5 · Open the top result.");
+      await sleep(760);
 
       const resultButton = introResultRef.current;
       if (resultButton) {
-        await performClick(resultButton, { zoom: 1.06, followCursor: true, skipScroll: true });
+        await performClick(resultButton, {
+          zoom: 1.02,
+          followCursor: false,
+          skipScroll: true,
+          calloutTitle: "Direct Navigation",
+          calloutDetail: "One click takes the user into the trading environment.",
+          calloutSide: "bottom",
+          calloutFocus: "yazan.trade"
+        });
       }
 
       if (cancelled) {
@@ -536,232 +580,205 @@ export default function ShowcaseAnimation() {
       }
 
       setIntroPhase("loading");
-      setStatus("Launching yazan.trade");
-      await sleep(900);
+      setStatus("Step 1 of 5 · Launching yazan.trade");
+      await sleep(1200);
       setIntroVisible(false);
-      await resetCamera(360);
+      await resetCamera(420);
       setProgress(1 / totalScenes);
 
+      await resetCamera(260);
       setScene(
         2,
-        "A Broad Asset Universe",
-        "Move across major and fast-moving contracts without breaking context."
+        "Step 2 · Explore Assets",
+        "Show the breadth of contracts and how quickly symbols can be switched."
       );
       await runStep({
         label: "Opening Assets tab",
         selector: "button[title='Assets']",
-        zoom: 1.2,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Unified Watchlist",
-        calloutDetail: "Asset discovery happens beside the chart, not in a separate flow.",
-        calloutSide: "left"
+        zoom: 1.1,
+        followCursor: false,
+        waitAfter: 980,
+        calloutTitle: "Assets Panel",
+        calloutDetail: "Contracts are grouped in one side panel for quick access.",
+        calloutSide: "left",
+        calloutFocus: "Assets Tab"
       });
       await runStep({
-        label: "Comparing BTC and ETH",
+        label: "Switching to ETH",
         selector: "button.watchlist-row",
         text: "ETHUSDT.P",
-        zoom: 1.34,
-        followCursor: true,
-        waitAfter: 620,
-        calloutTitle: "Instant Switch",
-        calloutDetail: "Symbol transitions are immediate for uninterrupted analysis.",
-        calloutSide: "left"
-      });
-      await runStep({
-        label: "Switching to SOL",
-        selector: "button.watchlist-row",
-        text: "SOLUSDT.P",
-        zoom: 1.34,
-        followCursor: true,
-        waitAfter: 620,
-        calloutTitle: "Built for Variety",
-        calloutDetail: "The same clean workflow scales from majors to high-beta markets.",
-        calloutSide: "left"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1100,
+        calloutTitle: "Instant Symbol Change",
+        calloutDetail: "Switching assets keeps chart context intact and immediate.",
+        calloutSide: "left",
+        calloutFocus: "ETH Contract"
       });
       await scrollWatchlist();
+      setStatus("Step 2 of 5 · Multiple markets, one clean flow.");
       setProgress(2 / totalScenes);
 
+      await resetCamera(280);
       setScene(
         3,
-        "People. Models. One Control Surface.",
-        "Select who to copy from with explicit profile context and instant updates."
+        "Step 3 · Select People / Models",
+        "Explain exactly who the user is copying from before showing performance."
       );
       await runStep({
         label: "Opening Models / People tab",
         selector: "button[title='Models']",
-        zoom: 1.2,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Profile Library",
-        calloutDetail: "People and Models are separated clearly for transparent source selection.",
-        calloutSide: "left"
+        zoom: 1.1,
+        followCursor: false,
+        waitAfter: 980,
+        calloutTitle: "Models / People",
+        calloutDetail: "Each profile is clearly labeled as Person or Model.",
+        calloutSide: "left",
+        calloutFocus: "Models / People"
       });
       await runStep({
         label: "Selecting Yazan",
         selector: "button.model-row",
         text: "Yazan",
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 620,
-        calloutTitle: "Person Profile",
-        calloutDetail: "Human-led copy source selection is explicit and easy to audit.",
-        calloutSide: "left"
-      });
-      await runStep({
-        label: "Selecting ICT model",
-        selector: "button.model-row",
-        text: "ICT",
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 620,
-        calloutTitle: "Model Profile",
-        calloutDetail: "Algorithmic profile selection is a single action across the workspace.",
-        calloutSide: "left"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1100,
+        calloutTitle: "Person Example",
+        calloutDetail: "Yazan appears as a Person with a dedicated account number.",
+        calloutSide: "left",
+        calloutFocus: "Yazan (Person)"
       });
       await runStep({
         label: "Selecting Lyra model",
         selector: "button.model-row",
         text: "Lyra",
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 760,
-        calloutTitle: "Live Context Shift",
-        calloutDetail: "History and action views follow profile changes instantly.",
-        calloutSide: "left"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1200,
+        calloutTitle: "Model Example",
+        calloutDetail: "Model profiles are separate, so source type is always transparent.",
+        calloutSide: "left",
+        calloutFocus: "Lyra (Model)"
       });
+      setStatus("Step 3 of 5 · Profile choice drives history, actions, and notifications.");
       setProgress(3 / totalScenes);
 
+      await resetCamera(280);
       setScene(
         4,
-        "Trade History, Cinematic Clarity",
-        "Performance is visible as both a timeline and chart-native visual narrative."
+        "Step 4 · Review Trade History",
+        "Show the timeline list and chart visualization together for faster review."
       );
       await runStep({
         label: "Opening History tab",
         selector: "button[title='History']",
-        zoom: 1.2,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Outcome Timeline",
-        calloutDetail: "Every trade result is centralized for quick performance review.",
-        calloutSide: "left"
+        zoom: 1.1,
+        followCursor: false,
+        waitAfter: 980,
+        calloutTitle: "History Timeline",
+        calloutDetail: "Closed trades are listed in a clean chronological view.",
+        calloutSide: "left",
+        calloutFocus: "History Tab"
       });
       await runStep({
         label: "Showing all history trades on chart",
         selector: "button.panel-action-btn",
         text: "Show All On Chart",
-        zoom: 1.3,
-        followCursor: true,
-        waitAfter: 900,
-        calloutTitle: "Portfolio Overlay",
-        calloutDetail: "Visualize all historical executions directly in chart space.",
-        calloutSide: "left"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1200,
+        calloutTitle: "Chart Overlay",
+        calloutDetail: "Historical entries, exits, TP, and SL are visualized on chart.",
+        calloutSide: "left",
+        calloutFocus: "Show All On Chart"
       });
-      await focusSelector("Viewing all trade visualizations", ".chart-stage", 1.1, false, 920, {
-        title: "Context-Rich Review",
-        detail: "Execution overlays preserve market structure while revealing outcomes.",
-        side: "top"
+      await focusSelector("Viewing all trade visualizations", ".chart-stage", 1.06, false, 1300, {
+        title: "Visual Confirmation",
+        detail: "Price structure and trade outcomes are readable in one place.",
+        side: "top",
+        focus: "Trade Overlay"
       });
       await runStep({
-        label: "Opening history trade #1",
+        label: "Opening one history trade",
         selector: "button.history-row",
         index: 0,
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Precision Drill-Down",
-        calloutDetail: "Isolate single trades to inspect entry, TP, and risk boundaries.",
-        calloutSide: "left"
+        zoom: 1.15,
+        followCursor: false,
+        waitAfter: 1100,
+        calloutTitle: "Single Trade Drill-Down",
+        calloutDetail: "Selecting one row isolates that trade for detailed inspection.",
+        calloutSide: "left",
+        calloutFocus: "History Trade #1"
       });
       await focusSelector(
-        "Viewing selected trade visualization #1",
+        "Viewing selected trade visualization",
         ".chart-stage",
-        1.12,
-        true,
-        860,
+        1.07,
+        false,
+        1400,
         {
-          title: "Focused Execution",
-          detail: "Selected trades update on-chart immediately for quality evaluation.",
-          side: "top"
+          title: "Focused View",
+          detail: "Entry, TP, SL, and outcome stay visible without visual clutter.",
+          side: "top",
+          focus: "Selected Trade"
         }
       );
-      await runStep({
-        label: "Opening history trade #2",
-        selector: "button.history-row",
-        index: 1,
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Consistency View",
-        calloutDetail: "Rapid comparison reveals consistency across symbols and outcomes.",
-        calloutSide: "left"
-      });
-      await focusSelector(
-        "Viewing selected trade visualization #2",
-        ".chart-stage",
-        1.12,
-        true,
-        940,
-        {
-          title: "Narrative on Chart",
-          detail: "Every execution remains grounded in surrounding market behavior.",
-          side: "top"
-        }
-      );
+      setStatus("Step 4 of 5 · History explains performance clearly.");
       setProgress(4 / totalScenes);
 
+      await resetCamera(280);
       setScene(
         5,
-        "Operational Control in Real Time",
-        "Action logs and notifications surface what matters, when it matters."
+        "Step 5 · Actions and Notifications",
+        "Finish with real-time operations: event log plus global alerts."
       );
       await runStep({
         label: "Opening Action tab",
         selector: "button[title='Action']",
-        zoom: 1.2,
-        followCursor: true,
-        waitAfter: 640,
-        calloutTitle: "Action Stream",
-        calloutDetail: "Entries, exits, and risk events flow in one operational log.",
-        calloutSide: "left"
+        zoom: 1.1,
+        followCursor: false,
+        waitAfter: 980,
+        calloutTitle: "Action Feed",
+        calloutDetail: "Orders, TP/SL updates, and exits are centralized in one log.",
+        calloutSide: "left",
+        calloutFocus: "Action Tab"
       });
       await runStep({
         label: "Inspecting an action event",
         selector: "button.history-row",
         index: 0,
-        zoom: 1.36,
-        followCursor: true,
-        waitAfter: 760,
-        calloutTitle: "Synchronized Detail",
-        calloutDetail: "Selecting an action instantly syncs chart context and symbol focus.",
-        calloutSide: "left"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1100,
+        calloutTitle: "Synced Detail",
+        calloutDetail: "Choosing an action event immediately syncs chart context.",
+        calloutSide: "left",
+        calloutFocus: "Action Event"
       });
       await runStep({
         label: "Opening top-right notifications",
         selector: "button.notif-btn",
-        zoom: 1.3,
-        followCursor: true,
-        waitAfter: 980,
-        calloutTitle: "Live Alerts",
-        calloutDetail: "Critical account and trade events surface at global scope instantly.",
-        calloutSide: "bottom"
+        zoom: 1.14,
+        followCursor: false,
+        waitAfter: 1200,
+        calloutTitle: "Notifications",
+        calloutDetail: "Global alerts keep account and trade state visible at all times.",
+        calloutSide: "bottom",
+        calloutFocus: "Notifications"
       });
-      await runStep({
-        label: "Closing notifications",
-        selector: "button.notif-btn",
-        zoom: 1.3,
-        followCursor: true,
-        waitAfter: 760,
-        calloutTitle: "Quiet When You Need It",
-        calloutDetail: "High-signal notifications are present when needed, invisible when not.",
-        calloutSide: "bottom"
+      await focusSelector("Reviewing notifications", ".notif-popover", 1.12, false, 1350, {
+        title: "Readable Alert Feed",
+        detail: "The feed is concise, prioritized, and easy to scan quickly.",
+        side: "bottom",
+        focus: "Alert List"
       });
 
-      setFeatureTitle("Designed for Modern Trading Teams");
-      setStatus("yazan.trade");
+      setFeatureTitle("Clear Workflow. Calm Presentation.");
+      setStatus("A linear showcase focused on clarity, not motion.");
       setProgress(1);
-      await resetCamera(260);
+      await sleep(1100);
+      await resetCamera(340);
+      setCursor((prev) => ({ ...prev, visible: false }));
     };
 
     runTour();
@@ -785,8 +802,8 @@ export default function ShowcaseAnimation() {
       return null;
     }
 
-    const calloutWidth = viewport.width < 760 ? 224 : 304;
-    const calloutHeight = viewport.width < 760 ? 104 : 122;
+    const calloutWidth = viewport.width < 760 ? 244 : 360;
+    const calloutHeight = viewport.width < 760 ? 128 : 152;
     let startX = callout.x + calloutWidth / 2;
     let startY = callout.y + calloutHeight / 2;
 
@@ -800,33 +817,52 @@ export default function ShowcaseAnimation() {
       startY = callout.y;
     }
 
-    const controlX = startX + (callout.targetX - startX) * 0.48;
-    const controlY = startY + (callout.targetY - startY) * 0.12;
+    const targetCenterX = (callout.targetLeft + callout.targetRight) / 2;
+    const targetCenterY = (callout.targetTop + callout.targetBottom) / 2;
+    const horizontalBias = Math.abs(targetCenterX - startX) >= Math.abs(targetCenterY - startY);
+    let endX = targetCenterX;
+    let endY = targetCenterY;
+
+    if (horizontalBias) {
+      endX = targetCenterX > startX ? callout.targetLeft : callout.targetRight;
+    } else {
+      endY = targetCenterY > startY ? callout.targetTop : callout.targetBottom;
+    }
+
+    const bend = Math.max(36, Math.min(180, Math.hypot(endX - startX, endY - startY) * 0.34));
+    const control1X = horizontalBias ? startX + (endX > startX ? bend : -bend) : startX;
+    const control1Y = horizontalBias ? startY : startY + (endY > startY ? bend : -bend);
+    const control2X = horizontalBias ? endX - (endX > startX ? bend : -bend) : endX;
+    const control2Y = horizontalBias ? endY : endY - (endY > startY ? bend : -bend);
+    const labelX = clamp(endX + 10, 8, viewport.width - 132);
+    const labelY = clamp(endY - 22, 8, viewport.height - 24);
 
     return {
-      path: `M ${startX} ${startY} Q ${controlX} ${controlY} ${callout.targetX} ${callout.targetY}`,
-      targetX: callout.targetX,
-      targetY: callout.targetY
+      path: `M ${startX} ${startY} C ${control1X} ${control1Y} ${control2X} ${control2Y} ${endX} ${endY}`,
+      targetX: endX,
+      targetY: endY,
+      labelX,
+      labelY
     };
-  }, [callout, viewport.width]);
+  }, [callout, viewport.height, viewport.width]);
 
   return (
     <section className={styles.stage}>
       <div className={styles.ambientLayer} aria-hidden>
         <motion.span
           className={`${styles.orb} ${styles.orbA}`}
-          animate={{ x: [-20, 26, -12], y: [-8, 22, -10], scale: [1, 1.1, 1] }}
-          transition={{ duration: 12, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
+          animate={{ x: [-10, 12, -8], y: [-5, 8, -5], scale: [1, 1.04, 1] }}
+          transition={{ duration: 18, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
         />
         <motion.span
           className={`${styles.orb} ${styles.orbB}`}
-          animate={{ x: [24, -28, 16], y: [10, -24, 6], scale: [1.05, 0.92, 1.05] }}
-          transition={{ duration: 14, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
+          animate={{ x: [10, -12, 8], y: [6, -8, 4], scale: [1.02, 0.98, 1.02] }}
+          transition={{ duration: 20, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
         />
         <motion.span
           className={`${styles.orb} ${styles.orbC}`}
-          animate={{ x: [-16, 18, -14], y: [16, -14, 12], scale: [0.94, 1.06, 0.94] }}
-          transition={{ duration: 11, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
+          animate={{ x: [-8, 10, -8], y: [8, -6, 6], scale: [0.98, 1.03, 0.98] }}
+          transition={{ duration: 22, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY }}
         />
       </div>
 
@@ -852,7 +888,7 @@ export default function ShowcaseAnimation() {
             rotateX: rig.rotateX,
             rotateY: rig.rotateY
           }}
-          transition={{ type: "spring", stiffness: 110, damping: 20, mass: 0.9 }}
+          transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className={styles.deviceFrame}>
             <div className={styles.deviceNotch} />
@@ -864,7 +900,7 @@ export default function ShowcaseAnimation() {
                   y: camera.y + followOffset.y,
                   scale: camera.scale
                 }}
-                transition={{ type: "spring", stiffness: 160, damping: 24, mass: 0.7 }}
+                transition={{ duration: 0.76, ease: [0.22, 1, 0.36, 1] }}
               >
                 <TradingTerminal showcaseMode />
               </motion.div>
@@ -945,6 +981,18 @@ export default function ShowcaseAnimation() {
         </svg>
       ) : null}
 
+      {callout?.focusLabel && connector ? (
+        <motion.span
+          className={styles.targetLabel}
+          style={{ left: connector.labelX, top: connector.labelY }}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
+          {callout.focusLabel}
+        </motion.span>
+      ) : null}
+
       {callout ? (
         <motion.aside
           className={`${styles.calloutCard} ${calloutSideClass}`}
@@ -953,7 +1001,12 @@ export default function ShowcaseAnimation() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
-          <span className={styles.calloutTag}>Now Showing</span>
+          <div className={styles.calloutTagRow}>
+            <span className={styles.calloutTag}>Now Showing</span>
+            <span className={styles.calloutScene}>
+              Scene {Math.max(1, sceneNumber)}/{totalScenes}
+            </span>
+          </div>
           <strong>{callout.title}</strong>
           <p>{callout.detail}</p>
         </motion.aside>
