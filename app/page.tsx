@@ -1632,6 +1632,10 @@ export default function Home() {
         { time: startTime, value: trade.stopPrice },
         { time: endTime, value: trade.stopPrice }
       ];
+      const isPositiveTrade =
+        trade.status === "pending" ? trade.pnlUsd >= 0 : trade.result === "Win";
+      const exitPrefix =
+        trade.status === "pending" ? "Pending" : trade.result === "Win" ? "✓" : "x";
 
       candleSeries.setMarkers([
         {
@@ -1643,22 +1647,15 @@ export default function Home() {
         },
         {
           time: endTime,
-          position:
-            trade.status === "pending"
-              ? trade.side === "Long"
-                ? "aboveBar"
-                : "belowBar"
-              : trade.result === "Win"
-                ? "aboveBar"
-                : "belowBar",
-          shape: "circle",
+          position: isPositiveTrade ? "aboveBar" : "belowBar",
+          shape: isPositiveTrade ? "arrowUp" : "arrowDown",
           color:
             trade.status === "pending"
               ? "#2d6cff"
               : trade.result === "Win"
                 ? "#35c971"
                 : "#f0455a",
-          text: trade.status === "pending" ? "." : trade.result === "Win" ? "✓" : "x"
+          text: `${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
         }
       ]);
 
@@ -1707,9 +1704,9 @@ export default function Home() {
         allMarkers.push({
           time: endTime,
           position: trade.result === "Win" ? "aboveBar" : "belowBar",
-          shape: "circle",
+          shape: trade.result === "Win" ? "arrowUp" : "arrowDown",
           color: trade.result === "Win" ? "#35c971" : "#f0455a",
-          text: trade.result === "Win" ? "✓" : "x"
+          text: `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
         });
       }
 

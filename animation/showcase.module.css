@@ -163,6 +163,7 @@
 }
 
 .browser {
+  position: relative;
   border: 1px solid #1f304f;
   border-radius: 18px;
   overflow: hidden;
@@ -291,6 +292,25 @@
   font-size: 0.66rem;
 }
 
+.panelButton {
+  margin-bottom: 0.58rem;
+  border: 1px solid #2a3f62;
+  background: rgba(9, 18, 33, 0.85);
+  color: #c9d8f4;
+  border-radius: 999px;
+  font-size: 0.57rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  padding: 0.28rem 0.52rem;
+}
+
+.panelButtonActive {
+  border-color: #3a67c7;
+  background: rgba(45, 108, 255, 0.2);
+  color: #e7efff;
+}
+
 .metricGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -367,6 +387,15 @@
   font-size: 0.63rem;
 }
 
+.historyRow {
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.historyRowSelected {
+  border-color: #365ea8;
+  background: rgba(20, 42, 82, 0.58);
+}
+
 .showAllBadge {
   margin-top: 0.58rem;
   display: inline-flex;
@@ -409,6 +438,34 @@
   color: #d7e1f7;
   border-color: #2a3d62;
   background: rgba(45, 108, 255, 0.15);
+}
+
+.cursor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 12;
+  pointer-events: none;
+  width: 20px;
+  height: 20px;
+  transform: translate(-16%, -8%);
+}
+
+.cursorArrow {
+  width: 20px;
+  height: 20px;
+  color: #eef4ff;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.clickRipple {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(163, 193, 255, 0.9);
 }
 
 .up {
