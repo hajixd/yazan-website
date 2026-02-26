@@ -99,6 +99,7 @@ type OverlayTrade = {
   id: string;
   symbol: string;
   side: TradeSide;
+  status: "closed" | "pending";
   entryTime: UTCTimestamp;
   exitTime: UTCTimestamp;
   entryPrice: number;
@@ -1043,6 +1044,7 @@ export default function Home() {
       id: "active-live",
       symbol: activeTrade.symbol,
       side: activeTrade.side,
+      status: "pending",
       entryTime: activeTrade.openedAt,
       exitTime:
         latestTime > activeTrade.openedAt
@@ -1606,6 +1608,7 @@ export default function Home() {
 
     const renderSingleTrade = (trade: {
       side: TradeSide;
+      status: "closed" | "pending";
       result: TradeResult;
       entryTime: UTCTimestamp;
       exitTime: UTCTimestamp;
@@ -1640,10 +1643,22 @@ export default function Home() {
         },
         {
           time: endTime,
-          position: trade.result === "Win" ? "aboveBar" : "belowBar",
+          position:
+            trade.status === "pending"
+              ? trade.side === "Long"
+                ? "aboveBar"
+                : "belowBar"
+              : trade.result === "Win"
+                ? "aboveBar"
+                : "belowBar",
           shape: "circle",
-          color: trade.result === "Win" ? "#35c971" : "#f0455a",
-          text: formatSignedUsd(trade.pnlUsd)
+          color:
+            trade.status === "pending"
+              ? "#2d6cff"
+              : trade.result === "Win"
+                ? "#35c971"
+                : "#f0455a",
+          text: trade.status === "pending" ? "." : trade.result === "Win" ? "✓" : "x"
         }
       ]);
 
@@ -1694,7 +1709,7 @@ export default function Home() {
           position: trade.result === "Win" ? "aboveBar" : "belowBar",
           shape: "circle",
           color: trade.result === "Win" ? "#35c971" : "#f0455a",
-          text: formatSignedUsd(trade.pnlUsd)
+          text: trade.result === "Win" ? "✓" : "x"
         });
       }
 
@@ -1712,6 +1727,7 @@ export default function Home() {
     if (showActiveTradeOnChart && activeChartTrade && activeChartTrade.symbol === selectedSymbol) {
       renderSingleTrade({
         side: activeChartTrade.side,
+        status: activeChartTrade.status,
         result: activeChartTrade.result,
         entryTime: activeChartTrade.entryTime,
         exitTime: activeChartTrade.exitTime,
@@ -1731,6 +1747,7 @@ export default function Home() {
 
     renderSingleTrade({
       side: selectedHistoryTrade.side,
+      status: "closed",
       result: selectedHistoryTrade.result,
       entryTime: selectedHistoryTrade.entryTime,
       exitTime: selectedHistoryTrade.exitTime,
