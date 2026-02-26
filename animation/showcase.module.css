@@ -39,6 +39,33 @@
   text-align: left;
 }
 
+.hudTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.hudBadge {
+  color: #9fc5ff;
+  background: rgba(34, 72, 136, 0.42);
+  border: 1px solid rgba(88, 132, 208, 0.58);
+  border-radius: 999px;
+  padding: 0.1rem 0.46rem;
+  font-size: 0.53rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.hudScene {
+  color: #94a6ca;
+  font-size: 0.58rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .hud strong {
   color: #dce7ff;
   font-size: 0.69rem;
@@ -47,9 +74,128 @@
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
-.hud span {
+.hudStatus {
   color: #9fb2d8;
   font-size: 0.68rem;
+}
+
+.progressTrack {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(27, 43, 72, 0.76);
+  overflow: hidden;
+  border: 1px solid rgba(63, 92, 145, 0.52);
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4f8dff, #7eb7ff);
+  box-shadow: 0 0 12px rgba(106, 165, 255, 0.56);
+}
+
+.targetHighlight {
+  position: fixed;
+  z-index: 121;
+  pointer-events: none;
+  border-radius: 10px;
+  border: 1px solid rgba(108, 173, 255, 0.9);
+  box-shadow:
+    0 0 0 1px rgba(39, 77, 130, 0.7) inset,
+    0 0 0 7px rgba(73, 126, 209, 0.16);
+}
+
+.targetHighlight::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 12px;
+  border: 1px dashed rgba(120, 182, 255, 0.52);
+  animation: focusPulse 1.2s ease-in-out infinite;
+}
+
+.calloutCard {
+  position: fixed;
+  z-index: 124;
+  width: min(290px, calc(100vw - 1rem));
+  border-radius: 12px;
+  border: 1px solid rgba(91, 130, 194, 0.8);
+  background: rgba(8, 14, 24, 0.94);
+  box-shadow:
+    0 18px 30px rgba(0, 0, 0, 0.46),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  padding: 0.58rem 0.66rem 0.62rem;
+  pointer-events: none;
+}
+
+.calloutTag {
+  display: inline-block;
+  color: #8ba6da;
+  font-size: 0.52rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.calloutCard strong {
+  display: block;
+  margin-top: 0.24rem;
+  color: #dce8ff;
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.calloutCard p {
+  margin: 0.26rem 0 0;
+  color: #a4b8dc;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.calloutCard::after {
+  content: "";
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.calloutRight::after {
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-right: 7px solid rgba(91, 130, 194, 0.8);
+}
+
+.calloutLeft::after {
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 7px solid rgba(91, 130, 194, 0.8);
+}
+
+.calloutTop::after {
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid rgba(91, 130, 194, 0.8);
+}
+
+.calloutBottom::after {
+  left: 50%;
+  top: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 7px solid rgba(91, 130, 194, 0.8);
 }
 
 .browserOverlay {
@@ -207,6 +353,17 @@
   border: 1px solid rgba(181, 206, 255, 0.92);
 }
 
+@keyframes focusPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 760px) {
   .hud {
     top: 8px;
@@ -219,8 +376,29 @@
     font-size: 0.59rem;
   }
 
-  .hud span {
+  .hudStatus {
     font-size: 0.63rem;
+  }
+
+  .hudTopRow {
+    gap: 0.4rem;
+  }
+
+  .hudScene {
+    font-size: 0.53rem;
+  }
+
+  .calloutCard {
+    width: min(220px, calc(100vw - 0.85rem));
+    padding: 0.5rem 0.58rem 0.56rem;
+  }
+
+  .calloutCard strong {
+    font-size: 0.69rem;
+  }
+
+  .calloutCard p {
+    font-size: 0.61rem;
   }
 
   .googlePane,

@@ -14,6 +14,9 @@ type TourStep = {
   waitAfter?: number;
   zoom?: number;
   followCursor?: boolean;
+  calloutTitle?: string;
+  calloutDetail?: string;
+  calloutSide?: CalloutSide;
 };
 
 type CursorState = {
@@ -29,12 +32,32 @@ type CameraState = {
   scale: number;
 };
 
+type CalloutSide = "right" | "left" | "top" | "bottom";
+
+type CalloutState = {
+  x: number;
+  y: number;
+  side: CalloutSide;
+  title: string;
+  detail: string;
+};
+
+type HighlightRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type IntroPhase = "search" | "results" | "loading";
 
 type ClickOptions = {
   zoom?: number;
   followCursor?: boolean;
   skipScroll?: boolean;
+  calloutTitle?: string;
+  calloutDetail?: string;
+  calloutSide?: CalloutSide;
 };
 
 const sleep = (ms: number) => {
@@ -127,12 +150,17 @@ export default function ShowcaseAnimation() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const introSearchRef = useRef<HTMLButtonElement | null>(null);
   const introResultRef = useRef<HTMLButtonElement | null>(null);
+  const totalScenes = 5;
   const [featureTitle, setFeatureTitle] = useState("Loading showcase");
+  const [sceneLabel, setSceneLabel] = useState("Scene 0");
   const [status, setStatus] = useState("Booting workspace...");
+  const [progress, setProgress] = useState(0);
   const [introVisible, setIntroVisible] = useState(true);
   const [introPhase, setIntroPhase] = useState<IntroPhase>("search");
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, scale: 1 });
   const [followCursor, setFollowCursor] = useState(false);
+  const [callout, setCallout] = useState<CalloutState | null>(null);
+  const [highlightRect, setHighlightRect] = useState<HighlightRect | null>(null);
   const [viewport, setViewport] = useState({ width: 1280, height: 720 });
   const [cursor, setCursor] = useState<CursorState>({
     x: 120,
@@ -168,6 +196,56 @@ export default function ShowcaseAnimation() {
   useEffect(() => {
     let cancelled = false;
     const neutralCamera: CameraState = { x: 0, y: 0, scale: 1 };
+    const clearAnnotations = () => {
+      setCallout(null);
+      setHighlightRect(null);
+    };
+
+    const showAnnotation = (
+      rect: DOMRect,
+      title?: string,
+      detail?: string,
+      side: CalloutSide = "right"
+    ) => {
+      if (!title || !detail) {
+        return;
+      }
+
+      const innerWidth = window.innerWidth;
+      const innerHeight = window.innerHeight;
+      const cardWidth = innerWidth < 760 ? 220 : 290;
+      const cardHeight = 112;
+      const gap = 20;
+      let x = rect.right + gap;
+      let y = rect.top + rect.height / 2 - cardHeight / 2;
+
+      if (side === "left") {
+        x = rect.left - cardWidth - gap;
+      } else if (side === "top") {
+        x = rect.left + rect.width / 2 - cardWidth / 2;
+        y = rect.top - cardHeight - gap;
+      } else if (side === "bottom") {
+        x = rect.left + rect.width / 2 - cardWidth / 2;
+        y = rect.bottom + gap;
+      }
+
+      const maxX = Math.max(8, innerWidth - cardWidth - 8);
+      const maxY = Math.max(8, innerHeight - cardHeight - 8);
+
+      setCallout({
+        x: clamp(x, 8, maxX),
+        y: clamp(y, 8, maxY),
+        side,
+        title,
+        detail
+      });
+      setHighlightRect({
+        x: rect.left - 6,
+        y: rect.top - 6,
+        width: rect.width + 12,
+        height: rect.height + 12
+      });
+    };
 
     const setCameraToTarget = async (target: HTMLElement, zoom = 1.18, follow = false) => {
       const host = hostRef.current;
@@ -201,6 +279,7 @@ export default function ShowcaseAnimation() {
 
       setFollowCursor(false);
       setCamera(neutralCamera);
+      clearAnnotations();
       await sleep(wait);
     };
 
@@ -225,6 +304,12 @@ export default function ShowcaseAnimation() {
       }
 
       const rect = target.getBoundingClientRect();
+      showAnnotation(
+        rect,
+        options.calloutTitle,
+        options.calloutDetail,
+        options.calloutSide ?? "right"
+      );
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;
 
@@ -285,7 +370,13 @@ export default function ShowcaseAnimation() {
         return false;
       }
 
-      await performClick(target, { zoom: step.zoom, followCursor: step.followCursor });
+      await performClick(target, {
+        zoom: step.zoom,
+        followCursor: step.followCursor,
+        calloutTitle: step.calloutTitle,
+        calloutDetail: step.calloutDetail,
+        calloutSide: step.calloutSide
+      });
 
       if (step.waitAfter) {
         await sleep(step.waitAfter);
@@ -301,7 +392,12 @@ export default function ShowcaseAnimation() {
       selector: string,
       zoom = 1.1,
       follow = false,
-      holdMs = 900
+      holdMs = 900,
+      annotation?: {
+        title: string;
+        detail: string;
+        side?: CalloutSide;
+      }
     ) => {
       if (cancelled) {
         return;
@@ -322,6 +418,10 @@ export default function ShowcaseAnimation() {
 
       await resetCamera(150);
       await setCameraToTarget(target, zoom, follow);
+      if (annotation) {
+        const rect = target.getBoundingClientRect();
+        showAnnotation(rect, annotation.title, annotation.detail, annotation.side ?? "right");
+      }
       await sleep(holdMs);
     };
 
@@ -338,10 +438,23 @@ export default function ShowcaseAnimation() {
       }
 
       await setCameraToTarget(list, 1.28, true);
+      const rect = list.getBoundingClientRect();
+      showAnnotation(
+        rect,
+        "Large Asset Coverage",
+        "The watchlist scroll demonstrates broad market coverage in one workspace.",
+        "left"
+      );
       list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
       await sleep(900);
       list.scrollTo({ top: 0, behavior: "smooth" });
       await sleep(680);
+    };
+
+    const setScene = (index: number, title: string) => {
+      setSceneLabel(`Scene ${index} of ${totalScenes}`);
+      setFeatureTitle(title);
+      setProgress((index - 1) / totalScenes);
     };
 
     const runTour = async () => {
@@ -352,10 +465,17 @@ export default function ShowcaseAnimation() {
 
       setCursor((prev) => ({ ...prev, visible: true }));
 
-      setFeatureTitle("Google to yazan.trade");
+      setScene(1, "Google to yazan.trade");
       setStatus("Searching Google for yazan.trade");
       setIntroVisible(true);
       setIntroPhase("search");
+      setCallout({
+        x: 18,
+        y: 86,
+        side: "bottom",
+        title: "Showcase Intro",
+        detail: "A realistic journey from search to platform entry builds trust for new visitors."
+      });
       await sleep(320);
 
       const searchButton = introSearchRef.current;
@@ -384,14 +504,18 @@ export default function ShowcaseAnimation() {
       await sleep(900);
       setIntroVisible(false);
       await resetCamera(360);
+      setProgress(1 / totalScenes);
 
-      setFeatureTitle("Assets to choose from");
+      setScene(2, "Assets to choose from");
       await runStep({
         label: "Opening Assets tab",
         selector: "button[title='Assets']",
         zoom: 1.2,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "Asset Discovery",
+        calloutDetail: "Open the Assets panel to browse contracts without leaving the chart.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Comparing BTC and ETH",
@@ -399,7 +523,10 @@ export default function ShowcaseAnimation() {
         text: "ETHUSDT.P",
         zoom: 1.34,
         followCursor: true,
-        waitAfter: 620
+        waitAfter: 620,
+        calloutTitle: "Fast Symbol Switching",
+        calloutDetail: "Switching symbols instantly keeps analysis momentum high.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Switching to SOL",
@@ -407,18 +534,25 @@ export default function ShowcaseAnimation() {
         text: "SOLUSDT.P",
         zoom: 1.34,
         followCursor: true,
-        waitAfter: 620
+        waitAfter: 620,
+        calloutTitle: "Multi-Asset Ready",
+        calloutDetail: "From majors to high-volatility names, the workflow stays consistent.",
+        calloutSide: "left"
       });
       setStatus("Showing the full asset list");
       await scrollWatchlist();
+      setProgress(2 / totalScenes);
 
-      setFeatureTitle("People and models");
+      setScene(3, "People and models");
       await runStep({
         label: "Opening Models / People tab",
         selector: "button[title='Models']",
         zoom: 1.2,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "Copy-Source Library",
+        calloutDetail: "Profiles are organized as People and Models for quick selection.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Selecting Yazan",
@@ -426,7 +560,10 @@ export default function ShowcaseAnimation() {
         text: "Yazan",
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 620
+        waitAfter: 620,
+        calloutTitle: "Person Profile",
+        calloutDetail: "Human profile selection is explicit for transparent copy-trading source control.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Selecting ICT model",
@@ -434,7 +571,10 @@ export default function ShowcaseAnimation() {
         text: "ICT",
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 620
+        waitAfter: 620,
+        calloutTitle: "Model Profile",
+        calloutDetail: "Model profiles can be selected in one click and reflected platform-wide.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Selecting Lyra model",
@@ -442,16 +582,23 @@ export default function ShowcaseAnimation() {
         text: "Lyra",
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 760
+        waitAfter: 760,
+        calloutTitle: "Switch Any Time",
+        calloutDetail: "The active profile context updates instantly across history and action feeds.",
+        calloutSide: "left"
       });
+      setProgress(3 / totalScenes);
 
-      setFeatureTitle("History and visualizations");
+      setScene(4, "History and visualizations");
       await runStep({
         label: "Opening History tab",
         selector: "button[title='History']",
         zoom: 1.2,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "History Timeline",
+        calloutDetail: "Trade outcomes are centralized so performance can be audited quickly.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Showing all history trades on chart",
@@ -459,35 +606,74 @@ export default function ShowcaseAnimation() {
         text: "Show All On Chart",
         zoom: 1.3,
         followCursor: true,
-        waitAfter: 900
+        waitAfter: 900,
+        calloutTitle: "Portfolio Overlay",
+        calloutDetail: "Overlay all historical trades to review distribution and exposure visually.",
+        calloutSide: "left"
       });
-      await focusSelector("Viewing all trade visualizations", ".chart-stage", 1.1, false, 920);
+      await focusSelector("Viewing all trade visualizations", ".chart-stage", 1.1, false, 920, {
+        title: "Chart Visualization",
+        detail: "Every trade is mapped directly on chart context for clear post-trade review.",
+        side: "top"
+      });
       await runStep({
         label: "Opening history trade #1",
         selector: "button.history-row",
         index: 0,
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "Trade Drill-Down",
+        calloutDetail: "Click any row to isolate one trade and inspect entry, TP, and SL.",
+        calloutSide: "left"
       });
-      await focusSelector("Viewing selected trade visualization #1", ".chart-stage", 1.12, true, 860);
+      await focusSelector(
+        "Viewing selected trade visualization #1",
+        ".chart-stage",
+        1.12,
+        true,
+        860,
+        {
+          title: "Focused Visual",
+          detail: "The chart updates to the selected trade so users can evaluate execution quality.",
+          side: "top"
+        }
+      );
       await runStep({
         label: "Opening history trade #2",
         selector: "button.history-row",
         index: 1,
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "Multiple Examples",
+        calloutDetail: "Cycling examples shows consistency across different symbols and outcomes.",
+        calloutSide: "left"
       });
-      await focusSelector("Viewing selected trade visualization #2", ".chart-stage", 1.12, true, 940);
+      await focusSelector(
+        "Viewing selected trade visualization #2",
+        ".chart-stage",
+        1.12,
+        true,
+        940,
+        {
+          title: "Context Stays Intact",
+          detail: "Visual overlays preserve context while highlighting the selected execution.",
+          side: "top"
+        }
+      );
+      setProgress(4 / totalScenes);
 
-      setFeatureTitle("Action tab and notifications");
+      setScene(5, "Action tab and notifications");
       await runStep({
         label: "Opening Action tab",
         selector: "button[title='Action']",
         zoom: 1.2,
         followCursor: true,
-        waitAfter: 640
+        waitAfter: 640,
+        calloutTitle: "Action Log",
+        calloutDetail: "Entries, exits, and risk updates are tracked in a clean event stream.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Inspecting an action event",
@@ -495,25 +681,36 @@ export default function ShowcaseAnimation() {
         index: 0,
         zoom: 1.36,
         followCursor: true,
-        waitAfter: 760
+        waitAfter: 760,
+        calloutTitle: "Execution Detail",
+        calloutDetail: "Selecting an action syncs symbol context and chart focus automatically.",
+        calloutSide: "left"
       });
       await runStep({
         label: "Opening top-right notifications",
         selector: "button.notif-btn",
         zoom: 1.3,
         followCursor: true,
-        waitAfter: 980
+        waitAfter: 980,
+        calloutTitle: "Live Notifications",
+        calloutDetail: "Critical account and trade events surface instantly in the global header.",
+        calloutSide: "bottom"
       });
       await runStep({
         label: "Closing notifications",
         selector: "button.notif-btn",
         zoom: 1.3,
         followCursor: true,
-        waitAfter: 760
+        waitAfter: 760,
+        calloutTitle: "Signal-First UI",
+        calloutDetail: "Notifications stay visible when needed and unobtrusive when dismissed.",
+        calloutSide: "bottom"
       });
 
       setFeatureTitle("Showcase complete");
-      setStatus("Each feature was shown once.");
+      setSceneLabel(`Scene ${totalScenes} of ${totalScenes}`);
+      setStatus("Professional guided showcase complete.");
+      setProgress(1);
       await resetCamera(260);
     };
 
@@ -523,6 +720,15 @@ export default function ShowcaseAnimation() {
       cancelled = true;
     };
   }, []);
+
+  const calloutSideClass = callout
+    ? {
+        right: styles.calloutRight,
+        left: styles.calloutLeft,
+        top: styles.calloutTop,
+        bottom: styles.calloutBottom
+      }[callout.side]
+    : "";
 
   return (
     <section className={styles.stage}>
@@ -541,9 +747,49 @@ export default function ShowcaseAnimation() {
       </div>
 
       <div className={styles.hud}>
+        <div className={styles.hudTopRow}>
+          <span className={styles.hudBadge}>Guided Demo</span>
+          <span className={styles.hudScene}>{sceneLabel}</span>
+        </div>
         <strong>{featureTitle}</strong>
-        <span>{status}</span>
+        <span className={styles.hudStatus}>{status}</span>
+        <div className={styles.progressTrack}>
+          <motion.span
+            className={styles.progressFill}
+            animate={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
+            transition={{ type: "spring", stiffness: 180, damping: 24, mass: 0.7 }}
+          />
+        </div>
       </div>
+
+      {highlightRect ? (
+        <motion.div
+          className={styles.targetHighlight}
+          style={{
+            left: highlightRect.x,
+            top: highlightRect.y,
+            width: highlightRect.width,
+            height: highlightRect.height
+          }}
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+        />
+      ) : null}
+
+      {callout ? (
+        <motion.aside
+          className={`${styles.calloutCard} ${calloutSideClass}`}
+          style={{ left: callout.x, top: callout.y }}
+          initial={{ opacity: 0, y: 8, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.24, ease: "easeOut" }}
+        >
+          <span className={styles.calloutTag}>Now Showing</span>
+          <strong>{callout.title}</strong>
+          <p>{callout.detail}</p>
+        </motion.aside>
+      ) : null}
 
       {introVisible ? (
         <motion.div
