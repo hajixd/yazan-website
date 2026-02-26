@@ -758,6 +758,7 @@ export default function Home() {
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
@@ -1255,7 +1256,7 @@ export default function Home() {
             : "neutral";
 
       items.push({
-        id: `live-progress-${activeTrade.symbol}-${Math.round(activeTrade.progressPct)}`,
+        id: `live-progress-${activeTrade.symbol}`,
         title: liveTitle,
         details: `Progress ${activeTrade.progressPct.toFixed(1)}% | TP ${formatPrice(
           activeTrade.targetPrice
@@ -1267,7 +1268,7 @@ export default function Home() {
       });
 
       items.push({
-        id: `live-pnl-${activeTrade.symbol}-${Math.round(activeTrade.markPrice * 1000)}`,
+        id: `live-pnl-${activeTrade.symbol}`,
         title: `${activeTrade.symbol} unrealized`,
         details: `${activeTrade.pnlValue >= 0 ? "+" : "-"}$${formatUsd(
           Math.abs(activeTrade.pnlValue)
@@ -1301,11 +1302,15 @@ export default function Home() {
     return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12);
   }, [actionRows, activeTrade]);
 
-  const liveNotificationCount = useMemo(() => {
+  const seenNotificationSet = useMemo(() => {
+    return new Set(seenNotificationIds);
+  }, [seenNotificationIds]);
+
+  const unreadNotificationCount = useMemo(() => {
     return notificationItems.reduce((count, item) => {
-      return count + (item.live ? 1 : 0);
+      return count + (seenNotificationSet.has(item.id) ? 0 : 1);
     }, 0);
-  }, [notificationItems]);
+  }, [notificationItems, seenNotificationSet]);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -1355,6 +1360,26 @@ export default function Home() {
       window.removeEventListener("keydown", onEscape);
     };
   }, [notificationsOpen]);
+
+  useEffect(() => {
+    if (!notificationsOpen || notificationItems.length === 0) {
+      return;
+    }
+
+    setSeenNotificationIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+
+      for (const item of notificationItems) {
+        if (!next.has(item.id)) {
+          next.add(item.id);
+          changed = true;
+        }
+      }
+
+      return changed ? Array.from(next) : prev;
+    });
+  }, [notificationsOpen, notificationItems]);
 
   useEffect(() => {
     const container = chartContainerRef.current;
@@ -1944,8 +1969,8 @@ export default function Home() {
                     strokeLinecap="round"
                   />
                 </svg>
-                {liveNotificationCount > 0 ? (
-                  <span className="notif-badge">{Math.min(9, liveNotificationCount)}</span>
+                {unreadNotificationCount > 0 ? (
+                  <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
                 ) : null}
               </button>
 
