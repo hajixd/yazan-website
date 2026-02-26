@@ -84,14 +84,16 @@
   position: relative;
   z-index: 2;
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   perspective: 2200px;
-  padding: 72px 18px;
+  padding: 56px 14px;
 }
 
 .deviceRig {
-  width: min(1580px, calc(100vw - 2rem));
+  width: min(1580px, calc(100vw - 1.2rem), calc((100vh - 128px) * 1.7778));
+  width: min(1580px, calc(100vw - 1.2rem), calc((100dvh - 128px) * 1.7778));
   aspect-ratio: 16 / 9;
   transform-style: preserve-3d;
   will-change: transform;
@@ -142,6 +144,20 @@
 
 .cameraSurface > * {
   min-height: 100%;
+}
+
+.screenMask :global(.terminal) {
+  min-height: 100%;
+  height: 100%;
+}
+
+.screenMask :global(.workspace),
+.screenMask :global(.chart-wrap),
+.screenMask :global(.chart-stage),
+.screenMask :global(.side-panel),
+.screenMask :global(.panel-content),
+.screenMask :global(.tab-view) {
+  min-height: 0;
 }
 
 .deviceReflection {
