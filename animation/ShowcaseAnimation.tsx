@@ -4,15 +4,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import styles from "./showcase.module.css";
 
-type PanelTab = "active" | "assets" | "history" | "actions";
+type DemoTab = "assets" | "models" | "history" | "active";
+type Scene = "typing" | "models" | "history_all" | "history_focus" | "active";
 type TradeSide = "Long" | "Short";
 type TradeResult = "Win" | "Loss";
-type AnimationPhase =
-  | "typing"
-  | "history_show_all"
-  | "history_focus"
-  | "active_switch"
-  | "active_chart";
 
 type Candle = {
   open: number;
@@ -21,11 +16,11 @@ type Candle = {
   low: number;
 };
 
-type OverlayTrade = {
+type TradeOverlay = {
   id: string;
   side: TradeSide;
-  status: "closed" | "pending";
   result: TradeResult;
+  status: "closed" | "pending";
   entryIndex: number;
   exitIndex: number;
   entryPrice: number;
@@ -38,33 +33,34 @@ type OverlayTrade = {
 
 const urlTarget = "yazan.trade";
 
-const tabs: Array<{ id: PanelTab; label: string }> = [
-  { id: "active", label: "Active" },
-  { id: "assets", label: "Assets" },
-  { id: "history", label: "History" },
-  { id: "actions", label: "Action" }
-];
+const models = [
+  "Yazan",
+  "ICT",
+  "Lyra",
+  "Atlas",
+  "Orion"
+] as const;
 
-const createCandles = (): Candle[] => {
-  const count = 56;
-  const series: Candle[] = [];
-  let close = 64210;
+const createStaticCandles = (): Candle[] => {
+  const rows: Candle[] = [];
+  let close = 64420;
 
-  for (let i = 0; i < count; i += 1) {
-    const waveFast = Math.sin(i / 3.4) * 22;
-    const waveSlow = Math.sin(i / 8.4) * 34;
-    const trend = (i - count * 0.45) * 0.82;
+  for (let i = 0; i < 64; i += 1) {
+    const macroWave = Math.sin(i / 8.6) * 38;
+    const microWave = Math.sin(i / 2.8) * 13;
+    const drift = (i - 27) * 0.42;
     const open = close;
-    close = open + waveFast * 0.34 + waveSlow * 0.2 + trend * 0.06;
 
-    const wick = 18 + Math.abs(Math.cos(i / 4.6)) * 21;
+    close = open + macroWave * 0.16 + microWave * 0.24 + drift * 0.08;
+
+    const wick = 15 + Math.abs(Math.cos(i / 3.8)) * 24;
     const high = Math.max(open, close) + wick;
     const low = Math.min(open, close) - wick;
 
-    series.push({ open, close, high, low });
+    rows.push({ open, close, high, low });
   }
 
-  return series;
+  return rows;
 };
 
 const formatPrice = (value: number): string => {
@@ -87,66 +83,93 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const toChartX = (index: number): number => {
+  return 30 + index * 13;
+};
+
 const toChartY = (price: number, min: number, max: number): number => {
-  const top = 24;
-  const bottom = 418;
+  const top = 26;
+  const bottom = 432;
   const ratio = (price - min) / Math.max(1, max - min);
 
   return bottom - ratio * (bottom - top);
 };
 
-const toChartX = (index: number): number => {
-  return 34 + index * 15;
+const buildTrade = (
+  candles: Candle[],
+  id: string,
+  side: TradeSide,
+  result: TradeResult,
+  entryIndex: number,
+  exitIndex: number,
+  rr: number,
+  units: number
+): TradeOverlay => {
+  const entryPrice = candles[entryIndex].close;
+  const risk = Math.max(58, Math.abs(candles[entryIndex].high - candles[entryIndex].low));
+  const targetPrice =
+    side === "Long" ? entryPrice + risk * rr : Math.max(0.000001, entryPrice - risk * rr);
+  const stopPrice = side === "Long" ? entryPrice - risk : entryPrice + risk;
+  const outcomePrice = result === "Win" ? targetPrice : stopPrice;
+  const pnlUsd =
+    side === "Long"
+      ? (outcomePrice - entryPrice) * units
+      : (entryPrice - outcomePrice) * units;
+  const pnlPct =
+    side === "Long"
+      ? ((outcomePrice - entryPrice) / entryPrice) * 100
+      : ((entryPrice - outcomePrice) / entryPrice) * 100;
+
+  return {
+    id,
+    side,
+    result,
+    status: "closed",
+    entryIndex,
+    exitIndex,
+    entryPrice,
+    targetPrice,
+    stopPrice,
+    outcomePrice,
+    pnlUsd,
+    pnlPct
+  };
 };
 
-const tabIcon = (id: PanelTab) => {
-  if (id === "active") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        <circle cx="12" cy="12" r="2.1" fill="currentColor" />
-      </svg>
-    );
+const cursorTargetForScene = (scene: Scene, sceneProgress: number): { x: number; y: number } => {
+  if (scene === "typing") {
+    return { x: 42.8, y: 8.4 };
   }
 
-  if (id === "assets") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <path d="M4 17l4-5 3 3 5-7 4 9" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      </svg>
-    );
+  if (scene === "models") {
+    return sceneProgress < 0.42 ? { x: 93.2, y: 24.5 } : { x: 79.8, y: 45.8 };
   }
 
-  if (id === "history") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <path d="M6 7v4h4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M7.5 16.5a7 7 0 1 0-1.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      </svg>
-    );
+  if (scene === "history_all") {
+    return sceneProgress < 0.35 ? { x: 93.2, y: 29.1 } : { x: 81.4, y: 37.8 };
   }
 
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden>
-      <path d="M7 6h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M7 12h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M7 18h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
-    </svg>
-  );
+  if (scene === "history_focus") {
+    return { x: 79.2, y: 45.2 };
+  }
+
+  return sceneProgress < 0.32 ? { x: 93.2, y: 19.8 } : { x: 81.4, y: 36.8 };
 };
 
-const tradeOutcomeLabel = (trade: OverlayTrade): string => {
-  const prefix = trade.status === "pending" ? "Pending" : trade.result === "Win" ? "✓" : "x";
-
-  return `${prefix} ${formatSignedUsd(trade.pnlUsd)}`;
-};
-
-const tradeOutcomeColor = (trade: OverlayTrade): string => {
-  if (trade.status === "pending") {
-    return "#4c86ff";
+const tabLabel = (tab: DemoTab): string => {
+  if (tab === "assets") {
+    return "Assets";
   }
 
-  return trade.result === "Win" ? "#1ec8a6" : "#ff4f6d";
+  if (tab === "models") {
+    return "Models";
+  }
+
+  if (tab === "history") {
+    return "History";
+  }
+
+  return "Active";
 };
 
 export default function ShowcaseAnimation() {
@@ -155,110 +178,70 @@ export default function ShowcaseAnimation() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setFrame((current) => current + 1);
-    }, 120);
+    }, 110);
 
     return () => {
       window.clearInterval(timer);
     };
   }, []);
 
-  const loopFrame = frame % 226;
-  const typedCount = loopFrame < 36 ? Math.min(urlTarget.length, Math.floor(loopFrame / 2.6)) : urlTarget.length;
+  const candles = useMemo(() => createStaticCandles(), []);
+
+  const minPrice = useMemo(() => Math.min(...candles.map((item) => item.low)), [candles]);
+  const maxPrice = useMemo(() => Math.max(...candles.map((item) => item.high)), [candles]);
+
+  const loopFrame = frame % 250;
+  const typedCount = loopFrame < 42 ? Math.min(urlTarget.length, Math.floor(loopFrame / 2.6)) : urlTarget.length;
   const typedUrl = urlTarget.slice(0, typedCount);
-  const showCaret = loopFrame < 38 && loopFrame % 2 === 0;
+  const showCaret = loopFrame < 45 && loopFrame % 2 === 0;
 
-  const phase: AnimationPhase =
-    loopFrame < 42
+  const scene: Scene =
+    loopFrame < 46
       ? "typing"
-      : loopFrame < 96
-        ? "history_show_all"
-        : loopFrame < 146
-          ? "history_focus"
-          : loopFrame < 178
-            ? "active_switch"
-            : "active_chart";
+      : loopFrame < 92
+        ? "models"
+        : loopFrame < 140
+          ? "history_all"
+          : loopFrame < 188
+            ? "history_focus"
+            : "active";
 
-  const candles = useMemo(() => {
-    return createCandles();
-  }, []);
+  const sceneProgress =
+    scene === "typing"
+      ? clamp(loopFrame / 45, 0, 1)
+      : scene === "models"
+        ? clamp((loopFrame - 46) / 45, 0, 1)
+        : scene === "history_all"
+          ? clamp((loopFrame - 92) / 47, 0, 1)
+          : scene === "history_focus"
+            ? clamp((loopFrame - 140) / 47, 0, 1)
+            : clamp((loopFrame - 188) / 61, 0, 1);
 
-  const minPrice = useMemo(() => {
-    return Math.min(...candles.map((item) => item.low));
-  }, [candles]);
-
-  const maxPrice = useMemo(() => {
-    return Math.max(...candles.map((item) => item.high));
-  }, [candles]);
-
-  const latest = candles[candles.length - 1];
-  const previous = candles[candles.length - 2] ?? latest;
-  const quoteChange = previous.close > 0 ? ((latest.close - previous.close) / previous.close) * 100 : 0;
-
-  const closedTrades = useMemo<OverlayTrade[]>(() => {
-    const createTrade = (
-      id: string,
-      side: TradeSide,
-      result: TradeResult,
-      entryIndex: number,
-      exitIndex: number,
-      units: number
-    ): OverlayTrade => {
-      const entryPrice = candles[entryIndex].close;
-      const risk = Math.max(58, Math.abs(candles[entryIndex].high - candles[entryIndex].low) * 1.05);
-      const targetPrice =
-        side === "Long" ? entryPrice + risk * 1.5 : Math.max(0.000001, entryPrice - risk * 1.5);
-      const stopPrice = side === "Long" ? entryPrice - risk : entryPrice + risk;
-      const outcomePrice = result === "Win" ? targetPrice : stopPrice;
-      const pnlUsd =
-        side === "Long"
-          ? (outcomePrice - entryPrice) * units
-          : (entryPrice - outcomePrice) * units;
-      const pnlPct =
-        side === "Long"
-          ? ((outcomePrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - outcomePrice) / entryPrice) * 100;
-
-      return {
-        id,
-        side,
-        status: "closed",
-        result,
-        entryIndex,
-        exitIndex,
-        entryPrice,
-        targetPrice,
-        stopPrice,
-        outcomePrice,
-        pnlUsd,
-        pnlPct
-      };
-    };
-
+  const closedTrades = useMemo(() => {
     return [
-      createTrade("h1", "Long", "Win", 14, 28, 0.86),
-      createTrade("h2", "Short", "Loss", 22, 33, 0.64),
-      createTrade("h3", "Long", "Win", 35, 46, 0.74)
+      buildTrade(candles, "h1", "Long", "Win", 16, 31, 1.7, 0.72),
+      buildTrade(candles, "h2", "Short", "Loss", 28, 39, 1.55, 0.64),
+      buildTrade(candles, "h3", "Long", "Win", 41, 53, 1.8, 0.66)
     ];
   }, [candles]);
 
-  const pendingTrade = useMemo<OverlayTrade>(() => {
-    const entryIndex = 36;
-    const exitIndex = 49;
-    const side: TradeSide = "Long";
+  const pendingTrade = useMemo<TradeOverlay>(() => {
+    const entryIndex = 44;
+    const exitIndex = 58;
     const entryPrice = candles[entryIndex].close;
     const risk = Math.max(56, Math.abs(candles[entryIndex].high - candles[entryIndex].low));
-    const targetPrice = entryPrice + risk * 1.85;
+    const targetPrice = entryPrice + risk * 1.9;
     const stopPrice = entryPrice - risk;
     const outcomePrice = candles[exitIndex].close;
-    const units = 0.71;
+    const units = 0.74;
     const pnlUsd = (outcomePrice - entryPrice) * units;
     const pnlPct = ((outcomePrice - entryPrice) / entryPrice) * 100;
 
     return {
       id: "active",
-      side,
-      status: "pending",
+      side: "Long",
       result: pnlUsd >= 0 ? "Win" : "Loss",
+      status: "pending",
       entryIndex,
       exitIndex,
       entryPrice,
@@ -270,7 +253,11 @@ export default function ShowcaseAnimation() {
     };
   }, [candles]);
 
-  const chartLine = useMemo(() => {
+  const latest = candles[candles.length - 1];
+  const previous = candles[candles.length - 2] ?? latest;
+  const quoteChange = previous.close > 0 ? ((latest.close - previous.close) / previous.close) * 100 : 0;
+
+  const chartPath = useMemo(() => {
     return candles
       .map((candle, index) => {
         const x = toChartX(index);
@@ -279,31 +266,54 @@ export default function ShowcaseAnimation() {
         return `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
       })
       .join(" ");
-  }, [candles, maxPrice, minPrice]);
+  }, [candles, minPrice, maxPrice]);
 
-  const chartMode: "none" | "all" | "single" | "pending" =
-    phase === "typing"
-      ? "none"
-      : phase === "history_show_all"
-        ? loopFrame >= 58
-          ? "all"
-          : "none"
-        : phase === "history_focus" || phase === "active_switch"
-          ? "single"
-          : "pending";
+  const activeTab: DemoTab =
+    scene === "typing"
+      ? "assets"
+      : scene === "models"
+        ? "models"
+        : scene === "active"
+          ? "active"
+          : "history";
 
-  const activeTab: PanelTab =
-    phase === "active_chart" || (phase === "active_switch" && loopFrame >= 162)
-      ? "active"
-      : "history";
+  const selectedModel = scene === "models" ? "ICT" : "Yazan";
+  const showAllOnChart = scene === "history_all";
+  const showFocusedTrade = scene === "history_focus";
+  const showActiveTrade = scene === "active" && sceneProgress > 0.45;
 
-  const showAllActive = phase === "history_show_all" || phase === "history_focus";
-  const showActiveOnChart = phase === "active_chart";
+  const cursor = cursorTargetForScene(scene, sceneProgress);
 
-  const focusedTrade = closedTrades[0];
-  const visibleTrade = chartMode === "pending" ? pendingTrade : focusedTrade;
+  const clickPulse =
+    (scene === "typing" && loopFrame >= 39 && loopFrame <= 41) ||
+    (scene === "models" && (loopFrame === 58 || loopFrame === 71)) ||
+    (scene === "history_all" && loopFrame >= 108 && loopFrame <= 110) ||
+    (scene === "history_focus" && loopFrame >= 155 && loopFrame <= 157) ||
+    (scene === "active" && (loopFrame === 196 || loopFrame === 214));
 
-  const progress = clamp(
+  const sceneTitle =
+    scene === "typing"
+      ? "1. Opening yazan.trade"
+      : scene === "models"
+        ? "2. Picking a model"
+        : scene === "history_all"
+          ? "3. Show All On Chart"
+          : scene === "history_focus"
+            ? "4. Inspecting a specific history trade"
+            : "5. Active trade visualization";
+
+  const sceneCopy =
+    scene === "typing"
+      ? "User types the URL and lands on the trading workspace."
+      : scene === "models"
+        ? "Models / People tab selects who drives the strategy feed."
+        : scene === "history_all"
+          ? "History toggles all closed trades directly on the chart."
+          : scene === "history_focus"
+            ? "A single trade is focused to inspect TP, SL, and outcome."
+            : "Active tab shows current position metrics and chart overlay.";
+
+  const progressToTp = clamp(
     ((pendingTrade.outcomePrice - pendingTrade.stopPrice) /
       Math.max(0.000001, pendingTrade.targetPrice - pendingTrade.stopPrice)) *
       100,
@@ -311,336 +321,267 @@ export default function ShowcaseAnimation() {
     100
   );
 
-  const cursor = useMemo(() => {
-    if (phase === "typing") {
-      return { x: 45 + typedCount * 1.1, y: 8.6 };
-    }
-
-    if (phase === "history_show_all") {
-      return { x: 84.8, y: 57.8 };
-    }
-
-    if (phase === "history_focus") {
-      return { x: 79, y: 70.8 };
-    }
-
-    if (phase === "active_switch" && loopFrame < 162) {
-      return { x: 95.7, y: 24.2 };
-    }
-
-    return { x: 84.8, y: 37.4 };
-  }, [loopFrame, phase, typedCount]);
-
-  const clickPulse =
-    (phase === "typing" && loopFrame >= 33 && loopFrame <= 35) ||
-    (phase === "history_show_all" && loopFrame >= 58 && loopFrame <= 60) ||
-    (phase === "history_focus" && loopFrame >= 114 && loopFrame <= 116) ||
-    (phase === "active_switch" && loopFrame >= 161 && loopFrame <= 163) ||
-    (phase === "active_chart" && loopFrame >= 178 && loopFrame <= 180);
-
-  const sceneLabel =
-    phase === "typing"
-      ? "Typing yazan.trade"
-      : phase === "history_show_all"
-        ? "Clicking Show All On Chart in History"
-        : phase === "history_focus"
-          ? "Selecting a trade to inspect TP/SL zones"
-          : phase === "active_switch"
-            ? "Switching to the Active tab"
-            : "Applying the active trade visualization";
-
   return (
     <section className={styles.stage}>
-      <motion.div
-        className={styles.glowOne}
-        animate={{ x: [0, 40, -22, 0], y: [0, 12, -10, 0] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className={styles.glowTwo}
-        animate={{ x: [0, -34, 16, 0], y: [0, -14, 10, 0] }}
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
-      />
+      <div className={styles.haloA} />
+      <div className={styles.haloB} />
 
-      <div className={styles.shell}>
-        <div className={styles.operator}>
-          <p className={styles.kicker}>Operator View</p>
-          <h1>yazan.trade Product Reel</h1>
-          <p className={styles.copy}>
-            Static market chart, realistic cursor actions, and tab transitions that demonstrate
-            history overlays and the active-trade workflow.
-          </p>
-
-          <div className={styles.operatorRig}>
-            <div className={styles.avatarWrap}>
-              <motion.div
-                className={styles.head}
-                animate={{ y: [0, -2, 0] }}
-                transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-              />
-              <div className={styles.body} />
-              <motion.div
-                className={styles.armLeft}
-                animate={{ rotate: [8, 2, 9] }}
-                transition={{ duration: 0.55, repeat: Infinity, ease: "easeInOut" }}
-              />
-              <motion.div
-                className={styles.armRight}
-                animate={{ rotate: [-8, -2, -10] }}
-                transition={{ duration: 0.62, repeat: Infinity, ease: "easeInOut" }}
-              />
-            </div>
-
-            <div className={styles.keyboard}>
-              {Array.from({ length: 18 }).map((_, index) => (
-                <motion.span
-                  key={`key-${index}`}
-                  className={styles.key}
-                  animate={{ opacity: [0.28, 0.9, 0.28], y: [0, -1.4, 0] }}
-                  transition={{
-                    duration: 0.54,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                    delay: (index % 6) * 0.06
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className={styles.sceneLabel}>{sceneLabel}</div>
-        </div>
+      <div className={styles.demoWrap}>
+        <header className={styles.headline}>
+          <h1>yazan.trade Demo Animation</h1>
+          <p>Interactive walkthrough with a static market chart and realistic UI actions.</p>
+        </header>
 
         <motion.div
-          className={styles.browser}
-          animate={{ rotateX: phase === "typing" ? -3 : -1.5, y: phase === "history_focus" ? -2 : 0, scale: 1 }}
+          className={styles.viewport}
+          animate={{ rotateX: scene === "typing" ? -2.8 : -1.2, scale: scene === "active" ? 1.01 : 1 }}
           transition={{ duration: 0.45, ease: "easeOut" }}
         >
-          <div className={styles.browserTop}>
-            <div className={styles.controls}>
+          <div className={styles.chrome}>
+            <div className={styles.chromeDots}>
               <span />
               <span />
               <span />
             </div>
-
-            <div className={styles.addressBar}>
-              <span className={styles.addressPrefix}>https://</span>
-              <span className={styles.addressText}>{typedUrl}</span>
+            <div className={styles.address}>
+              <span>https://</span>
+              <span>{typedUrl}</span>
               <span className={styles.caret}>{showCaret ? "|" : " "}</span>
             </div>
-
             <div className={styles.brand}>yazan.trade</div>
           </div>
 
-          <div className={styles.workspace}>
-            <div className={styles.chartCol}>
-              <div className={styles.chartToolbar}>
-                <span>O {formatPrice(latest.open)}</span>
-                <span>H {formatPrice(latest.high)}</span>
-                <span>L {formatPrice(latest.low)}</span>
-                <span>C {formatPrice(latest.close)}</span>
-                <span className={quoteChange >= 0 ? styles.up : styles.down}>
-                  {quoteChange >= 0 ? "+" : ""}
-                  {quoteChange.toFixed(2)}%
-                </span>
-              </div>
-
-              <div className={styles.chartViewport}>
-                <svg
-                  className={styles.chartSvg}
-                  viewBox="0 0 880 440"
-                  preserveAspectRatio="none"
-                  aria-label="trade animation chart"
-                >
-                  <defs>
-                    <linearGradient id="zoneUp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(30, 200, 166, 0.22)" />
-                      <stop offset="100%" stopColor="rgba(30, 200, 166, 0.02)" />
-                    </linearGradient>
-                    <linearGradient id="zoneDown" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(255, 79, 109, 0.24)" />
-                      <stop offset="100%" stopColor="rgba(255, 79, 109, 0.03)" />
-                    </linearGradient>
-                  </defs>
-
-                  {Array.from({ length: 8 }).map((_, index) => (
-                    <line
-                      key={`gh-${index}`}
-                      x1={24}
-                      x2={856}
-                      y1={30 + index * 52}
-                      y2={30 + index * 52}
-                      stroke="rgba(23, 37, 60, 0.38)"
-                      strokeWidth={1}
-                    />
-                  ))}
-
-                  {Array.from({ length: 11 }).map((_, index) => (
-                    <line
-                      key={`gv-${index}`}
-                      y1={24}
-                      y2={420}
-                      x1={34 + index * 76}
-                      x2={34 + index * 76}
-                      stroke="rgba(18, 31, 50, 0.36)"
-                      strokeWidth={1}
-                    />
-                  ))}
-
-                  {candles.map((candle, index) => {
-                    const x = toChartX(index);
-                    const openY = toChartY(candle.open, minPrice, maxPrice);
-                    const closeY = toChartY(candle.close, minPrice, maxPrice);
-                    const highY = toChartY(candle.high, minPrice, maxPrice);
-                    const lowY = toChartY(candle.low, minPrice, maxPrice);
-                    const bodyTop = Math.min(openY, closeY);
-                    const bodyHeight = Math.max(2, Math.abs(closeY - openY));
-                    const isUp = candle.close >= candle.open;
-
-                    return (
-                      <g key={`candle-${index}`}>
-                        <line
-                          x1={x}
-                          x2={x}
-                          y1={highY}
-                          y2={lowY}
-                          stroke={isUp ? "#1ec8a6" : "#ff4f6d"}
-                          strokeWidth={1.2}
-                        />
-                        <rect
-                          x={x - 3.8}
-                          y={bodyTop}
-                          width={7.6}
-                          height={bodyHeight}
-                          fill={isUp ? "#1ec8a6" : "#ff4f6d"}
-                          rx={1.1}
-                        />
-                      </g>
-                    );
-                  })}
-
-                  <path d={chartLine} fill="none" stroke="rgba(218, 228, 245, 0.34)" strokeWidth={1.15} />
-
-                  {chartMode === "all" ? (
-                    <g>
-                      {closedTrades.map((trade) => {
-                        const entryX = toChartX(trade.entryIndex);
-                        const exitX = toChartX(trade.exitIndex);
-                        const entryY = toChartY(trade.entryPrice, minPrice, maxPrice);
-                        const exitY = toChartY(trade.outcomePrice, minPrice, maxPrice);
-                        const isLong = trade.side === "Long";
-                        const exitTextY = trade.result === "Win" ? exitY - 8 : exitY + 14;
-
-                        return (
-                          <g key={trade.id}>
-                            <path
-                              d={`M ${entryX} ${entryY + (isLong ? 18 : -18)} L ${entryX - 6} ${entryY + (isLong ? 28 : -28)} L ${entryX + 6} ${entryY + (isLong ? 28 : -28)} Z`}
-                              fill={isLong ? "#1ec8a6" : "#ff4f6d"}
-                            />
-                            <text
-                              x={entryX}
-                              y={entryY + (isLong ? 46 : -34)}
-                              textAnchor="middle"
-                              fontSize="8"
-                              fill={isLong ? "#1ec8a6" : "#ff4f6d"}
-                              fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
-                            >
-                              {isLong ? "Buy" : "Sell"}
-                            </text>
-
-                            <text
-                              x={Math.min(exitX + 8, 795)}
-                              y={exitTextY}
-                              fontSize="8.2"
-                              fill={trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
-                              fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
-                            >
-                              {tradeOutcomeLabel(trade)}
-                            </text>
-                          </g>
-                        );
-                      })}
-                    </g>
-                  ) : null}
-
-                  {chartMode === "single" || chartMode === "pending" ? (
-                    <g>
-                      <rect
-                        x={toChartX(visibleTrade.entryIndex)}
-                        y={toChartY(visibleTrade.targetPrice, minPrice, maxPrice)}
-                        width={(visibleTrade.exitIndex - visibleTrade.entryIndex) * 15}
-                        height={Math.abs(
-                          toChartY(visibleTrade.entryPrice, minPrice, maxPrice) -
-                            toChartY(visibleTrade.targetPrice, minPrice, maxPrice)
-                        )}
-                        fill="url(#zoneUp)"
-                      />
-                      <rect
-                        x={toChartX(visibleTrade.entryIndex)}
-                        y={Math.min(
-                          toChartY(visibleTrade.entryPrice, minPrice, maxPrice),
-                          toChartY(visibleTrade.stopPrice, minPrice, maxPrice)
-                        )}
-                        width={(visibleTrade.exitIndex - visibleTrade.entryIndex) * 15}
-                        height={Math.abs(
-                          toChartY(visibleTrade.stopPrice, minPrice, maxPrice) -
-                            toChartY(visibleTrade.entryPrice, minPrice, maxPrice)
-                        )}
-                        fill="url(#zoneDown)"
-                      />
-
-                      <line
-                        x1={toChartX(visibleTrade.entryIndex)}
-                        x2={toChartX(visibleTrade.exitIndex)}
-                        y1={toChartY(visibleTrade.entryPrice, minPrice, maxPrice)}
-                        y2={toChartY(visibleTrade.outcomePrice, minPrice, maxPrice)}
-                        stroke="rgba(226, 236, 252, 0.82)"
-                        strokeWidth={2.1}
-                        strokeDasharray="4 6"
-                      />
-
-                      <path
-                        d={`M ${toChartX(visibleTrade.entryIndex)} ${toChartY(visibleTrade.entryPrice, minPrice, maxPrice) + 18} L ${toChartX(visibleTrade.entryIndex) - 7} ${toChartY(visibleTrade.entryPrice, minPrice, maxPrice) + 30} L ${toChartX(visibleTrade.entryIndex) + 7} ${toChartY(visibleTrade.entryPrice, minPrice, maxPrice) + 30} Z`}
-                        fill={visibleTrade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
-                      />
-
-                      <text
-                        x={toChartX(visibleTrade.entryIndex)}
-                        y={toChartY(visibleTrade.entryPrice, minPrice, maxPrice) + 44}
-                        textAnchor="middle"
-                        fontSize="8"
-                        fill={visibleTrade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
-                        fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
-                      >
-                        {visibleTrade.side === "Long" ? "Buy" : "Sell"}
-                      </text>
-
-                      <rect
-                        x={Math.min(toChartX(visibleTrade.exitIndex) + 6, 705)}
-                        y={toChartY(visibleTrade.outcomePrice, minPrice, maxPrice) - 18}
-                        width={145}
-                        height={18}
-                        rx={5}
-                        fill="rgba(8, 18, 33, 0.84)"
-                        stroke={tradeOutcomeColor(visibleTrade)}
-                        strokeWidth={1}
-                      />
-                      <text
-                        x={Math.min(toChartX(visibleTrade.exitIndex) + 12, 711)}
-                        y={toChartY(visibleTrade.outcomePrice, minPrice, maxPrice) - 6}
-                        fontSize="8"
-                        fill={tradeOutcomeColor(visibleTrade)}
-                        fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
-                      >
-                        {tradeOutcomeLabel(visibleTrade)}
-                      </text>
-                    </g>
-                  ) : null}
-                </svg>
-              </div>
+          <div className={styles.subbar}>
+            <div className={styles.subLeft}>BTCUSDT.P</div>
+            <div className={styles.subMid}>
+              <span className={styles.subTf}>1m</span>
+              <span className={styles.subTf}>5m</span>
+              <span className={`${styles.subTf} ${styles.subTfActive}`}>15m</span>
+              <span className={styles.subTf}>1H</span>
+              <span className={styles.subTf}>4H</span>
             </div>
+            <div className={styles.subRight}>
+              C {formatPrice(latest.close)}
+              <span className={quoteChange >= 0 ? styles.up : styles.down}>
+                {quoteChange >= 0 ? "+" : ""}
+                {quoteChange.toFixed(2)}%
+              </span>
+            </div>
+          </div>
 
-            <div className={styles.panelCol}>
+          <div className={styles.workspace}>
+            <section className={styles.chartPane}>
+              <svg className={styles.chartSvg} viewBox="0 0 900 460" preserveAspectRatio="none" aria-label="chart demo">
+                <defs>
+                  <linearGradient id="gainZone" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(30, 200, 166, 0.24)" />
+                    <stop offset="100%" stopColor="rgba(30, 200, 166, 0.03)" />
+                  </linearGradient>
+                  <linearGradient id="lossZone" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(255, 79, 109, 0.28)" />
+                    <stop offset="100%" stopColor="rgba(255, 79, 109, 0.04)" />
+                  </linearGradient>
+                </defs>
+
+                {Array.from({ length: 9 }).map((_, idx) => (
+                  <line
+                    key={`h-${idx}`}
+                    x1={20}
+                    x2={880}
+                    y1={28 + idx * 48}
+                    y2={28 + idx * 48}
+                    stroke="rgba(22, 36, 56, 0.44)"
+                    strokeWidth={1}
+                  />
+                ))}
+
+                {Array.from({ length: 12 }).map((_, idx) => (
+                  <line
+                    key={`v-${idx}`}
+                    y1={22}
+                    y2={438}
+                    x1={30 + idx * 72}
+                    x2={30 + idx * 72}
+                    stroke="rgba(16, 28, 45, 0.32)"
+                    strokeWidth={1}
+                  />
+                ))}
+
+                {candles.map((candle, index) => {
+                  const x = toChartX(index);
+                  const openY = toChartY(candle.open, minPrice, maxPrice);
+                  const closeY = toChartY(candle.close, minPrice, maxPrice);
+                  const highY = toChartY(candle.high, minPrice, maxPrice);
+                  const lowY = toChartY(candle.low, minPrice, maxPrice);
+                  const bodyTop = Math.min(openY, closeY);
+                  const bodyHeight = Math.max(2, Math.abs(closeY - openY));
+                  const isUp = candle.close >= candle.open;
+
+                  return (
+                    <g key={`c-${index}`}>
+                      <line
+                        x1={x}
+                        x2={x}
+                        y1={highY}
+                        y2={lowY}
+                        stroke={isUp ? "#1ec8a6" : "#ff4f6d"}
+                        strokeWidth={1.1}
+                      />
+                      <rect
+                        x={x - 3.6}
+                        y={bodyTop}
+                        width={7.2}
+                        height={bodyHeight}
+                        fill={isUp ? "#1ec8a6" : "#ff4f6d"}
+                        rx={1}
+                      />
+                    </g>
+                  );
+                })}
+
+                <path d={chartPath} fill="none" stroke="rgba(222, 232, 248, 0.3)" strokeWidth={1.15} />
+
+                {showAllOnChart ? (
+                  <g>
+                    {closedTrades.map((trade) => {
+                      const entryX = toChartX(trade.entryIndex);
+                      const exitX = toChartX(trade.exitIndex);
+                      const entryY = toChartY(trade.entryPrice, minPrice, maxPrice);
+                      const exitY = toChartY(trade.outcomePrice, minPrice, maxPrice);
+
+                      return (
+                        <g key={trade.id}>
+                          <path
+                            d={`M ${entryX} ${entryY + 16} L ${entryX - 7} ${entryY + 28} L ${entryX + 7} ${entryY + 28} Z`}
+                            fill={trade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
+                          />
+                          <text
+                            x={entryX}
+                            y={entryY + 44}
+                            textAnchor="middle"
+                            fontSize="8"
+                            fill={trade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
+                            fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
+                          >
+                            {trade.side === "Long" ? "Buy" : "Sell"}
+                          </text>
+
+                          <text
+                            x={Math.min(exitX + 8, 792)}
+                            y={trade.result === "Win" ? exitY - 8 : exitY + 16}
+                            fontSize="8.2"
+                            fill={trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
+                            fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
+                          >
+                            {`${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                ) : null}
+
+                {showFocusedTrade || showActiveTrade ? (
+                  <g>
+                    {(() => {
+                      const trade = showActiveTrade ? pendingTrade : closedTrades[0];
+                      const entryX = toChartX(trade.entryIndex);
+                      const exitX = toChartX(trade.exitIndex);
+                      const entryY = toChartY(trade.entryPrice, minPrice, maxPrice);
+                      const exitY = toChartY(trade.outcomePrice, minPrice, maxPrice);
+
+                      return (
+                        <>
+                          <rect
+                            x={entryX}
+                            y={toChartY(trade.targetPrice, minPrice, maxPrice)}
+                            width={(trade.exitIndex - trade.entryIndex) * 13}
+                            height={Math.abs(
+                              toChartY(trade.entryPrice, minPrice, maxPrice) -
+                                toChartY(trade.targetPrice, minPrice, maxPrice)
+                            )}
+                            fill="url(#gainZone)"
+                          />
+                          <rect
+                            x={entryX}
+                            y={Math.min(
+                              toChartY(trade.entryPrice, minPrice, maxPrice),
+                              toChartY(trade.stopPrice, minPrice, maxPrice)
+                            )}
+                            width={(trade.exitIndex - trade.entryIndex) * 13}
+                            height={Math.abs(
+                              toChartY(trade.stopPrice, minPrice, maxPrice) -
+                                toChartY(trade.entryPrice, minPrice, maxPrice)
+                            )}
+                            fill="url(#lossZone)"
+                          />
+
+                          <line
+                            x1={entryX}
+                            x2={exitX}
+                            y1={entryY}
+                            y2={exitY}
+                            stroke="rgba(228, 238, 252, 0.84)"
+                            strokeWidth={2.1}
+                            strokeDasharray="4 6"
+                          />
+
+                          <path
+                            d={`M ${entryX} ${entryY + 16} L ${entryX - 7} ${entryY + 28} L ${entryX + 7} ${entryY + 28} Z`}
+                            fill={trade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
+                          />
+                          <text
+                            x={entryX}
+                            y={entryY + 44}
+                            textAnchor="middle"
+                            fontSize="8"
+                            fill={trade.side === "Long" ? "#1ec8a6" : "#ff4f6d"}
+                            fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
+                          >
+                            {trade.side === "Long" ? "Buy" : "Sell"}
+                          </text>
+
+                          <rect
+                            x={Math.min(exitX + 8, 695)}
+                            y={exitY - 20}
+                            width={168}
+                            height={19}
+                            rx={5}
+                            fill="rgba(8, 18, 34, 0.88)"
+                            stroke={showActiveTrade ? "#4c86ff" : trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
+                            strokeWidth={1}
+                          />
+                          <text
+                            x={Math.min(exitX + 14, 701)}
+                            y={exitY - 7}
+                            fontSize="8"
+                            fill={showActiveTrade ? "#4c86ff" : trade.result === "Win" ? "#1ec8a6" : "#ff4f6d"}
+                            fontFamily="IBM Plex Mono, Menlo, Monaco, monospace"
+                          >
+                            {showActiveTrade
+                              ? `Pending ${formatSignedUsd(trade.pnlUsd)}`
+                              : `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`}
+                          </text>
+                        </>
+                      );
+                    })()}
+                  </g>
+                ) : null}
+              </svg>
+            </section>
+
+            <aside className={styles.panelPane}>
+              <nav className={styles.panelTabs} aria-label="demo tabs">
+                {(["assets", "models", "history", "active"] as DemoTab[]).map((tab) => (
+                  <span
+                    key={tab}
+                    className={`${styles.panelTab} ${activeTab === tab ? styles.panelTabActive : ""}`}
+                  >
+                    {tabLabel(tab)}
+                  </span>
+                ))}
+              </nav>
+
               <div className={styles.panelBody}>
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -648,42 +589,97 @@ export default function ShowcaseAnimation() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -7 }}
-                    transition={{ duration: 0.22 }}
+                    transition={{ duration: 0.2 }}
                   >
+                    {activeTab === "assets" ? (
+                      <>
+                        <h3>Assets</h3>
+                        <p>Perpetual contracts watchlist</p>
+                        <ul className={styles.list}>
+                          <li><span>BTCUSDT.P</span><span className={styles.up}>+0.27%</span></li>
+                          <li><span>ETHUSDT.P</span><span className={styles.down}>-0.18%</span></li>
+                          <li><span>SOLUSDT.P</span><span className={styles.up}>+0.44%</span></li>
+                          <li><span>XRPUSDT.P</span><span className={styles.up}>+0.09%</span></li>
+                        </ul>
+                      </>
+                    ) : null}
+
+                    {activeTab === "models" ? (
+                      <>
+                        <h3>Models / People</h3>
+                        <p>Select one profile</p>
+                        <ul className={styles.modelList}>
+                          {models.map((name) => (
+                            <li
+                              key={name}
+                              className={`${styles.modelRow} ${selectedModel === name ? styles.modelRowActive : ""}`}
+                            >
+                              <span>{name}</span>
+                              <span>{selectedModel === name ? "Active" : ""}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+
+                    {activeTab === "history" ? (
+                      <>
+                        <h3>History</h3>
+                        <p>Trades generated by {selectedModel}</p>
+                        <button
+                          type="button"
+                          className={`${styles.panelBtn} ${showAllOnChart ? styles.panelBtnActive : ""}`}
+                        >
+                          Show All On Chart
+                        </button>
+                        <ul className={styles.list}>
+                          {closedTrades.map((trade, index) => (
+                            <li key={trade.id} className={showFocusedTrade && index === 0 ? styles.listRowActive : ""}>
+                              <span>{trade.side === "Long" ? "Buy" : "Sell"} BTCUSDT.P</span>
+                              <span className={trade.pnlUsd >= 0 ? styles.up : styles.down}>
+                                {formatSignedUsd(trade.pnlUsd)} ({trade.pnlPct >= 0 ? "+" : ""}
+                                {trade.pnlPct.toFixed(2)}%)
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+
                     {activeTab === "active" ? (
                       <>
                         <h3>Active Trade</h3>
-                        <p>Open trade with live TP/SL workflow</p>
+                        <p>Live position card</p>
                         <button
                           type="button"
-                          className={`${styles.panelButton} ${showActiveOnChart ? styles.panelButtonActive : ""}`}
+                          className={`${styles.panelBtn} ${showActiveTrade ? styles.panelBtnActive : ""}`}
                         >
                           Show On Chart
                         </button>
                         <div className={styles.metricGrid}>
-                          <div className={styles.metric}>
+                          <div>
                             <span>Entry</span>
                             <strong>{formatPrice(pendingTrade.entryPrice)}</strong>
                           </div>
-                          <div className={styles.metric}>
+                          <div>
                             <span>Mark</span>
                             <strong>{formatPrice(pendingTrade.outcomePrice)}</strong>
                           </div>
-                          <div className={styles.metric}>
+                          <div>
                             <span>TP</span>
                             <strong className={styles.up}>{formatPrice(pendingTrade.targetPrice)}</strong>
                           </div>
-                          <div className={styles.metric}>
+                          <div>
                             <span>SL</span>
                             <strong className={styles.down}>{formatPrice(pendingTrade.stopPrice)}</strong>
                           </div>
-                          <div className={styles.metric}>
+                          <div>
                             <span>PnL $</span>
                             <strong className={pendingTrade.pnlUsd >= 0 ? styles.up : styles.down}>
                               {formatSignedUsd(pendingTrade.pnlUsd)}
                             </strong>
                           </div>
-                          <div className={styles.metric}>
+                          <div>
                             <span>PnL %</span>
                             <strong className={pendingTrade.pnlPct >= 0 ? styles.up : styles.down}>
                               {pendingTrade.pnlPct >= 0 ? "+" : ""}
@@ -691,83 +687,46 @@ export default function ShowcaseAnimation() {
                             </strong>
                           </div>
                         </div>
-                        <div className={styles.progressBlock}>
+                        <div className={styles.progressWrap}>
                           <div className={styles.progressHead}>
                             <span>Progress To TP</span>
-                            <span>{progress.toFixed(1)}%</span>
+                            <span>{progressToTp.toFixed(1)}%</span>
                           </div>
                           <div className={styles.progressTrack}>
-                            <motion.div
+                            <motion.span
                               className={styles.progressFill}
-                              animate={{ width: `${progress}%` }}
-                              transition={{ duration: 0.5, ease: "easeOut" }}
+                              animate={{ width: `${progressToTp}%` }}
+                              transition={{ duration: 0.45, ease: "easeOut" }}
                             />
                           </div>
                         </div>
                       </>
                     ) : null}
-
-                    {activeTab === "history" ? (
-                      <>
-                        <h3>History</h3>
-                        <p>Closed trades and chart outcomes</p>
-                        <button
-                          type="button"
-                          className={`${styles.panelButton} ${showAllActive ? styles.panelButtonActive : ""}`}
-                        >
-                          Show All On Chart
-                        </button>
-                        <ul className={styles.simpleList}>
-                          {closedTrades.map((trade, index) => {
-                            const selected = chartMode === "single" && index === 0;
-
-                            return (
-                              <li
-                                key={trade.id}
-                                className={`${styles.historyRow} ${selected ? styles.historyRowSelected : ""}`}
-                              >
-                                <span>{trade.side === "Long" ? "Buy" : "Sell"} BTCUSDT.P</span>
-                                <span className={trade.pnlUsd >= 0 ? styles.up : styles.down}>
-                                  {formatSignedUsd(trade.pnlUsd)} ({trade.pnlPct >= 0 ? "+" : ""}
-                                  {trade.pnlPct.toFixed(2)}%)
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </>
-                    ) : null}
                   </motion.div>
                 </AnimatePresence>
               </div>
-
-              <div className={styles.rail}>
-                {tabs.map((tab) => (
-                  <div
-                    key={tab.id}
-                    className={`${styles.railIcon} ${activeTab === tab.id ? styles.railIconActive : ""}`}
-                  >
-                    {tabIcon(tab.id)}
-                  </div>
-                ))}
-              </div>
-            </div>
+            </aside>
           </div>
+
+          <footer className={styles.caption}>
+            <strong>{sceneTitle}</strong>
+            <span>{sceneCopy}</span>
+          </footer>
 
           <motion.div
             className={styles.cursor}
-            animate={{ left: `${cursor.x}%`, top: `${cursor.y}%`, scale: clickPulse ? 0.93 : 1 }}
-            transition={{ type: "spring", stiffness: 320, damping: 28, mass: 0.35 }}
+            animate={{ left: `${cursor.x}%`, top: `${cursor.y}%`, scale: clickPulse ? 0.9 : 1 }}
+            transition={{ type: "spring", stiffness: 340, damping: 28, mass: 0.34 }}
           >
-            <svg className={styles.cursorArrow} viewBox="0 0 20 20" aria-hidden>
+            <svg viewBox="0 0 20 20" aria-hidden>
               <path d="M3 2l11.5 10.8-5.2.7-2.2 4.4L3 2z" fill="currentColor" />
             </svg>
             {clickPulse ? (
               <motion.span
-                className={styles.clickRipple}
-                initial={{ opacity: 0.55, scale: 0.25 }}
-                animate={{ opacity: 0, scale: 1.9 }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
+                className={styles.cursorRipple}
+                initial={{ opacity: 0.6, scale: 0.2 }}
+                animate={{ opacity: 0, scale: 1.8 }}
+                transition={{ duration: 0.33, ease: "easeOut" }}
               />
             ) : null}
           </motion.div>

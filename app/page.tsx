@@ -16,7 +16,7 @@ import {
 } from "lightweight-charts";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type PanelTab = "active" | "assets" | "history" | "actions" | "ai";
+type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
 
 type FutureAsset = {
   symbol: string;
@@ -93,6 +93,32 @@ type ActiveTrade = {
   pnlValue: number;
   progressPct: number;
   rr: number;
+};
+
+type ModelProfile = {
+  id: string;
+  name: string;
+  style: string;
+  description: string;
+  riskMin: number;
+  riskMax: number;
+  rrMin: number;
+  rrMax: number;
+  longBias: number;
+  winRate: number;
+};
+
+type TradeBlueprint = {
+  id: string;
+  modelId: string;
+  symbol: string;
+  side: TradeSide;
+  result: TradeResult;
+  entryMs: number;
+  exitMs: number;
+  riskPct: number;
+  rr: number;
+  units: number;
 };
 
 type OverlayTrade = {
@@ -215,9 +241,73 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
   "1W": 62
 };
 
+const modelProfiles: ModelProfile[] = [
+  {
+    id: "yazan",
+    name: "Yazan",
+    style: "Momentum Pullback",
+    description: "Trend continuation entries with clean invalidation.",
+    riskMin: 0.0018,
+    riskMax: 0.0048,
+    rrMin: 1.35,
+    rrMax: 2.6,
+    longBias: 0.57,
+    winRate: 0.61
+  },
+  {
+    id: "ict",
+    name: "ICT",
+    style: "Liquidity Sweep",
+    description: "Displacement after liquidity grabs and fair value gaps.",
+    riskMin: 0.0015,
+    riskMax: 0.004,
+    rrMin: 1.6,
+    rrMax: 3.1,
+    longBias: 0.51,
+    winRate: 0.55
+  },
+  {
+    id: "lyra",
+    name: "Lyra",
+    style: "Session Mean Revert",
+    description: "Fade stretched moves around session extremes.",
+    riskMin: 0.0012,
+    riskMax: 0.0032,
+    rrMin: 1.15,
+    rrMax: 2.0,
+    longBias: 0.49,
+    winRate: 0.53
+  },
+  {
+    id: "atlas",
+    name: "Atlas",
+    style: "Breakout Pressure",
+    description: "Continuation breakouts with volatility expansion.",
+    riskMin: 0.002,
+    riskMax: 0.0055,
+    rrMin: 1.25,
+    rrMax: 2.3,
+    longBias: 0.54,
+    winRate: 0.57
+  },
+  {
+    id: "orion",
+    name: "Orion",
+    style: "Structure Rotation",
+    description: "Swing-to-swing structure shifts across key levels.",
+    riskMin: 0.0017,
+    riskMax: 0.0044,
+    rrMin: 1.3,
+    rrMax: 2.7,
+    longBias: 0.5,
+    winRate: 0.56
+  }
+];
+
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "active", label: "Active" },
   { id: "assets", label: "Assets" },
+  { id: "models", label: "Models" },
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
   { id: "ai", label: "AI" }
@@ -519,6 +609,80 @@ const getAssetBySymbol = (symbol: string): FutureAsset => {
   return futuresAssets.find((asset) => asset.symbol === symbol) ?? futuresAssets[0];
 };
 
+const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number => {
+  if (candles.length === 0) {
+    return -1;
+  }
+
+  if (targetMs < candles[0].time) {
+    return -1;
+  }
+
+  if (targetMs >= candles[candles.length - 1].time) {
+    return candles.length - 1;
+  }
+
+  let left = 0;
+  let right = candles.length - 1;
+
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const time = candles[mid].time;
+
+    if (time === targetMs) {
+      return mid;
+    }
+
+    if (time < targetMs) {
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+
+  return Math.max(0, right);
+};
+
+const generateTradeBlueprints = (
+  model: ModelProfile,
+  total = 64,
+  nowMs = floorToTimeframe(Date.now(), "1m")
+): TradeBlueprint[] => {
+  const rand = createSeededRng(hashString(`blueprints-${model.id}`));
+  const blueprints: TradeBlueprint[] = [];
+  const usedTimes = new Set<number>();
+
+  for (let i = 0; i < total; i += 1) {
+    const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)].symbol;
+    const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
+    const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
+    const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
+    const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
+    const holdMinutes = 35 + Math.floor(rand() * 780);
+    const exitOffsetMinutes = 45 + i * 63 + Math.floor(rand() * 28);
+    const exitMs = nowMs - exitOffsetMinutes * 60_000;
+    const uniqueExitMs = exitMs - (usedTimes.has(exitMs) ? (i + 1) * 1_000 : 0);
+    usedTimes.add(uniqueExitMs);
+    const entryMs = uniqueExitMs - holdMinutes * 60_000;
+    const units = 0.4 + rand() * 3.6;
+
+    blueprints.push({
+      id: `${model.id}-t${String(i + 1).padStart(2, "0")}`,
+      modelId: model.id,
+      symbol,
+      side,
+      result,
+      entryMs,
+      exitMs: uniqueExitMs,
+      riskPct,
+      rr,
+      units
+    });
+  }
+
+  return blueprints.sort((a, b) => b.exitMs - a.exitMs);
+};
+
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
   if (tab === "active") {
     return (
@@ -533,6 +697,17 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
     return (
       <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
         <path d="M4 17l4-5 3 3 5-7 4 9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      </svg>
+    );
+  }
+
+  if (tab === "models") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <circle cx="8" cy="9" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="16.2" cy="8.4" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M4.5 17.8c.6-2 2-3.1 3.5-3.1h.1c1.6 0 2.9 1.1 3.5 3.1" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M12.8 17.4c.5-1.6 1.6-2.5 2.9-2.5h.1c1.4 0 2.4.9 2.9 2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
       </svg>
     );
   }
@@ -575,6 +750,7 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
 
 export default function Home() {
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
+  const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
@@ -610,6 +786,9 @@ export default function Home() {
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
+  const selectedModel = useMemo(() => {
+    return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0];
+  }, [selectedModelId]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -744,6 +923,10 @@ export default function Home() {
     });
   }, [selectedTimeframe, seriesMap]);
 
+  const tradeBlueprints = useMemo(() => {
+    return generateTradeBlueprints(selectedModel, 64);
+  }, [selectedModel]);
+
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
       return null;
@@ -751,246 +934,168 @@ export default function Home() {
 
     const latestIndex = selectedCandles.length - 1;
     const latest = selectedCandles[latestIndex];
-    const seed = hashString(`active-${selectedSymbol}-${selectedTimeframe}-${selectedCandles.length}`);
-    const rand = createSeededRng(seed);
-    const minLookback = 20;
-    const maxLookback = Math.min(280, latestIndex - 24);
+    const rand = createSeededRng(hashString(`active-${selectedModel.id}-${selectedSymbol}`));
+    const nowMs = floorToTimeframe(Date.now(), "1m");
+    const lookbackMinutes = 28 + Math.floor(rand() * 520);
+    let entryIndex = findCandleIndexAtOrBefore(selectedCandles, nowMs - lookbackMinutes * 60_000);
 
-    const buildTrade = (
-      entryIndex: number,
-      side: TradeSide,
-      stopPrice: number,
-      targetPrice: number,
-      rr: number,
-      riskPerUnit: number
-    ): ActiveTrade => {
-      const entryPrice = selectedCandles[entryIndex].close;
-      const markPrice = latest.close;
-      const maxRiskUsd = 55 + rand() * 220;
-      const maxNotionalUsd = 1200 + rand() * 4200;
-      const units = Math.max(
-        0.001,
-        Math.min(maxRiskUsd / Math.max(0.000001, riskPerUnit), maxNotionalUsd / Math.max(0.000001, entryPrice))
-      );
-      const pnlPct =
-        side === "Long"
-          ? ((markPrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - markPrice) / entryPrice) * 100;
-      const pnlValue =
-        side === "Long" ? (markPrice - entryPrice) * units : (entryPrice - markPrice) * units;
-      const progressRaw =
-        side === "Long"
-          ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
-          : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
-      const openedAt = toUtcTimestamp(selectedCandles[entryIndex].time);
-
-      return {
-        symbol: selectedSymbol,
-        side,
-        units,
-        entryPrice,
-        markPrice,
-        targetPrice,
-        stopPrice,
-        openedAt,
-        openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
-        elapsed: formatElapsed(Number(openedAt)),
-        pnlPct,
-        pnlValue,
-        progressPct: clamp(progressRaw * 100, 0, 100),
-        rr
-      };
-    };
-
-    if (maxLookback > minLookback) {
-      for (let attempt = 0; attempt < 180; attempt += 1) {
-        const lookback = minLookback + Math.floor(rand() * (maxLookback - minLookback + 1));
-        const entryIndex = latestIndex - lookback;
-
-        if (entryIndex < 28) {
-          continue;
-        }
-
-        const entryPrice = selectedCandles[entryIndex].close;
-        let atr = 0;
-        let atrCount = 0;
-
-        for (let i = Math.max(1, entryIndex - 24); i <= entryIndex; i += 1) {
-          atr += selectedCandles[i].high - selectedCandles[i].low;
-          atrCount += 1;
-        }
-
-        atr /= Math.max(1, atrCount);
-
-        const trendStart = Math.max(0, entryIndex - 12);
-        const trendReturn =
-          entryPrice > 0 ? entryPrice / selectedCandles[trendStart].close - 1 : 0;
-        let side: TradeSide = trendReturn >= 0 ? "Long" : "Short";
-
-        if (rand() < 0.34) {
-          side = side === "Long" ? "Short" : "Long";
-        }
-
-        const riskPerUnit =
-          Math.max(
-            atr * (0.66 + rand() * 0.95),
-            entryPrice * timeframeVolatility[selectedTimeframe] * (2.1 + rand() * 1.9)
-          ) || entryPrice * 0.0022;
-        const rr = 1.25 + rand() * 1.55;
-        const stopPrice =
-          side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
-        const targetPrice =
-          side === "Long"
-            ? entryPrice + riskPerUnit * rr
-            : Math.max(0.000001, entryPrice - riskPerUnit * rr);
-        const path = evaluateTpSlPath(
-          selectedCandles,
-          side,
-          entryIndex,
-          targetPrice,
-          stopPrice,
-          latestIndex
-        );
-
-        if (path.hit) {
-          continue;
-        }
-
-        return buildTrade(entryIndex, side, stopPrice, targetPrice, rr, riskPerUnit);
-      }
+    if (entryIndex < 22 || entryIndex >= latestIndex - 4) {
+      const fallbackBars = 28 + Math.floor(rand() * Math.max(8, Math.min(220, latestIndex - 30)));
+      entryIndex = Math.max(20, latestIndex - fallbackBars);
     }
 
-    const fallbackEntryIndex = Math.max(24, latestIndex - 40);
-    const fallbackEntryPrice = selectedCandles[fallbackEntryIndex].close;
-    const recentSegment = selectedCandles.slice(fallbackEntryIndex, latestIndex + 1);
-    const segmentHigh = Math.max(...recentSegment.map((candle) => candle.high));
-    const segmentLow = Math.min(...recentSegment.map((candle) => candle.low));
-    const side: TradeSide = latest.close >= fallbackEntryPrice ? "Long" : "Short";
-    const stopPrice =
-      side === "Long" ? Math.max(0.000001, segmentLow * 0.997) : segmentHigh * 1.003;
-    const targetPrice =
-      side === "Long"
-        ? Math.max(segmentHigh * 1.006, latest.close * 1.004)
-        : Math.max(0.000001, Math.min(segmentLow * 0.994, latest.close * 0.996));
-    const riskPerUnit = Math.max(0.000001, Math.abs(fallbackEntryPrice - stopPrice));
-    const rr = Math.abs(targetPrice - fallbackEntryPrice) / riskPerUnit;
+    const entryPrice = selectedCandles[entryIndex].close;
+    const side: TradeSide = rand() <= selectedModel.longBias ? "Long" : "Short";
+    const rr = selectedModel.rrMin + rand() * (selectedModel.rrMax - selectedModel.rrMin);
 
-    return buildTrade(fallbackEntryIndex, side, stopPrice, targetPrice, rr, riskPerUnit);
-  }, [selectedCandles, selectedSymbol, selectedTimeframe]);
+    let atr = 0;
+    let atrCount = 0;
+
+    for (let i = Math.max(1, entryIndex - 28); i <= entryIndex; i += 1) {
+      atr += selectedCandles[i].high - selectedCandles[i].low;
+      atrCount += 1;
+    }
+
+    atr /= Math.max(1, atrCount);
+
+    let riskPerUnit = Math.max(
+      entryPrice * (selectedModel.riskMin + rand() * (selectedModel.riskMax - selectedModel.riskMin)),
+      atr * (0.75 + rand() * 1.1)
+    );
+
+    let stopPrice = side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
+    let targetPrice =
+      side === "Long"
+        ? entryPrice + riskPerUnit * rr
+        : Math.max(0.000001, entryPrice - riskPerUnit * rr);
+
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      const path = evaluateTpSlPath(
+        selectedCandles,
+        side,
+        entryIndex,
+        targetPrice,
+        stopPrice,
+        latestIndex
+      );
+
+      if (!path.hit) {
+        break;
+      }
+
+      riskPerUnit *= 1.22;
+      stopPrice =
+        side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
+      targetPrice =
+        side === "Long"
+          ? entryPrice + riskPerUnit * rr
+          : Math.max(0.000001, entryPrice - riskPerUnit * rr);
+    }
+
+    const maxRiskUsd = 60 + rand() * 240;
+    const maxNotionalUsd = 1400 + rand() * 5200;
+    const units = Math.max(
+      0.001,
+      Math.min(
+        maxRiskUsd / Math.max(0.000001, riskPerUnit),
+        maxNotionalUsd / Math.max(0.000001, entryPrice)
+      )
+    );
+    const markPrice = latest.close;
+    const pnlPct =
+      side === "Long"
+        ? ((markPrice - entryPrice) / entryPrice) * 100
+        : ((entryPrice - markPrice) / entryPrice) * 100;
+    const pnlValue = side === "Long" ? (markPrice - entryPrice) * units : (entryPrice - markPrice) * units;
+    const progressRaw =
+      side === "Long"
+        ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
+        : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
+    const openedAt = toUtcTimestamp(selectedCandles[entryIndex].time);
+
+    return {
+      symbol: selectedSymbol,
+      side,
+      units,
+      entryPrice,
+      markPrice,
+      targetPrice,
+      stopPrice,
+      openedAt,
+      openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
+      elapsed: formatElapsed(Number(openedAt)),
+      pnlPct,
+      pnlValue,
+      progressPct: clamp(progressRaw * 100, 0, 100),
+      rr
+    };
+  }, [selectedCandles, selectedModel, selectedSymbol]);
 
   const historyRows = useMemo(() => {
     const rows: HistoryItem[] = [];
-    const maxTrades = 60;
-    const rand = createSeededRng(hashString(`history-${selectedTimeframe}`));
-    let tradeId = 1;
-    let attempts = 0;
 
-    while (rows.length < maxTrades && attempts < maxTrades * 20) {
-      attempts += 1;
-      const asset = futuresAssets[Math.floor(rand() * futuresAssets.length)];
-      const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-      const list = seriesMap[key] ?? generateFakeCandles(asset.basePrice, asset.symbol, selectedTimeframe);
+    for (const blueprint of tradeBlueprints) {
+      const asset = getAssetBySymbol(blueprint.symbol);
+      const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
+      const list = seriesMap[key] ?? generateFakeCandles(asset.basePrice, blueprint.symbol, selectedTimeframe);
 
-      if (list.length < 220) {
+      if (list.length < 16) {
         continue;
       }
 
-      const minEntry = Math.floor(list.length * 0.18);
-      const maxEntry = list.length - 54;
-      const entryIndex = Math.floor(minEntry + rand() * Math.max(1, maxEntry - minEntry));
-      const maxHold = 8 + Math.floor(rand() * 32);
-      const entryPrice = list[entryIndex].close;
-      const side: TradeSide = rand() > 0.47 ? "Long" : "Short";
-      const units =
-        Math.max(
-          0.001,
-          (900 + rand() * 2800) / Math.max(entryPrice * (0.9 + rand() * 0.55), 0.000001)
-        ) || 0.001;
+      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
+      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
 
+      if (entryIndex < 0 || rawExitIndex < 0) {
+        continue;
+      }
+
+      const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
+
+      if (exitIndex <= entryIndex) {
+        continue;
+      }
+
+      const entryPrice = list[entryIndex].close;
+      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
       let atr = 0;
       let atrCount = 0;
 
-      for (let i = Math.max(1, entryIndex - 18); i <= entryIndex; i += 1) {
+      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
         atr += list[i].high - list[i].low;
         atrCount += 1;
       }
 
       atr /= Math.max(1, atrCount);
 
-      const risk =
-        Math.max(
-          atr * (0.7 + rand() * 0.9),
-          entryPrice * timeframeVolatility[selectedTimeframe] * (3.4 + rand() * 2.2)
-        ) || entryPrice * 0.0025;
-      const rr = 1.2 + rand() * 1.6;
+      const riskPerUnit = Math.max(
+        entryPrice * blueprint.riskPct,
+        atr * (0.6 + rand() * 0.6),
+        entryPrice * 0.0009
+      );
       const stopPrice =
-        side === "Long" ? Math.max(0.000001, entryPrice - risk) : entryPrice + risk;
+        blueprint.side === "Long"
+          ? Math.max(0.000001, entryPrice - riskPerUnit)
+          : entryPrice + riskPerUnit;
       const targetPrice =
-        side === "Long"
-          ? entryPrice + risk * rr
-          : Math.max(0.000001, entryPrice - risk * rr);
-
-      let exitIndex = Math.min(list.length - 1, entryIndex + maxHold);
-      let result: TradeResult | null = null;
-      let outcomePrice = list[exitIndex].close;
-
-      for (let i = entryIndex + 1; i <= Math.min(list.length - 1, entryIndex + maxHold); i += 1) {
-        const candle = list[i];
-        const hitTarget = side === "Long" ? candle.high >= targetPrice : candle.low <= targetPrice;
-        const hitStop = side === "Long" ? candle.low <= stopPrice : candle.high >= stopPrice;
-
-        if (hitTarget || hitStop) {
-          exitIndex = i;
-
-          if (hitTarget && hitStop) {
-            const distTarget = Math.abs(candle.open - targetPrice);
-            const distStop = Math.abs(candle.open - stopPrice);
-            const targetFirst = distTarget <= distStop;
-            result = targetFirst ? "Win" : "Loss";
-            outcomePrice = targetFirst ? targetPrice : stopPrice;
-          } else if (hitTarget) {
-            result = "Win";
-            outcomePrice = targetPrice;
-          } else {
-            result = "Loss";
-            outcomePrice = stopPrice;
-          }
-
-          break;
-        }
-      }
-
-      if (!result) {
-        const finalPrice = list[exitIndex].close;
-        if ((side === "Long" && finalPrice >= entryPrice) || (side === "Short" && finalPrice <= entryPrice)) {
-          result = "Win";
-          outcomePrice =
-            side === "Long"
-              ? Math.min(finalPrice, targetPrice)
-              : Math.max(finalPrice, targetPrice);
-        } else {
-          result = "Loss";
-          outcomePrice =
-            side === "Long"
-              ? Math.max(finalPrice, stopPrice)
-              : Math.min(finalPrice, stopPrice);
-        }
-      }
-
+        blueprint.side === "Long"
+          ? entryPrice + riskPerUnit * blueprint.rr
+          : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
+      const outcomePrice = blueprint.result === "Win" ? targetPrice : stopPrice;
       const pnlPct =
-        side === "Long"
+        blueprint.side === "Long"
           ? ((outcomePrice - entryPrice) / entryPrice) * 100
           : ((entryPrice - outcomePrice) / entryPrice) * 100;
       const pnlUsd =
-        side === "Long"
-          ? (outcomePrice - entryPrice) * units
-          : (entryPrice - outcomePrice) * units;
+        blueprint.side === "Long"
+          ? (outcomePrice - entryPrice) * blueprint.units
+          : (entryPrice - outcomePrice) * blueprint.units;
 
       rows.push({
-        id: `h${tradeId}`,
-        symbol: asset.symbol,
-        side,
-        result,
+        id: blueprint.id,
+        symbol: blueprint.symbol,
+        side: blueprint.side,
+        result: blueprint.result,
         pnlPct,
         pnlUsd,
         entryTime: toUtcTimestamp(list[entryIndex].time),
@@ -999,17 +1104,15 @@ export default function Home() {
         targetPrice,
         stopPrice,
         outcomePrice,
-        units,
+        units: blueprint.units,
         entryAt: formatDateTime(list[entryIndex].time),
         exitAt: formatDateTime(list[exitIndex].time),
         time: formatDateTime(list[exitIndex].time)
       });
-
-      tradeId += 1;
     }
 
-    return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [selectedTimeframe, seriesMap]);
+    return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 60);
+  }, [tradeBlueprints, selectedTimeframe, seriesMap]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -1193,6 +1296,13 @@ export default function Home() {
       setSelectedHistoryId(null);
     }
   }, [historyRows, selectedHistoryId]);
+
+  useEffect(() => {
+    setSelectedHistoryId(null);
+    setShowAllTradesOnChart(false);
+    setShowActiveTradeOnChart(false);
+    focusTradeIdRef.current = null;
+  }, [selectedModelId]);
 
   useEffect(() => {
     if (!notificationsOpen) {
@@ -1648,7 +1758,7 @@ export default function Home() {
         {
           time: endTime,
           position: isPositiveTrade ? "aboveBar" : "belowBar",
-          shape: isPositiveTrade ? "arrowUp" : "arrowDown",
+          shape: "circle",
           color:
             trade.status === "pending"
               ? "#2d6cff"
@@ -1704,7 +1814,7 @@ export default function Home() {
         allMarkers.push({
           time: endTime,
           position: trade.result === "Win" ? "aboveBar" : "belowBar",
-          shape: trade.result === "Win" ? "arrowUp" : "arrowDown",
+          shape: "circle",
           color: trade.result === "Win" ? "#35c971" : "#f0455a",
           text: `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
         });
@@ -1913,7 +2023,7 @@ export default function Home() {
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>Active Trade</h2>
-                      <p>Current open position</p>
+                      <p>Current open position · {selectedModel.name}</p>
                     </div>
                     <button
                       type="button"
@@ -2059,12 +2169,51 @@ export default function Home() {
                 </div>
               ) : null}
 
+              {activePanelTab === "models" ? (
+                <div className="tab-view">
+                  <div className="watchlist-head">
+                    <div>
+                      <h2>Models / People</h2>
+                      <p>Select one profile to drive history and actions</p>
+                    </div>
+                  </div>
+                  <ul className="model-list">
+                    {modelProfiles.map((model) => {
+                      const selected = model.id === selectedModelId;
+
+                      return (
+                        <li key={model.id}>
+                          <button
+                            type="button"
+                            className={`model-row ${selected ? "selected" : ""}`}
+                            onClick={() => setSelectedModelId(model.id)}
+                          >
+                            <span className="model-main">
+                              <span className="model-name">{model.name}</span>
+                              <span className="model-style">{model.style}</span>
+                            </span>
+                            <span className="model-desc">{model.description}</span>
+                            <span className="model-meta">
+                              <span>Win {Math.round(model.winRate * 100)}%</span>
+                              <span>
+                                R:R {model.rrMin.toFixed(1)}-{model.rrMax.toFixed(1)}
+                              </span>
+                              <span>{selected ? "Active" : "Select"}</span>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+
               {activePanelTab === "history" ? (
                 <div className="tab-view">
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>History</h2>
-                      <p>Simulated trade outcomes</p>
+                      <p>Simulated trade outcomes · {selectedModel.name}</p>
                     </div>
                     <button
                       type="button"
@@ -2134,7 +2283,7 @@ export default function Home() {
                   <div className="watchlist-head">
                     <div>
                       <h2>Action</h2>
-                      <p>Entry, SL, TP, and exits</p>
+                      <p>Entry, SL, TP, and exits · {selectedModel.name}</p>
                     </div>
                   </div>
                   <ul className="history-list">
@@ -2190,6 +2339,7 @@ export default function Home() {
       <footer className="statusbar">
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
+        <span>Model: {selectedModel.name}</span>
         <span>Feed: simulated</span>
         <span>UTC</span>
       </footer>
