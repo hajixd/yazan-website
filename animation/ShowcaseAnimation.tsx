@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
-import TradingHome from "../app/page";
+import TradingTerminal from "../app/TradingTerminal";
 import styles from "./showcase.module.css";
 
 type TourStep = {
@@ -47,6 +47,8 @@ type CalloutState = {
   side: CalloutSide;
   title: string;
   detail: string;
+  targetX: number;
+  targetY: number;
 };
 
 type HighlightRect = {
@@ -251,7 +253,9 @@ export default function ShowcaseAnimation() {
         y: clamp(y, 8, maxY),
         side,
         title,
-        detail
+        detail,
+        targetX: rect.left + rect.width / 2,
+        targetY: rect.top + rect.height / 2
       });
       setHighlightRect({
         x: rect.left - 6,
@@ -503,7 +507,9 @@ export default function ShowcaseAnimation() {
         y: 86,
         side: "bottom",
         title: "First Impression",
-        detail: "A familiar entry path makes onboarding immediate for new users."
+        detail: "A familiar entry path makes onboarding immediate for new users.",
+        targetX: Math.min(window.innerWidth * 0.5, 520),
+        targetY: Math.min(window.innerHeight * 0.28, 260)
       });
       await sleep(320);
 
@@ -774,6 +780,36 @@ export default function ShowcaseAnimation() {
       }[callout.side]
     : "";
 
+  const connector = useMemo(() => {
+    if (!callout) {
+      return null;
+    }
+
+    const calloutWidth = viewport.width < 760 ? 224 : 304;
+    const calloutHeight = viewport.width < 760 ? 104 : 122;
+    let startX = callout.x + calloutWidth / 2;
+    let startY = callout.y + calloutHeight / 2;
+
+    if (callout.side === "left") {
+      startX = callout.x + calloutWidth;
+    } else if (callout.side === "right") {
+      startX = callout.x;
+    } else if (callout.side === "top") {
+      startY = callout.y + calloutHeight;
+    } else {
+      startY = callout.y;
+    }
+
+    const controlX = startX + (callout.targetX - startX) * 0.48;
+    const controlY = startY + (callout.targetY - startY) * 0.12;
+
+    return {
+      path: `M ${startX} ${startY} Q ${controlX} ${controlY} ${callout.targetX} ${callout.targetY}`,
+      targetX: callout.targetX,
+      targetY: callout.targetY
+    };
+  }, [callout, viewport.width]);
+
   return (
     <section className={styles.stage}>
       <div className={styles.ambientLayer} aria-hidden>
@@ -830,7 +866,7 @@ export default function ShowcaseAnimation() {
                 }}
                 transition={{ type: "spring", stiffness: 160, damping: 24, mass: 0.7 }}
               >
-                <TradingHome />
+                <TradingTerminal showcaseMode />
               </motion.div>
             </div>
             <div className={styles.deviceReflection} />
@@ -887,6 +923,26 @@ export default function ShowcaseAnimation() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.25, ease: "easeOut" }}
         />
+      ) : null}
+
+      {connector ? (
+        <svg className={styles.calloutConnector} aria-hidden>
+          <defs>
+            <marker
+              id="calloutArrowhead"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="3"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L0,6 L8,3 z" fill="rgba(170, 211, 255, 0.95)" />
+            </marker>
+          </defs>
+          <path d={connector.path} className={styles.calloutConnectorPath} markerEnd="url(#calloutArrowhead)" />
+          <circle cx={connector.targetX} cy={connector.targetY} r="3" className={styles.calloutTargetDot} />
+        </svg>
       ) : null}
 
       {callout ? (
