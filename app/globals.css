@@ -475,19 +475,23 @@ button {
   background: #16233a;
 }
 
+.panel-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #101726;
+}
+
 .active-tab {
   min-height: 0;
   overflow-y: auto;
 }
 
 .active-card {
-  margin: 0.82rem;
-  padding: 0.84rem;
-  border: 1px solid #1d2940;
-  border-radius: 10px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(45, 108, 255, 0.18), transparent 48%),
-    linear-gradient(180deg, #0f1725 0%, #0c131f 100%);
+  margin: 0;
+  padding: 0.74rem 0.76rem 0.9rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -562,10 +566,11 @@ button {
 }
 
 .active-metric {
-  padding: 0.42rem 0.46rem;
-  border: 1px solid #1a2539;
-  border-radius: 8px;
-  background: rgba(8, 13, 22, 0.72);
+  padding: 0.34rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
   display: grid;
   gap: 0.12rem;
 }

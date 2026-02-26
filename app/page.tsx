@@ -510,7 +510,8 @@ export default function Home() {
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
+  const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
@@ -867,9 +868,43 @@ export default function Home() {
     return historyRows.find((row) => row.id === selectedHistoryId) ?? null;
   }, [historyRows, selectedHistoryId]);
 
-  const displayedHistoryRows = useMemo(() => {
-    return showAllHistory ? historyRows : historyRows.slice(0, 18);
-  }, [historyRows, showAllHistory]);
+  const currentSymbolHistoryRows = useMemo(() => {
+    return historyRows.filter((row) => row.symbol === selectedSymbol);
+  }, [historyRows, selectedSymbol]);
+
+  const candleIndexByUnix = useMemo(() => {
+    const map = new Map<number, number>();
+
+    for (let i = 0; i < selectedCandles.length; i += 1) {
+      map.set(toUtcTimestamp(selectedCandles[i].time), i);
+    }
+
+    return map;
+  }, [selectedCandles]);
+
+  const activeChartTrade = useMemo(() => {
+    if (!activeTrade || selectedCandles.length === 0) {
+      return null;
+    }
+
+    const latestTime = toUtcTimestamp(selectedCandles[selectedCandles.length - 1].time);
+
+    return {
+      id: "active-live",
+      symbol: activeTrade.symbol,
+      side: activeTrade.side,
+      entryTime: activeTrade.openedAt,
+      exitTime:
+        latestTime > activeTrade.openedAt
+          ? latestTime
+          : ((activeTrade.openedAt + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp),
+      entryPrice: activeTrade.entryPrice,
+      targetPrice: activeTrade.targetPrice,
+      stopPrice: activeTrade.stopPrice,
+      outcomePrice: activeTrade.markPrice,
+      result: activeTrade.pnlValue >= 0 ? "Win" : "Loss"
+    };
+  }, [activeTrade, selectedCandles, selectedTimeframe]);
 
   const actionRows = useMemo(() => {
     const rows: ActionItem[] = [];
@@ -1287,12 +1322,8 @@ export default function Home() {
       return;
     }
 
-    const entryIndex = selectedCandles.findIndex((candle) => {
-      return toUtcTimestamp(candle.time) === selectedHistoryTrade.entryTime;
-    });
-    const exitIndexRaw = selectedCandles.findIndex((candle) => {
-      return toUtcTimestamp(candle.time) === selectedHistoryTrade.exitTime;
-    });
+    const entryIndex = candleIndexByUnix.get(selectedHistoryTrade.entryTime) ?? -1;
+    const exitIndexRaw = candleIndexByUnix.get(selectedHistoryTrade.exitTime) ?? -1;
     const exitIndex = exitIndexRaw >= 0 ? exitIndexRaw : entryIndex + 1;
 
     if (entryIndex < 0) {
@@ -1306,7 +1337,65 @@ export default function Home() {
     const to = Math.min(selectedCandles.length - 1, rightBound + Math.round(span * 0.6));
     chart.timeScale().setVisibleLogicalRange({ from, to });
     focusTradeIdRef.current = null;
-  }, [selectedCandles, selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
+  }, [candleIndexByUnix, selectedCandles, selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
+
+  useEffect(() => {
+    if (!showActiveTradeOnChart || !activeChartTrade) {
+      return;
+    }
+
+    const chart = chartRef.current;
+
+    if (!chart || activeChartTrade.symbol !== selectedSymbol) {
+      return;
+    }
+
+    const entryIndex = candleIndexByUnix.get(activeChartTrade.entryTime);
+
+    if (entryIndex === undefined) {
+      return;
+    }
+
+    const to = selectedCandles.length - 1;
+    const from = Math.max(0, entryIndex - Math.round(timeframeVisibleCount[selectedTimeframe] * 0.5));
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+  }, [
+    activeChartTrade,
+    candleIndexByUnix,
+    selectedCandles,
+    selectedSymbol,
+    selectedTimeframe,
+    showActiveTradeOnChart
+  ]);
+
+  useEffect(() => {
+    if (!showAllTradesOnChart || currentSymbolHistoryRows.length === 0) {
+      return;
+    }
+
+    const chart = chartRef.current;
+
+    if (!chart) {
+      return;
+    }
+
+    const firstTime = currentSymbolHistoryRows.reduce((lowest, row) => {
+      return Math.min(lowest, Number(row.entryTime));
+    }, Number(currentSymbolHistoryRows[0].entryTime));
+    const lastTime = currentSymbolHistoryRows.reduce((highest, row) => {
+      return Math.max(highest, Number(row.exitTime));
+    }, Number(currentSymbolHistoryRows[0].exitTime));
+    const firstIndex = candleIndexByUnix.get(firstTime as UTCTimestamp);
+    const lastIndex = candleIndexByUnix.get(lastTime as UTCTimestamp);
+
+    if (firstIndex === undefined || lastIndex === undefined) {
+      return;
+    }
+
+    const from = Math.max(0, firstIndex - 12);
+    const to = Math.min(selectedCandles.length - 1, lastIndex + 12);
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+  }, [candleIndexByUnix, currentSymbolHistoryRows, selectedCandles, showAllTradesOnChart]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -1349,7 +1438,7 @@ export default function Home() {
       return;
     }
 
-    if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
+    const clearTradeOverlays = () => {
       candleSeries.setMarkers([]);
       tradeProfitZone.setData([]);
       tradeLossZone.setData([]);
@@ -1357,6 +1446,112 @@ export default function Home() {
       tradeTargetLine.setData([]);
       tradeStopLine.setData([]);
       tradePathLine.setData([]);
+    };
+
+    if (showAllTradesOnChart) {
+      if (currentSymbolHistoryRows.length === 0) {
+        clearTradeOverlays();
+        return;
+      }
+
+      const allMarkers: SeriesMarker<Time>[] = [];
+
+      for (const trade of currentSymbolHistoryRows) {
+        const endTime =
+          trade.exitTime > trade.entryTime
+            ? trade.exitTime
+            : ((trade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
+
+        allMarkers.push({
+          time: trade.entryTime,
+          position: "belowBar",
+          shape: "arrowUp",
+          color: "#35c971",
+          text: "E"
+        });
+        allMarkers.push({
+          time: endTime,
+          position: trade.result === "Win" ? "aboveBar" : "belowBar",
+          shape: "circle",
+          color: trade.result === "Win" ? "#35c971" : "#f0455a",
+          text: trade.result === "Win" ? "W" : "L"
+        });
+      }
+
+      allMarkers.sort((a, b) => Number(a.time) - Number(b.time));
+      candleSeries.setMarkers(allMarkers);
+      tradeProfitZone.setData([]);
+      tradeLossZone.setData([]);
+      tradeEntryLine.setData([]);
+      tradeTargetLine.setData([]);
+      tradeStopLine.setData([]);
+      tradePathLine.setData([]);
+      return;
+    }
+
+    if (showActiveTradeOnChart && activeChartTrade && activeChartTrade.symbol === selectedSymbol) {
+      const startTime = activeChartTrade.entryTime;
+      const endTime = activeChartTrade.exitTime;
+
+      candleSeries.setMarkers([
+        {
+          time: startTime,
+          position: activeChartTrade.side === "Long" ? "belowBar" : "aboveBar",
+          shape: activeChartTrade.side === "Long" ? "arrowUp" : "arrowDown",
+          color: activeChartTrade.side === "Long" ? "#35c971" : "#f0455a",
+          text: "Active"
+        },
+        {
+          time: endTime,
+          position: activeChartTrade.result === "Win" ? "aboveBar" : "belowBar",
+          shape: "circle",
+          color: "#2d6cff",
+          text: "Now"
+        }
+      ]);
+
+      tradeEntryLine.setData([
+        { time: startTime, value: activeChartTrade.entryPrice },
+        { time: endTime, value: activeChartTrade.entryPrice }
+      ]);
+      tradeTargetLine.setData([
+        { time: startTime, value: activeChartTrade.targetPrice },
+        { time: endTime, value: activeChartTrade.targetPrice }
+      ]);
+      tradeStopLine.setData([
+        { time: startTime, value: activeChartTrade.stopPrice },
+        { time: endTime, value: activeChartTrade.stopPrice }
+      ]);
+      tradePathLine.setData([
+        { time: startTime, value: activeChartTrade.entryPrice },
+        { time: endTime, value: activeChartTrade.outcomePrice }
+      ]);
+
+      if (activeChartTrade.side === "Long") {
+        tradeProfitZone.applyOptions({
+          baseValue: { type: "price", price: activeChartTrade.entryPrice }
+        });
+        tradeLossZone.applyOptions({
+          baseValue: { type: "price", price: activeChartTrade.entryPrice }
+        });
+        tradeProfitZone.setData([
+          { time: startTime, value: activeChartTrade.targetPrice },
+          { time: endTime, value: activeChartTrade.targetPrice }
+        ]);
+        tradeLossZone.setData([
+          { time: startTime, value: activeChartTrade.stopPrice },
+          { time: endTime, value: activeChartTrade.stopPrice }
+        ]);
+      } else {
+        tradeProfitZone.setData([]);
+        tradeLossZone.setData([]);
+      }
+
+      return;
+    }
+
+    if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
+      clearTradeOverlays();
       return;
     }
 
@@ -1412,7 +1607,15 @@ export default function Home() {
       { time: startTime, value: selectedHistoryTrade.entryPrice },
       { time: endTime, value: selectedHistoryTrade.outcomePrice }
     ]);
-  }, [selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
+  }, [
+    activeChartTrade,
+    currentSymbolHistoryRows,
+    selectedHistoryTrade,
+    selectedSymbol,
+    selectedTimeframe,
+    showActiveTradeOnChart,
+    showAllTradesOnChart
+  ]);
 
   return (
     <main className="terminal">
@@ -1560,11 +1763,29 @@ export default function Home() {
             <div className="panel-content">
               {activePanelTab === "active" ? (
                 <div className="tab-view active-tab">
-                  <div className="watchlist-head">
+                  <div className="watchlist-head with-action">
                     <div>
                       <h2>Active Trade</h2>
                       <p>Current open position</p>
                     </div>
+                    <button
+                      type="button"
+                      className="panel-action-btn"
+                      disabled={!activeTrade}
+                      onClick={() => {
+                        if (!activeTrade) {
+                          return;
+                        }
+
+                        setSelectedSymbol(activeTrade.symbol);
+                        setShowAllTradesOnChart(false);
+                        setShowActiveTradeOnChart((current) => !current);
+                        setSelectedHistoryId(null);
+                        focusTradeIdRef.current = null;
+                      }}
+                    >
+                      {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
+                    </button>
                   </div>
 
                   {activeTrade ? (
@@ -1701,13 +1922,22 @@ export default function Home() {
                     <button
                       type="button"
                       className="panel-action-btn"
-                      onClick={() => setShowAllHistory((current) => !current)}
+                      onClick={() => {
+                        const next = !showAllTradesOnChart;
+                        setShowAllTradesOnChart(next);
+                        setShowActiveTradeOnChart(false);
+                        focusTradeIdRef.current = null;
+
+                        if (next) {
+                          setSelectedHistoryId(null);
+                        }
+                      }}
                     >
-                      {showAllHistory ? "Show Less" : "Show All"}
+                      {showAllTradesOnChart ? "Hide All On Chart" : "Show All On Chart"}
                     </button>
                   </div>
                   <ul className="history-list">
-                    {displayedHistoryRows.map((item) => (
+                    {historyRows.map((item) => (
                       <li key={item.id}>
                         <button
                           type="button"
@@ -1718,6 +1948,8 @@ export default function Home() {
                             focusTradeIdRef.current = item.id;
                             setSelectedHistoryId(item.id);
                             setSelectedSymbol(item.symbol);
+                            setShowAllTradesOnChart(false);
+                            setShowActiveTradeOnChart(false);
                           }}
                         >
                           <span className="history-info">
@@ -1767,6 +1999,8 @@ export default function Home() {
                             focusTradeIdRef.current = action.tradeId;
                             setSelectedHistoryId(action.tradeId);
                             setSelectedSymbol(action.symbol);
+                            setShowAllTradesOnChart(false);
+                            setShowActiveTradeOnChart(false);
                           }}
                         >
                           <span className="history-info">
