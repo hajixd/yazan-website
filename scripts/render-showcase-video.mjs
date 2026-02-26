@@ -4,13 +4,21 @@ import { chromium } from "playwright";
 
 const rootDir = process.cwd();
 const port = Number(process.env.SHOWCASE_PORT ?? 4173);
-const width = Number(process.env.SHOWCASE_WIDTH ?? 1920);
-const height = Number(process.env.SHOWCASE_HEIGHT ?? 1080);
+const captureWidth = Number(process.env.SHOWCASE_CAPTURE_WIDTH ?? 2560);
+const captureHeight = Number(process.env.SHOWCASE_CAPTURE_HEIGHT ?? 1440);
+const targetWidth = Number(process.env.SHOWCASE_TARGET_WIDTH ?? 1920);
+const targetHeight = Number(process.env.SHOWCASE_TARGET_HEIGHT ?? 1080);
+const fps = Number(process.env.SHOWCASE_FPS ?? 30);
+const useInterpolation = process.env.SHOWCASE_INTERPOLATE === "1";
+const mp4Crf = Number(process.env.SHOWCASE_MP4_CRF ?? 14);
 const durationMs = Number(process.env.SHOWCASE_DURATION_MS ?? 56000);
+const serverMode = process.env.SHOWCASE_SERVER_MODE ?? "start";
 const tempDir = `${rootDir}/.render/showcase`;
 const outputDir = `${rootDir}/public/showcase`;
 const outputWebm = `${outputDir}/showcase-pro.webm`;
 const outputMp4 = `${outputDir}/showcase-pro.mp4`;
+const finalDir = `${rootDir}/Final`;
+const finalMp4 = `${finalDir}/Final.mp4`;
 const baseUrl = `http://127.0.0.1:${port}`;
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
@@ -36,33 +44,47 @@ const waitForServer = async (url, timeoutMs = 120_000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
-const devServer = spawn(
-  npmCommand,
-  ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", String(port)],
-  {
+if (serverMode !== "dev") {
+  console.log("Building production app for deterministic capture...");
+  const build = spawnSync(npmCommand, ["run", "build"], {
     cwd: rootDir,
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
-    stdio: ["ignore", "pipe", "pipe"]
-  }
-);
+    stdio: "inherit"
+  });
 
-devServer.stdout.on("data", (chunk) => {
+  if (build.status !== 0) {
+    throw new Error("Production build failed.");
+  }
+}
+
+const serverArgs =
+  serverMode === "dev"
+    ? ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", String(port)]
+    : ["run", "start", "--", "--hostname", "127.0.0.1", "--port", String(port)];
+
+const appServer = spawn(npmCommand, serverArgs, {
+  cwd: rootDir,
+  env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
+  stdio: ["ignore", "pipe", "pipe"]
+});
+
+appServer.stdout.on("data", (chunk) => {
   process.stdout.write(String(chunk));
 });
 
-devServer.stderr.on("data", (chunk) => {
+appServer.stderr.on("data", (chunk) => {
   process.stderr.write(String(chunk));
 });
 
-const stopDevServer = async () => {
-  if (devServer.exitCode !== null || devServer.killed) {
+const stopAppServer = async () => {
+  if (appServer.exitCode !== null || appServer.killed) {
     return;
   }
 
-  devServer.kill("SIGTERM");
+  appServer.kill("SIGTERM");
 
   await new Promise((resolve) => {
-    devServer.once("exit", () => resolve());
+    appServer.once("exit", () => resolve());
     setTimeout(resolve, 1_500);
   });
 };
@@ -71,17 +93,26 @@ try {
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
+  await mkdir(finalDir, { recursive: true });
 
-  console.log(`Waiting for dev server at ${baseUrl} ...`);
+  console.log(`Waiting for app server at ${baseUrl} ...`);
   await waitForServer(`${baseUrl}/animation/live`);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--autoplay-policy=no-user-gesture-required",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding"
+    ]
+  });
   const context = await browser.newContext({
-    viewport: { width, height },
+    viewport: { width: captureWidth, height: captureHeight },
     deviceScaleFactor: 1,
     recordVideo: {
       dir: tempDir,
-      size: { width, height }
+      size: { width: captureWidth, height: captureHeight }
     }
   });
 
@@ -90,7 +121,7 @@ try {
   await page.waitForTimeout(1_600);
   const video = page.video();
 
-  console.log(`Recording ${durationMs}ms showcase at ${width}x${height} ...`);
+  console.log(`Recording ${durationMs}ms showcase at ${captureWidth}x${captureHeight} ...`);
   await page.waitForTimeout(durationMs);
 
   await context.close();
@@ -107,6 +138,17 @@ try {
   const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
 
   if (hasFfmpeg) {
+    const filters = [`scale=${targetWidth}:${targetHeight}:flags=lanczos`];
+
+    if (useInterpolation) {
+      filters.push(`minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`);
+    } else {
+      filters.push(`fps=${fps}`);
+    }
+
+    filters.push("format=yuv420p");
+    const filterGraph = filters.join(",");
+
     const transcode = spawnSync(
       "ffmpeg",
       [
@@ -114,10 +156,16 @@ try {
         "-i",
         outputWebm,
         "-an",
+        "-vf",
+        filterGraph,
         "-c:v",
         "libx264",
-        "-pix_fmt",
-        "yuv420p",
+        "-preset",
+        "slow",
+        "-crf",
+        String(mp4Crf),
+        "-r",
+        String(fps),
         "-movflags",
         "+faststart",
         outputMp4
@@ -127,6 +175,8 @@ try {
 
     if (transcode.status === 0) {
       console.log(`Saved rendered showcase: ${outputMp4}`);
+      await copyFile(outputMp4, finalMp4);
+      console.log(`Copied final export: ${finalMp4}`);
     } else {
       console.warn("ffmpeg conversion failed; keeping webm output only.");
     }
@@ -139,5 +189,5 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
-  await stopDevServer();
+  await stopAppServer();
 }

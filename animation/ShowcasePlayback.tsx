@@ -1,16 +1,19 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ShowcaseAnimation from "./ShowcaseAnimation";
 import styles from "./showcasePlayback.module.css";
 
 export default function ShowcasePlayback() {
-  const searchParams = useSearchParams();
-  const forceLiveMode = searchParams.get("live") === "1";
+  const [forceLiveMode, setForceLiveMode] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [videoError, setVideoError] = useState(false);
+
+  useEffect(() => {
+    const search = typeof window === "undefined" ? "" : window.location.search;
+    setForceLiveMode(new URLSearchParams(search).get("live") === "1");
+  }, []);
 
   if (forceLiveMode || videoError) {
     return <ShowcaseAnimation />;
