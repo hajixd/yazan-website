@@ -18,6 +18,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# local render temp
+.render/
+
 # env files
 .env*
 

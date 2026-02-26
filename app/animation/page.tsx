@@ -1,5 +1,5 @@
-import ShowcaseAnimation from "../../animation/ShowcaseAnimation";
+import ShowcasePlayback from "../../animation/ShowcasePlayback";
 
 export default function AnimationPage() {
-  return <ShowcaseAnimation />;
+  return <ShowcasePlayback />;
 }
