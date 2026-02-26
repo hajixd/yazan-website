@@ -753,7 +753,7 @@ button {
   letter-spacing: 0.01em;
 }
 
-.model-style {
+.model-kind {
   color: #adc2ea;
   font-size: 0.61rem;
   letter-spacing: 0.06em;
@@ -761,15 +761,14 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
-.model-desc {
-  color: var(--text-dim);
-  font-size: 0.67rem;
+.model-account {
+  color: #d4e3ff;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
-.model-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.model-state {
   color: var(--text-faint);
   font-size: 0.6rem;
   letter-spacing: 0.04em;
@@ -777,7 +776,7 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
-.model-meta span:last-child {
+.model-row.selected .model-state {
   color: #c9d6ef;
 }
 

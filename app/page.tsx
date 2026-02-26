@@ -98,6 +98,8 @@ type ActiveTrade = {
 type ModelProfile = {
   id: string;
   name: string;
+  kind: "Person" | "Model";
+  accountNumber?: string;
   style: string;
   description: string;
   riskMin: number;
@@ -143,6 +145,16 @@ type MultiTradeOverlaySeries = {
   targetLine: ISeriesApi<"Line">;
   stopLine: ISeriesApi<"Line">;
   pathLine: ISeriesApi<"Line">;
+};
+
+const createPseudoAccountNumber = (seedText: string): string => {
+  let seed = 0;
+
+  for (let i = 0; i < seedText.length; i += 1) {
+    seed = (seed * 33 + seedText.charCodeAt(i)) >>> 0;
+  }
+
+  return String(10_000_000 + (seed % 90_000_000));
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -254,6 +266,8 @@ const modelProfiles: ModelProfile[] = [
   {
     id: "yazan",
     name: "Yazan",
+    kind: "Person",
+    accountNumber: createPseudoAccountNumber("yazan"),
     style: "Momentum Pullback",
     description: "Trend continuation entries with clean invalidation.",
     riskMin: 0.0018,
@@ -266,6 +280,7 @@ const modelProfiles: ModelProfile[] = [
   {
     id: "ict",
     name: "ICT",
+    kind: "Model",
     style: "Liquidity Sweep",
     description: "Displacement after liquidity grabs and fair value gaps.",
     riskMin: 0.0015,
@@ -278,6 +293,7 @@ const modelProfiles: ModelProfile[] = [
   {
     id: "lyra",
     name: "Lyra",
+    kind: "Model",
     style: "Session Mean Revert",
     description: "Fade stretched moves around session extremes.",
     riskMin: 0.0012,
@@ -290,6 +306,7 @@ const modelProfiles: ModelProfile[] = [
   {
     id: "atlas",
     name: "Atlas",
+    kind: "Model",
     style: "Breakout Pressure",
     description: "Continuation breakouts with volatility expansion.",
     riskMin: 0.002,
@@ -302,6 +319,7 @@ const modelProfiles: ModelProfile[] = [
   {
     id: "orion",
     name: "Orion",
+    kind: "Model",
     style: "Structure Rotation",
     description: "Swing-to-swing structure shifts across key levels.",
     riskMin: 0.0017,
@@ -2396,16 +2414,14 @@ export default function Home() {
                           >
                             <span className="model-main">
                               <span className="model-name">{model.name}</span>
-                              <span className="model-style">{model.style}</span>
+                              <span className="model-kind">{model.kind}</span>
                             </span>
-                            <span className="model-desc">{model.description}</span>
-                            <span className="model-meta">
-                              <span>Win {Math.round(model.winRate * 100)}%</span>
-                              <span>
-                                R:R {model.rrMin.toFixed(1)}-{model.rrMax.toFixed(1)}
+                            {model.accountNumber ? (
+                              <span className="model-account">
+                                Yazan Account #{model.accountNumber}
                               </span>
-                              <span>{selected ? "Active" : "Select"}</span>
-                            </span>
+                            ) : null}
+                            <span className="model-state">{selected ? "Selected" : "Select"}</span>
                           </button>
                         </li>
                       );
