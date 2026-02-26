@@ -136,6 +136,15 @@ type OverlayTrade = {
   pnlUsd: number;
 };
 
+type MultiTradeOverlaySeries = {
+  profitZone: ISeriesApi<"Baseline">;
+  lossZone: ISeriesApi<"Baseline">;
+  entryLine: ISeriesApi<"Line">;
+  targetLine: ISeriesApi<"Line">;
+  stopLine: ISeriesApi<"Line">;
+  pathLine: ISeriesApi<"Line">;
+};
+
 const futuresAssets: FutureAsset[] = [
   {
     symbol: "BTCUSDT.P",
@@ -448,6 +457,17 @@ const formatClock = (timestampMs: number): string => {
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
+};
+
+const getExitMarkerPosition = (
+  side: TradeSide,
+  result: TradeResult
+): "aboveBar" | "belowBar" => {
+  if (side === "Long") {
+    return result === "Win" ? "aboveBar" : "belowBar";
+  }
+
+  return result === "Win" ? "belowBar" : "aboveBar";
 };
 
 const evaluateTpSlPath = (
@@ -780,6 +800,7 @@ export default function Home() {
   const tradeTargetLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const tradeStopLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const tradePathLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const multiTradeSeriesRef = useRef<MultiTradeOverlaySeries[]>([]);
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
@@ -1559,6 +1580,7 @@ export default function Home() {
       tradeTargetLineRef.current = null;
       tradeStopLineRef.current = null;
       tradePathLineRef.current = null;
+      multiTradeSeriesRef.current = [];
     };
   }, []);
 
@@ -1689,6 +1711,7 @@ export default function Home() {
   }, [panelExpanded, activePanelTab]);
 
   useEffect(() => {
+    const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
     const tradeProfitZone = tradeProfitZoneRef.current;
     const tradeLossZone = tradeLossZoneRef.current;
@@ -1698,6 +1721,7 @@ export default function Home() {
     const tradePathLine = tradePathLineRef.current;
 
     if (
+      !chart ||
       !candleSeries ||
       !tradeProfitZone ||
       !tradeLossZone ||
@@ -1709,7 +1733,25 @@ export default function Home() {
       return;
     }
 
+    const clearMultiTradeOverlays = () => {
+      if (multiTradeSeriesRef.current.length === 0) {
+        return;
+      }
+
+      for (const seriesGroup of multiTradeSeriesRef.current) {
+        chart.removeSeries(seriesGroup.profitZone);
+        chart.removeSeries(seriesGroup.lossZone);
+        chart.removeSeries(seriesGroup.entryLine);
+        chart.removeSeries(seriesGroup.targetLine);
+        chart.removeSeries(seriesGroup.stopLine);
+        chart.removeSeries(seriesGroup.pathLine);
+      }
+
+      multiTradeSeriesRef.current = [];
+    };
+
     const clearTradeOverlays = () => {
+      clearMultiTradeOverlays();
       candleSeries.setMarkers([]);
       tradeProfitZone.setData([]);
       tradeLossZone.setData([]);
@@ -1719,46 +1761,129 @@ export default function Home() {
       tradePathLine.setData([]);
     };
 
-    const applyTradeZonePalette = (side: TradeSide, entryPrice: number) => {
+    const applyTradeZonePaletteTo = (
+      profitZoneSeries: ISeriesApi<"Baseline">,
+      lossZoneSeries: ISeriesApi<"Baseline">,
+      side: TradeSide,
+      entryPrice: number,
+      intense = true
+    ) => {
+      const greenStrong = intense ? "rgba(53, 201, 113, 0.22)" : "rgba(53, 201, 113, 0.14)";
+      const greenSoft = intense ? "rgba(53, 201, 113, 0.05)" : "rgba(53, 201, 113, 0.03)";
+      const redStrong = intense ? "rgba(240, 69, 90, 0.24)" : "rgba(240, 69, 90, 0.14)";
+      const redSoft = intense ? "rgba(240, 69, 90, 0.07)" : "rgba(240, 69, 90, 0.03)";
+
       if (side === "Long") {
-        tradeProfitZone.applyOptions({
+        profitZoneSeries.applyOptions({
           baseValue: { type: "price", price: entryPrice },
           topLineColor: "rgba(0,0,0,0)",
-          topFillColor1: "rgba(53, 201, 113, 0.22)",
-          topFillColor2: "rgba(53, 201, 113, 0.05)",
+          topFillColor1: greenStrong,
+          topFillColor2: greenSoft,
           bottomLineColor: "rgba(0,0,0,0)",
           bottomFillColor1: "rgba(0,0,0,0)",
           bottomFillColor2: "rgba(0,0,0,0)"
         });
-        tradeLossZone.applyOptions({
+        lossZoneSeries.applyOptions({
           baseValue: { type: "price", price: entryPrice },
           topLineColor: "rgba(0,0,0,0)",
           topFillColor1: "rgba(0,0,0,0)",
           topFillColor2: "rgba(0,0,0,0)",
           bottomLineColor: "rgba(0,0,0,0)",
-          bottomFillColor1: "rgba(240, 69, 90, 0.24)",
-          bottomFillColor2: "rgba(240, 69, 90, 0.07)"
+          bottomFillColor1: redStrong,
+          bottomFillColor2: redSoft
         });
       } else {
-        tradeProfitZone.applyOptions({
+        profitZoneSeries.applyOptions({
           baseValue: { type: "price", price: entryPrice },
           topLineColor: "rgba(0,0,0,0)",
-          topFillColor1: "rgba(240, 69, 90, 0.24)",
-          topFillColor2: "rgba(240, 69, 90, 0.07)",
+          topFillColor1: redStrong,
+          topFillColor2: redSoft,
           bottomLineColor: "rgba(0,0,0,0)",
           bottomFillColor1: "rgba(0,0,0,0)",
           bottomFillColor2: "rgba(0,0,0,0)"
         });
-        tradeLossZone.applyOptions({
+        lossZoneSeries.applyOptions({
           baseValue: { type: "price", price: entryPrice },
           topLineColor: "rgba(0,0,0,0)",
           topFillColor1: "rgba(0,0,0,0)",
           topFillColor2: "rgba(0,0,0,0)",
           bottomLineColor: "rgba(0,0,0,0)",
-          bottomFillColor1: "rgba(53, 201, 113, 0.22)",
-          bottomFillColor2: "rgba(53, 201, 113, 0.05)"
+          bottomFillColor1: greenStrong,
+          bottomFillColor2: greenSoft
         });
       }
+    };
+
+    const applyTradeZonePalette = (side: TradeSide, entryPrice: number) => {
+      applyTradeZonePaletteTo(tradeProfitZone, tradeLossZone, side, entryPrice, true);
+    };
+
+    const createMultiTradeSeries = (): MultiTradeOverlaySeries => {
+      const entryLine = chart.addLineSeries({
+        color: "rgba(232, 238, 250, 0.62)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const targetLine = chart.addLineSeries({
+        color: "rgba(53, 201, 113, 0.7)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const stopLine = chart.addLineSeries({
+        color: "rgba(255, 76, 104, 0.7)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const pathLine = chart.addLineSeries({
+        color: "rgba(220, 230, 248, 0.64)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const profitZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(53, 201, 113, 0.14)",
+        topFillColor2: "rgba(53, 201, 113, 0.03)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const lossZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(0,0,0,0)",
+        topFillColor2: "rgba(0,0,0,0)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(240, 69, 90, 0.14)",
+        bottomFillColor2: "rgba(240, 69, 90, 0.03)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+
+      return {
+        profitZone,
+        lossZone,
+        entryLine,
+        targetLine,
+        stopLine,
+        pathLine
+      };
     };
 
     const renderSingleTrade = (trade: {
@@ -1787,9 +1912,11 @@ export default function Home() {
         { time: startTime, value: trade.stopPrice },
         { time: endTime, value: trade.stopPrice }
       ];
-      const isPositiveTrade =
-        trade.status === "pending" ? trade.pnlUsd >= 0 : trade.result === "Win";
-      const exitPrefix = isPositiveTrade ? "✓" : "x";
+      const derivedResult: TradeResult =
+        trade.status === "pending" ? (trade.pnlUsd >= 0 ? "Win" : "Loss") : trade.result;
+      const exitPrefix = derivedResult === "Win" ? "✓" : "x";
+      const exitPosition = getExitMarkerPosition(trade.side, derivedResult);
+      clearMultiTradeOverlays();
 
       candleSeries.setMarkers([
         {
@@ -1801,9 +1928,9 @@ export default function Home() {
         },
         {
           time: endTime,
-          position: isPositiveTrade ? "aboveBar" : "belowBar",
+          position: exitPosition,
           shape: "square",
-          color: isPositiveTrade ? "#35c971" : "#f0455a",
+          color: derivedResult === "Win" ? "#35c971" : "#f0455a",
           text: `${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
         }
       ]);
@@ -1830,18 +1957,64 @@ export default function Home() {
     };
 
     if (showAllTradesOnChart) {
+      clearMultiTradeOverlays();
+      tradeProfitZone.setData([]);
+      tradeLossZone.setData([]);
+      tradeEntryLine.setData([]);
+      tradeTargetLine.setData([]);
+      tradeStopLine.setData([]);
+      tradePathLine.setData([]);
+
       if (currentSymbolHistoryRows.length === 0) {
-        clearTradeOverlays();
+        candleSeries.setMarkers([]);
         return;
       }
 
       const allMarkers: SeriesMarker<Time>[] = [];
 
       for (const trade of currentSymbolHistoryRows) {
+        const tradeResult: TradeResult = trade.result;
         const endTime =
           trade.exitTime > trade.entryTime
             ? trade.exitTime
             : ((trade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
+        const targetData = [
+          { time: trade.entryTime, value: trade.targetPrice },
+          { time: endTime, value: trade.targetPrice }
+        ];
+        const stopData = [
+          { time: trade.entryTime, value: trade.stopPrice },
+          { time: endTime, value: trade.stopPrice }
+        ];
+        const seriesGroup = createMultiTradeSeries();
+
+        applyTradeZonePaletteTo(
+          seriesGroup.profitZone,
+          seriesGroup.lossZone,
+          trade.side,
+          trade.entryPrice,
+          false
+        );
+        seriesGroup.entryLine.setData([
+          { time: trade.entryTime, value: trade.entryPrice },
+          { time: endTime, value: trade.entryPrice }
+        ]);
+        seriesGroup.targetLine.setData(targetData);
+        seriesGroup.stopLine.setData(stopData);
+        seriesGroup.pathLine.setData([
+          { time: trade.entryTime, value: trade.entryPrice },
+          { time: endTime, value: trade.outcomePrice }
+        ]);
+
+        if (trade.side === "Long") {
+          seriesGroup.profitZone.setData(targetData);
+          seriesGroup.lossZone.setData(stopData);
+        } else {
+          seriesGroup.profitZone.setData(stopData);
+          seriesGroup.lossZone.setData(targetData);
+        }
+
+        multiTradeSeriesRef.current.push(seriesGroup);
 
         allMarkers.push({
           time: trade.entryTime,
@@ -1852,21 +2025,15 @@ export default function Home() {
         });
         allMarkers.push({
           time: endTime,
-          position: trade.result === "Win" ? "aboveBar" : "belowBar",
+          position: getExitMarkerPosition(trade.side, tradeResult),
           shape: "square",
-          color: trade.result === "Win" ? "#35c971" : "#f0455a",
-          text: `${trade.result === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
+          color: tradeResult === "Win" ? "#35c971" : "#f0455a",
+          text: `${tradeResult === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
         });
       }
 
       allMarkers.sort((a, b) => Number(a.time) - Number(b.time));
       candleSeries.setMarkers(allMarkers);
-      tradeProfitZone.setData([]);
-      tradeLossZone.setData([]);
-      tradeEntryLine.setData([]);
-      tradeTargetLine.setData([]);
-      tradeStopLine.setData([]);
-      tradePathLine.setData([]);
       return;
     }
 
