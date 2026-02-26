@@ -264,6 +264,41 @@
   box-shadow: 0 0 10px rgba(181, 214, 255, 0.6);
 }
 
+.mouseCursorLayer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 48;
+  width: 34px;
+  height: 42px;
+  transform: translate(-22%, -10%);
+  pointer-events: none;
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.44));
+}
+
+.mouseCursorClicking {
+  filter:
+    drop-shadow(0 5px 14px rgba(0, 0, 0, 0.5))
+    drop-shadow(0 0 8px rgba(163, 207, 255, 0.32));
+}
+
+.mouseCursorIcon {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mouseCursorPing {
+  position: absolute;
+  left: 12px;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(194, 223, 255, 0.88);
+  background: rgba(141, 198, 255, 0.24);
+}
+
 .targetHighlight {
   position: fixed;
   z-index: 30;
@@ -356,10 +391,10 @@
 .calloutConnectorPath {
   fill: none;
   stroke: rgba(170, 211, 255, 0.95);
-  stroke-width: 2;
+  stroke-width: 1.8;
   stroke-linecap: round;
   stroke-dasharray: none;
-  filter: drop-shadow(0 0 6px rgba(140, 192, 255, 0.42));
+  filter: drop-shadow(0 0 4px rgba(140, 192, 255, 0.34));
 }
 
 .calloutTargetDot {
@@ -388,44 +423,36 @@
 .calloutCard::after {
   content: "";
   position: absolute;
-  width: 0;
-  height: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(111, 149, 214, 0.84);
+  background: rgba(21, 37, 63, 0.96);
+  box-shadow: 0 0 0 3px rgba(141, 198, 255, 0.12);
 }
 
 .calloutRight::after {
-  left: -8px;
+  left: -6px;
   top: 50%;
   transform: translateY(-50%);
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-right: 8px solid rgba(111, 149, 214, 0.84);
 }
 
 .calloutLeft::after {
-  right: -8px;
+  right: -6px;
   top: 50%;
   transform: translateY(-50%);
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-left: 8px solid rgba(111, 149, 214, 0.84);
 }
 
 .calloutTop::after {
   left: 50%;
-  bottom: -8px;
+  bottom: -6px;
   transform: translateX(-50%);
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-top: 8px solid rgba(111, 149, 214, 0.84);
 }
 
 .calloutBottom::after {
   left: 50%;
-  top: -8px;
+  top: -6px;
   transform: translateX(-50%);
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 8px solid rgba(111, 149, 214, 0.84);
 }
 
 .browserOverlay {

@@ -191,6 +191,7 @@ export default function ShowcaseAnimation() {
     clicking: false,
     visible: false
   });
+  const [clickBurst, setClickBurst] = useState(0);
 
   const followOffset = useMemo(() => {
     if (!followCursor) {
@@ -354,6 +355,7 @@ export default function ShowcaseAnimation() {
       }
 
       setCursor((prev) => ({ ...prev, clicking: true }));
+      setClickBurst((prev) => prev + 1);
       await sleep(100);
 
       target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -888,7 +890,7 @@ export default function ShowcaseAnimation() {
             rotateX: rig.rotateX,
             rotateY: rig.rotateY
           }}
-          transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ type: "spring", stiffness: 116, damping: 22, mass: 1.02 }}
         >
           <div className={styles.deviceFrame}>
             <div className={styles.deviceNotch} />
@@ -900,7 +902,7 @@ export default function ShowcaseAnimation() {
                   y: camera.y + followOffset.y,
                   scale: camera.scale
                 }}
-                transition={{ duration: 0.76, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ type: "spring", stiffness: 132, damping: 24, mass: 0.9 }}
               >
                 <TradingTerminal showcaseMode />
               </motion.div>
@@ -910,13 +912,49 @@ export default function ShowcaseAnimation() {
         </motion.div>
       </div>
 
+      <motion.div
+        className={`${styles.mouseCursorLayer} ${cursor.clicking ? styles.mouseCursorClicking : ""}`}
+        initial={false}
+        animate={{
+          x: cursor.x,
+          y: cursor.y,
+          opacity: cursor.visible ? 1 : 0,
+          scale: cursor.clicking ? 0.92 : 1
+        }}
+        transition={{
+          x: { type: "spring", stiffness: 360, damping: 30, mass: 0.5 },
+          y: { type: "spring", stiffness: 360, damping: 30, mass: 0.5 },
+          opacity: { duration: 0.2, ease: "easeOut" },
+          scale: { duration: 0.14, ease: "easeOut" }
+        }}
+      >
+        <svg className={styles.mouseCursorIcon} viewBox="0 0 28 40" aria-hidden>
+          <path
+            d="M4.4 2.6c0-.98 1.17-1.5 1.9-.83L24.28 19.1c.7.67.22 1.86-.75 1.86h-8.65l3.33 13.22c.15.62-.2 1.26-.81 1.47l-4.43 1.55c-.62.22-1.3-.13-1.51-.78L7.62 23.18l-5.5 4.7c-.74.64-1.87.11-1.87-.86Z"
+            fill="rgba(245, 250, 255, 0.97)"
+            stroke="rgba(10, 16, 26, 0.82)"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+        </svg>
+        {cursor.clicking ? (
+          <motion.span
+            key={clickBurst}
+            className={styles.mouseCursorPing}
+            initial={{ opacity: 0.42, scale: 0.72 }}
+            animate={{ opacity: 0, scale: 2.25 }}
+            transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
+          />
+        ) : null}
+      </motion.div>
+
       <div className={styles.heroPanel}>
         <span className={styles.heroKicker}>YAZAN.TRADE</span>
         <motion.h1
           key={featureTitle}
           initial={{ opacity: 0, y: 12, filter: "blur(5px)" }}
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 0.42, ease: "easeOut" }}
+          transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
         >
           {featureTitle}
         </motion.h1>
@@ -925,7 +963,7 @@ export default function ShowcaseAnimation() {
           className={styles.heroStatus}
           initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 0.46, ease: "easeOut" }}
+          transition={{ duration: 0.56, ease: [0.22, 1, 0.36, 1] }}
         >
           {status}
         </motion.p>
@@ -963,20 +1001,13 @@ export default function ShowcaseAnimation() {
 
       {connector ? (
         <svg className={styles.calloutConnector} aria-hidden>
-          <defs>
-            <marker
-              id="calloutArrowhead"
-              markerWidth="10"
-              markerHeight="10"
-              refX="8"
-              refY="3"
-              orient="auto"
-              markerUnits="strokeWidth"
-            >
-              <path d="M0,0 L0,6 L8,3 z" fill="rgba(170, 211, 255, 0.95)" />
-            </marker>
-          </defs>
-          <path d={connector.path} className={styles.calloutConnectorPath} markerEnd="url(#calloutArrowhead)" />
+          <motion.path
+            d={connector.path}
+            className={styles.calloutConnectorPath}
+            initial={{ pathLength: 0.2, opacity: 0 }}
+            animate={{ pathLength: 1, opacity: 1 }}
+            transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
+          />
           <circle cx={connector.targetX} cy={connector.targetY} r="3" className={styles.calloutTargetDot} />
         </svg>
       ) : null}
@@ -999,7 +1030,7 @@ export default function ShowcaseAnimation() {
           style={{ left: callout.x, top: callout.y }}
           initial={{ opacity: 0, y: 8, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.24, ease: "easeOut" }}
+          transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className={styles.calloutTagRow}>
             <span className={styles.calloutTag}>Now Showing</span>
@@ -1018,7 +1049,7 @@ export default function ShowcaseAnimation() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.35, ease: "easeOut" }}
+          transition={{ duration: 0.48, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className={styles.browserWindow}>
             <div className={styles.browserChrome}>
