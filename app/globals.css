@@ -783,9 +783,9 @@ button {
 }
 
 .history-action {
-  font-size: 0.65rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .ai-tab {
