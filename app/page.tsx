@@ -339,6 +339,54 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const evaluateTpSlPath = (
+  candles: Candle[],
+  side: TradeSide,
+  entryIndex: number,
+  targetPrice: number,
+  stopPrice: number,
+  toIndex = candles.length - 1
+): { hit: boolean; hitIndex: number; outcomePrice: number; result: TradeResult | null } => {
+  const safeEndIndex = Math.min(Math.max(entryIndex + 1, toIndex), candles.length - 1);
+  let hitIndex = -1;
+  let outcomePrice = candles[safeEndIndex]?.close ?? candles[entryIndex]?.close ?? 0;
+  let result: TradeResult | null = null;
+
+  for (let i = entryIndex + 1; i <= safeEndIndex; i += 1) {
+    const candle = candles[i];
+
+    if (!candle) {
+      break;
+    }
+
+    const hitTarget = side === "Long" ? candle.high >= targetPrice : candle.low <= targetPrice;
+    const hitStop = side === "Long" ? candle.low <= stopPrice : candle.high >= stopPrice;
+
+    if (!hitTarget && !hitStop) {
+      continue;
+    }
+
+    hitIndex = i;
+
+    if (hitTarget && hitStop) {
+      const targetFirst =
+        Math.abs(candle.open - targetPrice) <= Math.abs(candle.open - stopPrice);
+      result = targetFirst ? "Win" : "Loss";
+      outcomePrice = targetFirst ? targetPrice : stopPrice;
+    } else if (hitTarget) {
+      result = "Win";
+      outcomePrice = targetPrice;
+    } else {
+      result = "Loss";
+      outcomePrice = stopPrice;
+    }
+
+    break;
+  }
+
+  return { hit: hitIndex >= 0, hitIndex, outcomePrice, result };
+};
+
 const toUtcTimestamp = (ms: number): UTCTimestamp => {
   return Math.floor(ms / 1000) as UTCTimestamp;
 };
@@ -676,76 +724,138 @@ export default function Home() {
   }, [selectedTimeframe, seriesMap]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (selectedCandles.length < 40) {
+    if (selectedCandles.length < 70) {
       return null;
     }
 
-    const seed = hashString(`active-${selectedSymbol}-${selectedTimeframe}`);
+    const latestIndex = selectedCandles.length - 1;
+    const latest = selectedCandles[latestIndex];
+    const seed = hashString(`active-${selectedSymbol}-${selectedTimeframe}-${selectedCandles.length}`);
     const rand = createSeededRng(seed);
-    const maxLookback = Math.min(160, Math.max(36, Math.floor(selectedCandles.length * 0.09)));
-    const entryLookback = 24 + Math.floor(rand() * maxLookback);
-    const entryIndex = Math.max(8, selectedCandles.length - 1 - entryLookback);
-    const entryCandle = selectedCandles[entryIndex];
-    const markPrice = latestCandle.close;
-    const side: TradeSide = rand() >= 0.5 ? "Long" : "Short";
+    const minLookback = 20;
+    const maxLookback = Math.min(280, latestIndex - 24);
 
-    let atr = 0;
-    let atrCount = 0;
-    for (let i = Math.max(1, entryIndex - 24); i <= entryIndex; i += 1) {
-      atr += selectedCandles[i].high - selectedCandles[i].low;
-      atrCount += 1;
+    const buildTrade = (
+      entryIndex: number,
+      side: TradeSide,
+      stopPrice: number,
+      targetPrice: number,
+      rr: number,
+      riskPerUnit: number
+    ): ActiveTrade => {
+      const entryPrice = selectedCandles[entryIndex].close;
+      const markPrice = latest.close;
+      const maxRiskUsd = 55 + rand() * 220;
+      const maxNotionalUsd = 1200 + rand() * 4200;
+      const units = Math.max(
+        0.001,
+        Math.min(maxRiskUsd / Math.max(0.000001, riskPerUnit), maxNotionalUsd / Math.max(0.000001, entryPrice))
+      );
+      const pnlPct =
+        side === "Long"
+          ? ((markPrice - entryPrice) / entryPrice) * 100
+          : ((entryPrice - markPrice) / entryPrice) * 100;
+      const pnlValue =
+        side === "Long" ? (markPrice - entryPrice) * units : (entryPrice - markPrice) * units;
+      const progressRaw =
+        side === "Long"
+          ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
+          : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
+      const openedAt = toUtcTimestamp(selectedCandles[entryIndex].time);
+
+      return {
+        symbol: selectedSymbol,
+        side,
+        units,
+        entryPrice,
+        markPrice,
+        targetPrice,
+        stopPrice,
+        openedAt,
+        openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
+        elapsed: formatElapsed(Number(openedAt)),
+        pnlPct,
+        pnlValue,
+        progressPct: clamp(progressRaw * 100, 0, 100),
+        rr
+      };
+    };
+
+    if (maxLookback > minLookback) {
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const lookback = minLookback + Math.floor(rand() * (maxLookback - minLookback + 1));
+        const entryIndex = latestIndex - lookback;
+
+        if (entryIndex < 28) {
+          continue;
+        }
+
+        const entryPrice = selectedCandles[entryIndex].close;
+        let atr = 0;
+        let atrCount = 0;
+
+        for (let i = Math.max(1, entryIndex - 24); i <= entryIndex; i += 1) {
+          atr += selectedCandles[i].high - selectedCandles[i].low;
+          atrCount += 1;
+        }
+
+        atr /= Math.max(1, atrCount);
+
+        const trendStart = Math.max(0, entryIndex - 12);
+        const trendReturn =
+          entryPrice > 0 ? entryPrice / selectedCandles[trendStart].close - 1 : 0;
+        let side: TradeSide = trendReturn >= 0 ? "Long" : "Short";
+
+        if (rand() < 0.34) {
+          side = side === "Long" ? "Short" : "Long";
+        }
+
+        const riskPerUnit =
+          Math.max(
+            atr * (0.66 + rand() * 0.95),
+            entryPrice * timeframeVolatility[selectedTimeframe] * (2.1 + rand() * 1.9)
+          ) || entryPrice * 0.0022;
+        const rr = 1.25 + rand() * 1.55;
+        const stopPrice =
+          side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
+        const targetPrice =
+          side === "Long"
+            ? entryPrice + riskPerUnit * rr
+            : Math.max(0.000001, entryPrice - riskPerUnit * rr);
+        const path = evaluateTpSlPath(
+          selectedCandles,
+          side,
+          entryIndex,
+          targetPrice,
+          stopPrice,
+          latestIndex
+        );
+
+        if (path.hit) {
+          continue;
+        }
+
+        return buildTrade(entryIndex, side, stopPrice, targetPrice, rr, riskPerUnit);
+      }
     }
-    atr /= Math.max(1, atrCount);
 
-    const risk =
-      Math.max(
-        atr * (0.8 + rand() * 0.8),
-        entryCandle.close * timeframeVolatility[selectedTimeframe] * (2.6 + rand() * 1.8)
-      ) || entryCandle.close * 0.0028;
-    const rr = 1.35 + rand() * 1.35;
-    const units = Math.max(
-      0.001,
-      (1800 + rand() * 3800) / Math.max(entryCandle.close * (0.95 + rand() * 0.25), 0.000001)
-    );
+    const fallbackEntryIndex = Math.max(24, latestIndex - 40);
+    const fallbackEntryPrice = selectedCandles[fallbackEntryIndex].close;
+    const recentSegment = selectedCandles.slice(fallbackEntryIndex, latestIndex + 1);
+    const segmentHigh = Math.max(...recentSegment.map((candle) => candle.high));
+    const segmentLow = Math.min(...recentSegment.map((candle) => candle.low));
+    const side: TradeSide = latest.close >= fallbackEntryPrice ? "Long" : "Short";
     const stopPrice =
-      side === "Long"
-        ? Math.max(0.000001, entryCandle.close - risk)
-        : entryCandle.close + risk;
+      side === "Long" ? Math.max(0.000001, segmentLow * 0.997) : segmentHigh * 1.003;
     const targetPrice =
       side === "Long"
-        ? entryCandle.close + risk * rr
-        : Math.max(0.000001, entryCandle.close - risk * rr);
-    const pnlPct =
-      side === "Long"
-        ? ((markPrice - entryCandle.close) / entryCandle.close) * 100
-        : ((entryCandle.close - markPrice) / entryCandle.close) * 100;
-    const pnlValue =
-      side === "Long"
-        ? (markPrice - entryCandle.close) * units
-        : (entryCandle.close - markPrice) * units;
-    const progressRaw =
-      side === "Long"
-        ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
-        : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
-    const openedAt = toUtcTimestamp(entryCandle.time);
+        ? Math.max(segmentHigh * 1.006, latest.close * 1.004)
+        : Math.max(0.000001, Math.min(segmentLow * 0.994, latest.close * 0.996));
+    const riskPerUnit = Math.max(0.000001, Math.abs(fallbackEntryPrice - stopPrice));
+    const rr = Math.abs(targetPrice - fallbackEntryPrice) / riskPerUnit;
 
-    return {
-      symbol: selectedSymbol,
-      side,
-      units,
-      entryPrice: entryCandle.close,
-      markPrice,
-      targetPrice,
-      stopPrice,
-      openedAt,
-      openedAtLabel: formatDateTime(entryCandle.time),
-      elapsed: formatElapsed(Number(openedAt)),
-      pnlPct,
-      pnlValue,
-      progressPct: clamp(progressRaw * 100, 0, 100),
-      rr
-    };
-  }, [latestCandle.close, selectedCandles, selectedSymbol, selectedTimeframe]);
+    return buildTrade(fallbackEntryIndex, side, stopPrice, targetPrice, rr, riskPerUnit);
+  }, [selectedCandles, selectedSymbol, selectedTimeframe]);
 
   const historyRows = useMemo(() => {
     const rows: HistoryItem[] = [];
@@ -1276,10 +1386,29 @@ export default function Home() {
       const to = candleData.length - 1;
       const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
 
+      chart.applyOptions({
+        rightPriceScale: {
+          autoScale: true
+        }
+      });
       chart.timeScale().setVisibleLogicalRange({ from, to });
       selectionRef.current = selection;
     }
   }, [selectedCandles, selectedSymbol, selectedTimeframe]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart) {
+      return;
+    }
+
+    chart.applyOptions({
+      rightPriceScale: {
+        autoScale: true
+      }
+    });
+  }, [selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
