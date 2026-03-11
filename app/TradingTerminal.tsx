@@ -18,6 +18,7 @@ import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
+type SurfaceTab = "chart" | "models" | "settings" | "backtest" | "ai";
 
 type Candle = {
   open: number;
@@ -264,6 +265,14 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
   { id: "ai", label: "AI" }
+];
+
+const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
+  { id: "chart", label: "Chart" },
+  { id: "models", label: "Models" },
+  { id: "settings", label: "Settings" },
+  { id: "backtest", label: "Backtest" },
+  { id: "ai", label: "Gideon" }
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
@@ -771,6 +780,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
+  const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -783,6 +793,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [watchlistSeriesMap, setWatchlistSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [timeframePreviewMap, setTimeframePreviewMap] = useState<Record<string, Candle[]>>({});
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -978,6 +989,82 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       controller.abort();
     };
   }, [referenceNowMs, selectedTimeframe, showcaseMode]);
+
+  useEffect(() => {
+    if (showcaseMode) {
+      setTimeframePreviewMap(() => {
+        const next: Record<string, Candle[]> = {};
+
+        for (const timeframe of timeframes) {
+          const key = symbolTimeframeKey(selectedSymbol, timeframe);
+          next[key] = generateFakeCandles(
+            selectedAsset.basePrice,
+            selectedSymbol,
+            timeframe,
+            watchlistSnapshotCountByTimeframe[timeframe],
+            referenceNowMs
+          );
+        }
+
+        return next;
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    Promise.allSettled(
+      timeframes.map(async (timeframe) => {
+        const payload = await fetchFuturesCandles(
+          selectedSymbol,
+          timeframe,
+          watchlistSnapshotCountByTimeframe[timeframe],
+          controller.signal
+        );
+
+        return {
+          timeframe,
+          candles: Array.isArray(payload.candles) ? payload.candles : []
+        };
+      })
+    ).then((results) => {
+      if (cancelled || controller.signal.aborted) {
+        return;
+      }
+
+      setTimeframePreviewMap((prev) => {
+        const next = { ...prev };
+
+        results.forEach((result, index) => {
+          const timeframe = timeframes[index];
+          const key = symbolTimeframeKey(selectedSymbol, timeframe);
+
+          if (result.status === "fulfilled" && result.value.candles.length > 0) {
+            next[key] = result.value.candles;
+            return;
+          }
+
+          if (!next[key]) {
+            next[key] = generateFakeCandles(
+              selectedAsset.basePrice,
+              selectedSymbol,
+              timeframe,
+              watchlistSnapshotCountByTimeframe[timeframe],
+              referenceNowMs
+            );
+          }
+        });
+
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, showcaseMode]);
 
   useEffect(() => {
     if (showcaseMode) {
@@ -2382,6 +2469,63 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     showAllTradesOnChart
   ]);
 
+  const isChartSurface = selectedSurfaceTab === "chart";
+  const timeframeChanges = useMemo(() => {
+    return timeframes.map((timeframe) => {
+      const key = symbolTimeframeKey(selectedSymbol, timeframe);
+      const list =
+        timeframe === selectedTimeframe
+          ? selectedCandles
+          : timeframePreviewMap[key] ?? [];
+      const last = list[list.length - 1];
+      const prev = list[list.length - 2] ?? last;
+      const change =
+        last && prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null;
+
+      return {
+        timeframe,
+        change
+      };
+    });
+  }, [selectedCandles, selectedSymbol, selectedTimeframe, timeframePreviewMap]);
+  const liveQuote = useMemo(() => {
+    const mid = latestCandle.close;
+    const spread = Math.max(mid * 0.00008, 0.0001);
+    const tone = quoteChange >= 0 ? "up" : "down";
+
+    return {
+      ask: mid + spread / 2,
+      bid: Math.max(0.000001, mid - spread / 2),
+      spread,
+      askTone: tone,
+      bidTone: tone
+    };
+  }, [latestCandle.close, quoteChange]);
+  const replayWinRate =
+    historyRows.length > 0
+      ? (historyRows.filter((row) => row.result === "Win").length / historyRows.length) * 100
+      : 0;
+  const replayPnlBias =
+    historyRows.length > 0
+      ? clamp(
+          (historyRows.filter((row) => row.pnlUsd >= 0).length / historyRows.length) * 100,
+          0,
+          100
+        )
+      : 0;
+  const replayProgress = activeTrade ? activeTrade.progressPct : 0;
+  const resetChart = () => {
+    const chart = chartRef.current;
+
+    if (!chart || selectedCandles.length === 0) {
+      return;
+    }
+
+    const to = selectedCandles.length - 1;
+    const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+    focusTradeIdRef.current = null;
+  };
   const feedStatusLabel =
     marketStatus === "loading"
       ? "Loading Databento"
@@ -2392,130 +2536,235 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     marketFeedMeta?.updatedAt && !Number.isNaN(Date.parse(marketFeedMeta.updatedAt))
       ? formatClock(Date.parse(marketFeedMeta.updatedAt))
       : null;
+  const liveAskLabel = formatPrice(liveQuote.ask);
+  const liveBidLabel = formatPrice(liveQuote.bid);
+  const liveSpreadLabel = formatPrice(liveQuote.spread);
 
   return (
     <main className="terminal">
-      <header className="topbar">
-        <div className="brand-area">
-          <div className="asset-meta">
-            <h1>{selectedAsset.symbol}</h1>
-            <p>{selectedAsset.name}</p>
-          </div>
-          <div className="live-quote">
-            <span>${formatPrice(latestCandle.close)}</span>
-            <span className={quoteChange >= 0 ? "up" : "down"}>
-              {quoteChange >= 0 ? "+" : ""}
-              {quoteChange.toFixed(2)}%
-            </span>
-          </div>
-        </div>
-
-        <div className="top-controls">
-          <nav className="timeframe-row" aria-label="timeframes">
-            {timeframes.map((timeframe) => (
-              <button
-                key={timeframe}
-                type="button"
-                className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
-                onClick={() => setSelectedTimeframe(timeframe)}
-              >
-                {timeframe}
-              </button>
-            ))}
-          </nav>
-          <div className="top-utility">
-            <span className="site-tag">yazan.futures</span>
-            <div className="notif-wrap" ref={notificationRef}>
-              <button
-                type="button"
-                className="notif-btn"
-                aria-label="notifications"
-                onClick={() => setNotificationsOpen((open) => !open)}
-              >
-                <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M10 19a2 2 0 0 0 4 0"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                {unreadNotificationCount > 0 ? (
-                  <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
-                ) : null}
-              </button>
-
-              {notificationsOpen ? (
-                <div className="notif-popover">
-                  <div className="notif-head">
-                    <strong>Live Activity</strong>
-                    <span>{notificationItems.length} events</span>
-                  </div>
-                  <ul className="notif-list">
-                    {notificationItems.map((item) => (
-                      <li key={item.id} className="notif-item">
-                        <span className={`notif-dot ${item.tone}`} aria-hidden />
-                        <div className="notif-copy">
-                          <span className="notif-title">{item.title}</span>
-                          <span className="notif-details">{item.details}</span>
-                        </div>
-                        <span className="notif-time">{item.time}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+      <div className="surface-strip">
+        <span className="site-tag surface-brand">Yazan Futures</span>
+        <nav className="surface-tabs" aria-label="primary views">
+          {surfaceTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
+              onClick={() => setSelectedSurfaceTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="top-utility surface-actions">
+          <div className="notif-wrap" ref={notificationRef}>
+            <button
+              type="button"
+              className="notif-btn"
+              aria-label="notifications"
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
+              <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
+                <path
+                  d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M10 19a2 2 0 0 0 4 0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {unreadNotificationCount > 0 ? (
+                <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
               ) : null}
-            </div>
+            </button>
+
+            {notificationsOpen ? (
+              <div className="notif-popover">
+                <div className="notif-head">
+                  <strong>Live Activity</strong>
+                  <span>{notificationItems.length} events</span>
+                </div>
+                <ul className="notif-list">
+                  {notificationItems.map((item) => (
+                    <li key={item.id} className="notif-item">
+                      <span className={`notif-dot ${item.tone}`} aria-hidden />
+                      <div className="notif-copy">
+                        <span className="notif-title">{item.title}</span>
+                        <span className="notif-details">{item.details}</span>
+                      </div>
+                      <span className="notif-time">{item.time}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </div>
-      </header>
+      </div>
 
-      <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
+      {isChartSurface ? (
+        <>
+          <header className="topbar">
+            <div className="brand-area">
+              <div className="asset-meta">
+                <h1>{selectedAsset.symbol}</h1>
+                <p>{selectedAsset.name}</p>
+              </div>
+              <div className="live-quote">
+                <span className={quoteChange >= 0 ? "up" : "down"}>
+                  ${formatPrice(latestCandle.close)}
+                </span>
+                <div className="tf-changes">
+                  {timeframeChanges.map(({ timeframe, change }) => (
+                    <span
+                      key={timeframe}
+                      className={`tf-change ${
+                        change === null ? "neutral" : change >= 0 ? "up" : "down"
+                      }${timeframe === selectedTimeframe ? " tf-active" : ""}`}
+                    >
+                      <span className="tf-label">{timeframe}</span>
+                      <span className={change === null ? "" : change >= 0 ? "up" : "down"}>
+                        {change !== null ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%` : "--"}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="top-controls">
+              <nav className="timeframe-row" aria-label="timeframes">
+                {timeframes.map((timeframe) => (
+                  <button
+                    key={timeframe}
+                    type="button"
+                    className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
+                    onClick={() => setSelectedTimeframe(timeframe)}
+                  >
+                    {timeframe}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </header>
+
+          <section className="surface-stage">
+            <div className="surface-view">
+              <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
         <section className="chart-wrap">
           <div className="chart-toolbar">
-            <span>
+            <span className={hoveredCandle.close >= hoveredCandle.open ? "ohlc-up" : "ohlc-down"}>
               O <strong>{formatPrice(hoveredCandle.open)}</strong>
             </span>
-            <span>
+            <span className="ohlc-up">
               H <strong>{formatPrice(hoveredCandle.high)}</strong>
             </span>
-            <span>
+            <span className="ohlc-down">
               L <strong>{formatPrice(hoveredCandle.low)}</strong>
             </span>
-            <span>
+            <span className={hoveredCandle.close >= hoveredCandle.open ? "ohlc-up" : "ohlc-down"}>
               C <strong>{formatPrice(hoveredCandle.close)}</strong>
             </span>
-            <span className={hoveredChange >= 0 ? "up" : "down"}>
-              {hoveredChange >= 0 ? "+" : ""}
-              {hoveredChange.toFixed(2)}%
-            </span>
-            <span>
-              Category <strong>{selectedAsset.category}</strong>
-            </span>
-            <span>
-              Venue <strong>{selectedAsset.venue}</strong>
-            </span>
-            <span>
-              Feed <strong>{feedStatusLabel}</strong>
-            </span>
-            {updatedAtLabel ? (
-              <span>
-                Sync <strong>{updatedAtLabel}</strong>
-              </span>
-            ) : null}
-            <span className="chart-hint">Scroll: zoom | Drag: pan | Opt+R: latest</span>
+          </div>
+          <div className="chart-overlay-stack">
+            <div className="quote-overlay-card" title="Synthetic bid/ask around the futures mid-price">
+              <div className="quote-overlay-head">
+                <strong>Live Quote</strong>
+                <span>{selectedAsset.venue}</span>
+              </div>
+              <div className="quote-overlay-grid">
+                <div className="quote-overlay-item">
+                  <span>Ask</span>
+                  <strong className={liveQuote.askTone}>{liveAskLabel}</strong>
+                </div>
+                <div className="quote-overlay-item">
+                  <span>Spread</span>
+                  <strong className="neutral">{liveSpreadLabel}</strong>
+                </div>
+                <div className="quote-overlay-item">
+                  <span>Bid</span>
+                  <strong className={liveQuote.bidTone}>{liveBidLabel}</strong>
+                </div>
+              </div>
+            </div>
+            <div className="vp-proxy-card" title="Replay stats for the current futures chart">
+              <div className="vp-proxy-head">
+                <strong>Replay</strong>
+                <span>{selectedModel.name}</span>
+              </div>
+
+              <div className="vp-proxy-row">
+                <div className="vp-proxy-row-head">
+                  <span>Win rate</span>
+                  <span>{historyRows.length} trades</span>
+                </div>
+                <div className="vp-proxy-track">
+                  <span
+                    className="vp-proxy-fill buy"
+                    style={{ width: `${replayWinRate.toFixed(1)}%` }}
+                  />
+                  <span className="vp-proxy-midline" />
+                  <span className="vp-proxy-value">{replayWinRate.toFixed(0)}%</span>
+                </div>
+              </div>
+
+              <div className="vp-proxy-row">
+                <div className="vp-proxy-row-head">
+                  <span>PnL bias</span>
+                  <span>{feedStatusLabel}</span>
+                </div>
+                <div className="vp-proxy-track">
+                  <span
+                    className="vp-proxy-fill sell"
+                    style={{ width: `${replayPnlBias.toFixed(1)}%` }}
+                  />
+                  <span className="vp-proxy-midline" />
+                  <span className="vp-proxy-value">{replayPnlBias.toFixed(0)}%</span>
+                </div>
+              </div>
+
+              <div className="vp-proxy-row">
+                <div className="vp-proxy-row-head">
+                  <span>Active progress</span>
+                  <span>{updatedAtLabel ? `Sync ${updatedAtLabel}` : selectedAsset.contract}</span>
+                </div>
+                <div className="vp-proxy-track">
+                  <span
+                    className="vp-proxy-fill buy"
+                    style={{ width: `${replayProgress.toFixed(1)}%` }}
+                  />
+                  <span className="vp-proxy-midline" />
+                  <span className="vp-proxy-value">{replayProgress.toFixed(0)}%</span>
+                </div>
+              </div>
+
+              <div className="vp-proxy-meta">
+                <span>{selectedAsset.category}</span>
+                <span>{marketError ? "Fallback replay" : "Databento"}</span>
+                <span>{selectedAsset.venue}</span>
+              </div>
+            </div>
           </div>
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+            <div className="chart-stage-actions">
+              <button
+                type="button"
+                className="chart-reset-btn"
+                onClick={resetChart}
+                title="Reset chart view (Opt+R)"
+              >
+                Reset Chart
+              </button>
+            </div>
           </div>
         </section>
 
@@ -2532,6 +2781,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     return;
                   }
 
+                  if (selectedSurfaceTab !== "chart") {
+                    setSelectedSurfaceTab("chart");
+                  }
+
                   setActivePanelTab(tab.id);
                   setPanelExpanded(true);
                 }}
@@ -2539,6 +2792,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 aria-label={tab.label}
               >
                 <TabIcon tab={tab.id} />
+                <span className="rail-label">{tab.label}</span>
               </button>
             ))}
           </nav>
@@ -2931,7 +3185,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </div>
           ) : null}
         </aside>
-      </section>
+              </section>
+            </div>
+          </section>
+        </>
+      ) : (
+        <section className="surface-stage">
+          <div className="surface-placeholder">
+            <div className="surface-placeholder-card">
+              <strong>{surfaceTabs.find((tab) => tab.id === selectedSurfaceTab)?.label}</strong>
+              <p>Only the chart surface is mirrored from Korra in this futures build.</p>
+              <button
+                type="button"
+                className="chart-reset-btn"
+                onClick={() => setSelectedSurfaceTab("chart")}
+              >
+                Back To Chart
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       <footer className="statusbar">
         <span>{selectedAsset.symbol}</span>
