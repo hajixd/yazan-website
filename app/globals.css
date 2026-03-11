@@ -446,6 +446,14 @@ button {
   gap: 0.6rem;
 }
 
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .watchlist-head h2 {
   margin: 0;
   font-size: 0.82rem;
@@ -479,6 +487,18 @@ button {
   opacity: 0.45;
   cursor: not-allowed;
   background: #101726;
+}
+
+.panel-mode-btn.on {
+  border-color: rgba(27, 174, 138, 0.42);
+  background: rgba(27, 174, 138, 0.12);
+  color: #acf1dc;
+}
+
+.panel-mode-btn.off {
+  border-color: rgba(240, 69, 90, 0.34);
+  background: rgba(240, 69, 90, 0.08);
+  color: #f3b4bd;
 }
 
 .active-tab {

@@ -14,17 +14,10 @@ import {
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
+import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
-
-type FutureAsset = {
-  symbol: string;
-  name: string;
-  basePrice: number;
-  openInterest: string;
-  funding: string;
-};
 
 type Candle = {
   open: number;
@@ -149,6 +142,20 @@ type HomeProps = {
   showcaseMode?: boolean;
 };
 
+type MarketFeedMeta = {
+  provider: string;
+  dataset: string;
+  sourceTimeframe: string;
+  databentoSymbol: string;
+  updatedAt: string;
+};
+
+type MarketFeedResponse = {
+  candles?: Candle[];
+  meta?: MarketFeedMeta;
+  error?: string;
+};
+
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
 
@@ -158,79 +165,6 @@ const createPseudoAccountNumber = (seedText: string): string => {
 
   return String(10_000_000 + (seed % 90_000_000));
 };
-
-const futuresAssets: FutureAsset[] = [
-  {
-    symbol: "BTCUSDT.P",
-    name: "Bitcoin Perpetual",
-    basePrice: 64238.7,
-    openInterest: "20.4B",
-    funding: "+0.012%"
-  },
-  {
-    symbol: "ETHUSDT.P",
-    name: "Ethereum Perpetual",
-    basePrice: 3421.85,
-    openInterest: "10.1B",
-    funding: "+0.009%"
-  },
-  {
-    symbol: "SOLUSDT.P",
-    name: "Solana Perpetual",
-    basePrice: 187.54,
-    openInterest: "2.8B",
-    funding: "-0.004%"
-  },
-  {
-    symbol: "XRPUSDT.P",
-    name: "XRP Perpetual",
-    basePrice: 0.6943,
-    openInterest: "1.9B",
-    funding: "+0.003%"
-  },
-  {
-    symbol: "BNBUSDT.P",
-    name: "BNB Perpetual",
-    basePrice: 585.19,
-    openInterest: "1.3B",
-    funding: "-0.001%"
-  },
-  {
-    symbol: "DOGEUSDT.P",
-    name: "Dogecoin Perpetual",
-    basePrice: 0.1921,
-    openInterest: "1.4B",
-    funding: "+0.015%"
-  },
-  {
-    symbol: "AVAXUSDT.P",
-    name: "Avalanche Perpetual",
-    basePrice: 42.16,
-    openInterest: "780M",
-    funding: "-0.008%"
-  },
-  {
-    symbol: "LINKUSDT.P",
-    name: "Chainlink Perpetual",
-    basePrice: 19.84,
-    openInterest: "640M",
-    funding: "+0.006%"
-  },
-  {
-    symbol: "ADAUSDT.P",
-    name: "Cardano Perpetual",
-    basePrice: 0.7862,
-    openInterest: "590M",
-    funding: "-0.002%"
-  },
-  {
-    symbol: "SUIUSDT.P",
-    name: "Sui Perpetual",
-    basePrice: 1.79,
-    openInterest: "410M",
-    funding: "+0.011%"
-  }
-];
 
 const timeframes: Timeframe[] = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
 
@@ -333,13 +267,23 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 9000,
-  "5m": 7800,
-  "15m": 6400,
-  "1H": 4800,
-  "4H": 3400,
-  "1D": 2200,
-  "1W": 900
+  "1m": 1440,
+  "5m": 1000,
+  "15m": 500,
+  "1H": 360,
+  "4H": 320,
+  "1D": 320,
+  "1W": 208
+};
+
+const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
+  "1m": 4,
+  "5m": 4,
+  "15m": 4,
+  "1H": 4,
+  "4H": 4,
+  "1D": 4,
+  "1W": 4
 };
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -382,6 +326,13 @@ const createSeededRng = (seed: number) => {
 };
 
 const formatPrice = (value: number): string => {
+  if (value < 0.01) {
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: 6,
+      maximumFractionDigits: 6
+    });
+  }
+
   if (value < 1) {
     return value.toLocaleString("en-US", {
       minimumFractionDigits: 4,
@@ -389,15 +340,8 @@ const formatPrice = (value: number): string => {
     });
   }
 
-  if (value < 100) {
-    return value.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-  }
-
   return value.toLocaleString("en-US", {
-    minimumFractionDigits: 1,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 };
@@ -554,6 +498,30 @@ const parseTimeFromCrosshair = (time: Time): number | null => {
   return null;
 };
 
+const fetchFuturesCandles = async (
+  symbol: string,
+  timeframe: Timeframe,
+  count: number,
+  signal?: AbortSignal
+): Promise<MarketFeedResponse> => {
+  const params = new URLSearchParams({
+    symbol,
+    timeframe,
+    count: String(count)
+  });
+  const response = await fetch(`/api/futures/candles?${params.toString()}`, {
+    cache: "no-store",
+    signal
+  });
+  const payload = (await response.json()) as MarketFeedResponse;
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load market candles.");
+  }
+
+  return payload;
+};
+
 const generateFakeCandles = (
   basePrice: number,
   symbol: string,
@@ -640,10 +608,6 @@ const createNextCandle = (
   };
 };
 
-const getAssetBySymbol = (symbol: string): FutureAsset => {
-  return futuresAssets.find((asset) => asset.symbol === symbol) ?? futuresAssets[0];
-};
-
 const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number => {
   if (candles.length === 0) {
     return -1;
@@ -678,73 +642,41 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
-const generateShowcaseTradeBlueprints = (
+const generateTradeBlueprintsFromCandles = (
   model: ModelProfile,
-  total = 84,
-  nowMs = floorToTimeframe(SHOWCASE_REFERENCE_NOW_MS, "1m")
+  symbol: string,
+  candles: Candle[],
+  total = 54
 ): TradeBlueprint[] => {
-  const curatedSymbols = [
-    "BTCUSDT.P",
-    "ETHUSDT.P",
-    "SOLUSDT.P",
-    "XRPUSDT.P",
-    "BNBUSDT.P",
-    "DOGEUSDT.P",
-    "AVAXUSDT.P",
-    "LINKUSDT.P"
-  ] as const;
-  const blueprints: TradeBlueprint[] = [];
-
-  for (let i = 0; i < total; i += 1) {
-    const symbol = curatedSymbols[i % curatedSymbols.length];
-    const side: TradeSide = i % 3 === 0 || i % 3 === 1 ? "Long" : "Short";
-    const rr = model.rrMin + (model.rrMax - model.rrMin) * (0.58 + ((i % 7) / 18));
-    const riskPct = model.riskMin + (model.riskMax - model.riskMin) * (0.44 + ((i % 5) / 16));
-    const holdMinutes = 55 + (i % 6) * 36;
-    const exitOffsetMinutes = 30 + i * 54;
-    const exitMs = nowMs - exitOffsetMinutes * 60_000;
-    const entryMs = exitMs - holdMinutes * 60_000;
-    const units = 0.7 + (i % 9) * 0.29;
-
-    blueprints.push({
-      id: `${model.id}-show-${String(i + 1).padStart(2, "0")}`,
-      modelId: model.id,
-      symbol,
-      side,
-      result: "Win",
-      entryMs,
-      exitMs,
-      riskPct,
-      rr,
-      units
-    });
+  if (candles.length < 40) {
+    return [];
   }
 
-  return blueprints;
-};
-
-const generateTradeBlueprints = (
-  model: ModelProfile,
-  total = 64,
-  nowMs = floorToTimeframe(Date.now(), "1m")
-): TradeBlueprint[] => {
-  const rand = createSeededRng(hashString(`blueprints-${model.id}`));
+  const rand = createSeededRng(
+    hashString(
+      `blueprints-${model.id}-${symbol}-${candles[0]?.time ?? 0}-${candles[candles.length - 1]?.time ?? 0}`
+    )
+  );
   const blueprints: TradeBlueprint[] = [];
-  const usedTimes = new Set<number>();
+  const latestExitIndex = Math.max(12, candles.length - 2);
+  const tradeCount = Math.min(total, Math.max(18, Math.floor(candles.length / 10)));
+  const spacing = Math.max(3, Math.floor((latestExitIndex - 12) / Math.max(1, tradeCount)));
 
-  for (let i = 0; i < total; i += 1) {
-    const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)].symbol;
+  for (let i = 0; i < tradeCount; i += 1) {
     const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
     const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
     const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
     const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
-    const holdMinutes = 35 + Math.floor(rand() * 780);
-    const exitOffsetMinutes = 45 + i * 63 + Math.floor(rand() * 28);
-    const exitMs = nowMs - exitOffsetMinutes * 60_000;
-    const uniqueExitMs = exitMs - (usedTimes.has(exitMs) ? (i + 1) * 1_000 : 0);
-    usedTimes.add(uniqueExitMs);
-    const entryMs = uniqueExitMs - holdMinutes * 60_000;
-    const units = 0.4 + rand() * 3.6;
+    const jitter = Math.floor(rand() * Math.max(2, Math.floor(spacing * 0.45)));
+    const exitIndex = Math.max(14, latestExitIndex - i * spacing - jitter);
+    const holdBars = Math.max(4, Math.min(36, 4 + Math.floor(rand() * Math.max(5, spacing * 1.4))));
+    const entryIndex = Math.max(8, exitIndex - holdBars);
+    const anchorPrice = candles[entryIndex]?.close ?? candles[exitIndex]?.close ?? 1;
+    const units = Math.max(0.25, 1200 / Math.max(1, anchorPrice)) * (0.65 + rand() * 1.35);
+
+    if (!candles[entryIndex] || !candles[exitIndex] || exitIndex <= entryIndex) {
+      continue;
+    }
 
     blueprints.push({
       id: `${model.id}-t${String(i + 1).padStart(2, "0")}`,
@@ -752,8 +684,8 @@ const generateTradeBlueprints = (
       symbol,
       side,
       result,
-      entryMs,
-      exitMs: uniqueExitMs,
+      entryMs: candles[entryIndex].time,
+      exitMs: candles[exitIndex].time,
       riskPct,
       rr,
       units
@@ -842,22 +774,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [chartSimulationEnabled, setChartSimulationEnabled] = useState(true);
+  const [activePanelSimulationEnabled, setActivePanelSimulationEnabled] = useState(true);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
-  const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
-    const initial: Record<string, Candle[]> = {};
-    const defaultNow = showcaseMode ? SHOWCASE_REFERENCE_NOW_MS : Date.now();
-
-    for (const asset of futuresAssets) {
-      const key = symbolTimeframeKey(asset.symbol, "15m");
-      initial[key] = generateFakeCandles(asset.basePrice, asset.symbol, "15m", undefined, defaultNow);
-    }
-
-    return initial;
-  });
+  const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [watchlistSeriesMap, setWatchlistSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
+  const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [marketError, setMarketError] = useState<string | null>(null);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -883,36 +811,173 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   useEffect(() => {
-    setSeriesMap((prev) => {
-      let changed = false;
-      const next = { ...prev };
+    setHoveredTime(null);
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (showcaseMode) {
+      setSeriesMap((prev) => ({
+        ...prev,
+        [selectedKey]: generateFakeCandles(
+          selectedAsset.basePrice,
+          selectedSymbol,
+          selectedTimeframe,
+          candleHistoryCountByTimeframe[selectedTimeframe],
+          referenceNowMs
+        )
+      }));
+      setMarketFeedMeta({
+        provider: "Simulation",
+        dataset: "local",
+        sourceTimeframe: selectedTimeframe,
+        databentoSymbol: selectedSymbol,
+        updatedAt: new Date(referenceNowMs).toISOString()
+      });
+      setMarketStatus("ready");
+      setMarketError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setMarketStatus("loading");
+    setMarketError(null);
+
+    fetchFuturesCandles(
+      selectedSymbol,
+      selectedTimeframe,
+      candleHistoryCountByTimeframe[selectedTimeframe],
+      controller.signal
+    )
+      .then((payload) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        const nextCandles = Array.isArray(payload.candles) ? payload.candles : [];
+
+        if (nextCandles.length === 0) {
+          throw new Error("Databento returned no candles for this contract.");
+        }
+
+        setSeriesMap((prev) => ({
+          ...prev,
+          [selectedKey]: nextCandles
+        }));
+        setMarketFeedMeta(payload.meta ?? null);
+        setMarketStatus("ready");
+      })
+      .catch((error) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        setSeriesMap((prev) => {
+          if (prev[selectedKey]?.length) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [selectedKey]: generateFakeCandles(
+              selectedAsset.basePrice,
+              selectedSymbol,
+              selectedTimeframe,
+              candleHistoryCountByTimeframe[selectedTimeframe],
+              referenceNowMs
+            )
+          };
+        });
+        setMarketStatus("error");
+        setMarketError(error instanceof Error ? error.message : "Failed to load market candles.");
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    referenceNowMs,
+    selectedAsset.basePrice,
+    selectedKey,
+    selectedSymbol,
+    selectedTimeframe,
+    showcaseMode
+  ]);
+
+  useEffect(() => {
+    if (showcaseMode) {
+      const next: Record<string, Candle[]> = {};
 
       for (const asset of futuresAssets) {
         const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-
-        if (next[key]) {
-          continue;
-        }
-
         next[key] = generateFakeCandles(
           asset.basePrice,
           asset.symbol,
           selectedTimeframe,
-          undefined,
+          watchlistSnapshotCountByTimeframe[selectedTimeframe],
           referenceNowMs
         );
-        changed = true;
       }
 
-      if (!changed) {
-        return prev;
+      setWatchlistSeriesMap(next);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    Promise.allSettled(
+      futuresAssets.map(async (asset) => {
+        const payload = await fetchFuturesCandles(
+          asset.symbol,
+          selectedTimeframe,
+          watchlistSnapshotCountByTimeframe[selectedTimeframe],
+          controller.signal
+        );
+
+        return {
+          symbol: asset.symbol,
+          candles: Array.isArray(payload.candles) ? payload.candles : []
+        };
+      })
+    ).then((results) => {
+      if (cancelled || controller.signal.aborted) {
+        return;
       }
 
-      return next;
+      setWatchlistSeriesMap((prev) => {
+        const next = { ...prev };
+
+        results.forEach((result, index) => {
+          const asset = futuresAssets[index];
+          const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+
+          if (result.status === "fulfilled" && result.value.candles.length > 0) {
+            next[key] = result.value.candles;
+            return;
+          }
+
+          if (!next[key]) {
+            next[key] = generateFakeCandles(
+              asset.basePrice,
+              asset.symbol,
+              selectedTimeframe,
+              watchlistSnapshotCountByTimeframe[selectedTimeframe],
+              referenceNowMs
+            );
+          }
+        });
+
+        return next;
+      });
     });
 
-    setHoveredTime(null);
-  }, [referenceNowMs, selectedTimeframe]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [referenceNowMs, selectedTimeframe, showcaseMode]);
 
   useEffect(() => {
     if (showcaseMode) {
@@ -980,7 +1045,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       selectedAsset.basePrice,
       selectedSymbol,
       selectedTimeframe,
-      undefined,
+      candleHistoryCountByTimeframe[selectedTimeframe],
       referenceNowMs
     );
   }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, selectedTimeframe]);
@@ -1016,53 +1081,59 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return futuresAssets.map((asset) => {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
       const list =
-        seriesMap[key] ??
-        generateFakeCandles(
-          asset.basePrice,
-          asset.symbol,
-          selectedTimeframe,
-          undefined,
-          referenceNowMs
-        );
+        asset.symbol === selectedSymbol
+          ? seriesMap[key] ?? fallbackCandles
+          : watchlistSeriesMap[key] ??
+            generateFakeCandles(
+              asset.basePrice,
+              asset.symbol,
+              selectedTimeframe,
+              watchlistSnapshotCountByTimeframe[selectedTimeframe],
+              referenceNowMs
+            );
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
-      const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+      const change =
+        last && prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null;
 
       return {
         ...asset,
-        lastPrice: last.close,
+        lastPrice: last?.close ?? null,
         change
       };
     });
-  }, [referenceNowMs, selectedTimeframe, seriesMap]);
+  }, [
+    fallbackCandles,
+    referenceNowMs,
+    selectedSymbol,
+    selectedTimeframe,
+    seriesMap,
+    watchlistSeriesMap
+  ]);
 
   const tradeBlueprints = useMemo(() => {
-    if (showcaseMode) {
-      return generateShowcaseTradeBlueprints(
-        selectedModel,
-        84,
-        floorToTimeframe(referenceNowMs, "1m")
-      );
+    if (!chartSimulationEnabled) {
+      return [];
     }
 
-    return generateTradeBlueprints(
+    return generateTradeBlueprintsFromCandles(
       selectedModel,
-      64,
-      floorToTimeframe(referenceNowMs, "1m")
+      selectedSymbol,
+      selectedCandles,
+      showcaseMode ? 42 : 54
     );
-  }, [referenceNowMs, selectedModel, showcaseMode]);
+  }, [chartSimulationEnabled, selectedCandles, selectedModel, selectedSymbol, showcaseMode]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (selectedCandles.length < 70) {
+    if (!activePanelSimulationEnabled || selectedCandles.length < 70) {
       return null;
     }
 
     const latestIndex = selectedCandles.length - 1;
     const latest = selectedCandles[latestIndex];
     const rand = createSeededRng(hashString(`active-${selectedModel.id}-${selectedSymbol}`));
-    const nowMs = floorToTimeframe(referenceNowMs, "1m");
-    const lookbackMinutes = 28 + Math.floor(rand() * 520);
-    let entryIndex = findCandleIndexAtOrBefore(selectedCandles, nowMs - lookbackMinutes * 60_000);
+    const lookbackBars = 6 + Math.floor(rand() * Math.max(18, Math.min(120, latestIndex - 24)));
+    let entryIndex = Math.max(20, latestIndex - lookbackBars);
 
     if (entryIndex < 22 || entryIndex >= latestIndex - 4) {
       const fallbackBars = 28 + Math.floor(rand() * Math.max(8, Math.min(220, latestIndex - 30)));
@@ -1158,34 +1229,33 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       stopPrice,
       openedAt,
       openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
-      elapsed: formatElapsed(Number(openedAt), Math.floor(referenceNowMs / 1000)),
+      elapsed: formatElapsed(Number(openedAt), toUtcTimestamp(selectedCandles[latestIndex].time)),
       pnlPct,
       pnlValue,
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol, showcaseMode]);
+  }, [
+    activePanelSimulationEnabled,
+    selectedCandles,
+    selectedModel,
+    selectedSymbol,
+    showcaseMode
+  ]);
 
   const historyRows = useMemo(() => {
+    if (!chartSimulationEnabled) {
+      return [];
+    }
+
     const rows: HistoryItem[] = [];
+    const list = selectedCandles;
+
+    if (list.length < 16) {
+      return rows;
+    }
 
     for (const blueprint of tradeBlueprints) {
-      const asset = getAssetBySymbol(blueprint.symbol);
-      const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
-      const list =
-        seriesMap[key] ??
-        generateFakeCandles(
-          asset.basePrice,
-          blueprint.symbol,
-          selectedTimeframe,
-          undefined,
-          referenceNowMs
-        );
-
-      if (list.length < 16) {
-        continue;
-      }
-
       const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
       const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
 
@@ -1308,7 +1378,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [referenceNowMs, showcaseMode, tradeBlueprints, selectedTimeframe, seriesMap]);
+  }, [chartSimulationEnabled, selectedCandles, showcaseMode, tradeBlueprints]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -1427,7 +1497,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         },
         {
           id: "showcase-live-2",
-          title: "BTCUSDT.P TP hit",
+          title: `${selectedSymbol} TP hit`,
           details: "+$432.80 (2.14%) captured on copied trade",
           time: formatClock(now - 14_000),
           timestamp: now - 14_000,
@@ -1436,7 +1506,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         },
         {
           id: "showcase-live-3",
-          title: "ETHUSDT.P entry executed",
+          title: `${selectedSymbol} entry executed`,
           details: "Buy order synced from selected profile",
           time: formatClock(now - 34_000),
           timestamp: now - 34_000,
@@ -1527,7 +1597,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12);
-  }, [actionRows, activeTrade, referenceNowMs, showcaseMode]);
+  }, [actionRows, activeTrade, referenceNowMs, selectedSymbol, showcaseMode]);
 
   const seenNotificationSet = useMemo(() => {
     return new Set(seenNotificationIds);
@@ -1555,6 +1625,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setShowActiveTradeOnChart(false);
     focusTradeIdRef.current = null;
   }, [selectedModelId]);
+
+  useEffect(() => {
+    setSelectedHistoryId(null);
+    setShowAllTradesOnChart(false);
+    setShowActiveTradeOnChart(false);
+    focusTradeIdRef.current = null;
+  }, [selectedTimeframe]);
 
   useEffect(() => {
     if (!notificationsOpen) {
@@ -2305,6 +2382,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     showAllTradesOnChart
   ]);
 
+  const feedStatusLabel =
+    marketStatus === "loading"
+      ? "Loading Databento"
+      : marketStatus === "error"
+        ? "Fallback replay"
+        : `${marketFeedMeta?.provider ?? "Databento"} · ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
+  const updatedAtLabel =
+    marketFeedMeta?.updatedAt && !Number.isNaN(Date.parse(marketFeedMeta.updatedAt))
+      ? formatClock(Date.parse(marketFeedMeta.updatedAt))
+      : null;
+
   return (
     <main className="terminal">
       <header className="topbar">
@@ -2336,7 +2424,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             ))}
           </nav>
           <div className="top-utility">
-            <span className="site-tag">yazan.trade</span>
+            <span className="site-tag">yazan.futures</span>
             <div className="notif-wrap" ref={notificationRef}>
               <button
                 type="button"
@@ -2411,11 +2499,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               {hoveredChange.toFixed(2)}%
             </span>
             <span>
-              Funding <strong>{selectedAsset.funding}</strong>
+              Category <strong>{selectedAsset.category}</strong>
             </span>
             <span>
-              OI <strong>{selectedAsset.openInterest}</strong>
+              Venue <strong>{selectedAsset.venue}</strong>
             </span>
+            <span>
+              Feed <strong>{feedStatusLabel}</strong>
+            </span>
+            {updatedAtLabel ? (
+              <span>
+                Sync <strong>{updatedAtLabel}</strong>
+              </span>
+            ) : null}
             <span className="chart-hint">Scroll: zoom | Drag: pan | Opt+R: latest</span>
           </div>
           <div className="chart-stage">
@@ -2454,26 +2550,37 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>Active Trade</h2>
-                      <p>Current open position · {selectedModel.name}</p>
+                      <p>{selectedAsset.symbol} replayed on live futures candles</p>
                     </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn"
-                      disabled={!activeTrade}
-                      onClick={() => {
-                        if (!activeTrade) {
-                          return;
-                        }
+                    <div className="panel-head-actions">
+                      <button
+                        type="button"
+                        className={`panel-action-btn panel-mode-btn ${
+                          activePanelSimulationEnabled ? "on" : "off"
+                        }`}
+                        onClick={() => setActivePanelSimulationEnabled((current) => !current)}
+                      >
+                        {activePanelSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-action-btn"
+                        disabled={!activeTrade}
+                        onClick={() => {
+                          if (!activeTrade) {
+                            return;
+                          }
 
-                        setSelectedSymbol(activeTrade.symbol);
-                        setShowAllTradesOnChart(false);
-                        setShowActiveTradeOnChart((current) => !current);
-                        setSelectedHistoryId(null);
-                        focusTradeIdRef.current = null;
-                      }}
-                    >
-                      {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
-                    </button>
+                          setSelectedSymbol(activeTrade.symbol);
+                          setShowAllTradesOnChart(false);
+                          setShowActiveTradeOnChart((current) => !current);
+                          setSelectedHistoryId(null);
+                          focusTradeIdRef.current = null;
+                        }}
+                      >
+                        {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
+                      </button>
+                    </div>
                   </div>
 
                   {activeTrade ? (
@@ -2553,7 +2660,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     </div>
                   ) : (
                     <div className="ai-placeholder">
-                      <p>No active trade data yet.</p>
+                      <p>
+                        {activePanelSimulationEnabled
+                          ? "No active replay trade is open on this chart yet."
+                          : "Active trade simulation is turned off."}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -2564,7 +2675,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head">
                     <div>
                       <h2>Assets</h2>
-                      <p>Perpetual Contracts</p>
+                      <p>Databento continuous futures watchlist</p>
                     </div>
                   </div>
 
@@ -2581,17 +2692,32 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           className={`watchlist-row ${
                             row.symbol === selectedSymbol ? "selected" : ""
                           }`}
-                          onClick={() => setSelectedSymbol(row.symbol)}
+                          onClick={() => {
+                            setSelectedSymbol(row.symbol);
+                            setSelectedHistoryId(null);
+                            setShowAllTradesOnChart(false);
+                            setShowActiveTradeOnChart(false);
+                            focusTradeIdRef.current = null;
+                          }}
                         >
                           <span className="symbol-col">
                             <span>{row.symbol}</span>
-                            <small>{row.name}</small>
+                            <small>
+                              {row.name} · {row.category}
+                            </small>
                           </span>
 
-                          <span className="num-col">{formatPrice(row.lastPrice)}</span>
-                          <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
-                            {row.change >= 0 ? "+" : ""}
-                            {row.change.toFixed(2)}
+                          <span className="num-col">
+                            {row.lastPrice === null ? "--" : formatPrice(row.lastPrice)}
+                          </span>
+                          <span
+                            className={`num-col ${
+                              row.change === null ? "" : row.change >= 0 ? "up" : "down"
+                            }`}
+                          >
+                            {row.change === null
+                              ? "--"
+                              : `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}`}
                           </span>
                         </button>
                       </li>
@@ -2642,107 +2768,149 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>History</h2>
-                      <p>Simulated trade outcomes · {selectedModel.name}</p>
+                      <p>{selectedAsset.symbol} simulated fills from {selectedModel.name}</p>
                     </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn"
-                      onClick={() => {
-                        const next = !showAllTradesOnChart;
-                        setShowAllTradesOnChart(next);
-                        setShowActiveTradeOnChart(false);
-                        focusTradeIdRef.current = null;
+                    <div className="panel-head-actions">
+                      <button
+                        type="button"
+                        className={`panel-action-btn panel-mode-btn ${
+                          chartSimulationEnabled ? "on" : "off"
+                        }`}
+                        onClick={() => setChartSimulationEnabled((current) => !current)}
+                      >
+                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-action-btn"
+                        onClick={() => {
+                          const next = !showAllTradesOnChart;
+                          setShowAllTradesOnChart(next);
+                          setShowActiveTradeOnChart(false);
+                          focusTradeIdRef.current = null;
 
-                        if (next) {
-                          setSelectedHistoryId(null);
-                        }
-                      }}
-                    >
-                      {showAllTradesOnChart ? "Hide All On Chart" : "Show All On Chart"}
-                    </button>
+                          if (next) {
+                            setSelectedHistoryId(null);
+                          }
+                        }}
+                      >
+                        {showAllTradesOnChart ? "Hide All On Chart" : "Show All On Chart"}
+                      </button>
+                    </div>
                   </div>
-                  <ul className="history-list">
-                    {historyRows.map((item) => (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          className={`history-row ${
-                            selectedHistoryId === item.id ? "selected" : ""
-                          }`}
-                          onClick={() => {
-                            focusTradeIdRef.current = item.id;
-                            setSelectedHistoryId(item.id);
-                            setSelectedSymbol(item.symbol);
-                            setShowAllTradesOnChart(false);
-                            setShowActiveTradeOnChart(false);
-                          }}
-                        >
-                          <span className="history-info">
-                            <span className="history-main">
-                              <span
-                                className={`history-action ${
-                                  item.pnlUsd < 0 ? "down" : "up"
-                                }`}
-                              >
-                                {formatSignedUsd(item.pnlUsd)}
+                  {historyRows.length > 0 ? (
+                    <ul className="history-list">
+                      {historyRows.map((item) => (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            className={`history-row ${
+                              selectedHistoryId === item.id ? "selected" : ""
+                            }`}
+                            onClick={() => {
+                              focusTradeIdRef.current = item.id;
+                              setSelectedHistoryId(item.id);
+                              setSelectedSymbol(item.symbol);
+                              setShowAllTradesOnChart(false);
+                              setShowActiveTradeOnChart(false);
+                            }}
+                          >
+                            <span className="history-info">
+                              <span className="history-main">
+                                <span
+                                  className={`history-action ${
+                                    item.pnlUsd < 0 ? "down" : "up"
+                                  }`}
+                                >
+                                  {formatSignedUsd(item.pnlUsd)}
+                                </span>
+                                <span className="history-symbol">{item.symbol}</span>
                               </span>
-                              <span className="history-symbol">{item.symbol}</span>
+                              <span className="history-levels">
+                                {item.side === "Long" ? "Buy" : "Sell"} {formatPrice(item.entryPrice)} | TP{" "}
+                                {formatPrice(item.targetPrice)} | SL {formatPrice(item.stopPrice)}
+                              </span>
                             </span>
-                            <span className="history-levels">
-                              {item.side === "Long" ? "Buy" : "Sell"} {formatPrice(item.entryPrice)} | TP{" "}
-                              {formatPrice(item.targetPrice)} | SL {formatPrice(item.stopPrice)}
+                            <span className="history-meta">
+                              <span className={item.pnlPct < 0 ? "down" : "up"}>
+                                {item.pnlPct >= 0 ? "+" : ""}
+                                {item.pnlPct.toFixed(2)}%
+                              </span>
+                              <span>{item.time}</span>
                             </span>
-                          </span>
-                          <span className="history-meta">
-                            <span className={item.pnlPct < 0 ? "down" : "up"}>
-                              {item.pnlPct >= 0 ? "+" : ""}
-                              {item.pnlPct.toFixed(2)}%
-                            </span>
-                            <span>{item.time}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="ai-placeholder">
+                      <p>
+                        {chartSimulationEnabled
+                          ? "No replay trades are available for the current futures slice."
+                          : "History simulation is turned off."}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
               {activePanelTab === "actions" ? (
                 <div className="tab-view">
-                  <div className="watchlist-head">
+                  <div className="watchlist-head with-action">
                     <div>
                       <h2>Action</h2>
-                      <p>Entry, SL, TP, and exits · {selectedModel.name}</p>
+                      <p>{selectedAsset.symbol} order timeline and risk actions</p>
+                    </div>
+                    <div className="panel-head-actions">
+                      <button
+                        type="button"
+                        className={`panel-action-btn panel-mode-btn ${
+                          chartSimulationEnabled ? "on" : "off"
+                        }`}
+                        onClick={() => setChartSimulationEnabled((current) => !current)}
+                      >
+                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                      </button>
                     </div>
                   </div>
-                  <ul className="history-list">
-                    {actionRows.map((action) => (
-                      <li key={action.id}>
-                        <button
-                          type="button"
-                          className={`history-row ${selectedHistoryId === action.tradeId ? "selected" : ""}`}
-                          onClick={() => {
-                            focusTradeIdRef.current = action.tradeId;
-                            setSelectedHistoryId(action.tradeId);
-                            setSelectedSymbol(action.symbol);
-                            setShowAllTradesOnChart(false);
-                            setShowActiveTradeOnChart(false);
-                          }}
-                        >
-                          <span className="history-info">
-                            <span className="history-main">
-                              <span className="history-action">{action.label}</span>
-                              <span className="history-symbol">{action.symbol}</span>
+                  {actionRows.length > 0 ? (
+                    <ul className="history-list">
+                      {actionRows.map((action) => (
+                        <li key={action.id}>
+                          <button
+                            type="button"
+                            className={`history-row ${selectedHistoryId === action.tradeId ? "selected" : ""}`}
+                            onClick={() => {
+                              focusTradeIdRef.current = action.tradeId;
+                              setSelectedHistoryId(action.tradeId);
+                              setSelectedSymbol(action.symbol);
+                              setShowAllTradesOnChart(false);
+                              setShowActiveTradeOnChart(false);
+                            }}
+                          >
+                            <span className="history-info">
+                              <span className="history-main">
+                                <span className="history-action">{action.label}</span>
+                                <span className="history-symbol">{action.symbol}</span>
+                              </span>
+                              <span className="history-levels">{action.details}</span>
                             </span>
-                            <span className="history-levels">{action.details}</span>
-                          </span>
-                          <span className="history-meta">
-                            <span>{action.time}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                            <span className="history-meta">
+                              <span>{action.time}</span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="ai-placeholder">
+                      <p>
+                        {chartSimulationEnabled
+                          ? "No order actions are available for the current replay."
+                          : "Action simulation is turned off."}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -2769,7 +2937,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
         <span>Model: {selectedModel.name}</span>
-        <span>Feed: simulated</span>
+        <span>Feed: {feedStatusLabel}</span>
+        <span>{marketError ? "Mode: fallback replay" : `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>
       </footer>
     </main>
