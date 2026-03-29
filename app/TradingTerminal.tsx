@@ -18,7 +18,8 @@ import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
-type SurfaceTab = "chart" | "models" | "settings" | "backtest" | "ai";
+type SurfaceTab = "chart";
+type AccountRole = "Admin" | "User";
 
 type Candle = {
   open: number;
@@ -157,6 +158,9 @@ type MarketFeedResponse = {
   error?: string;
 };
 
+const ACCOUNT_GATE_STORAGE_KEY = "yazan-active-account";
+const ADMIN_ACCESS_CODE = "12345";
+
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
 
@@ -268,11 +272,7 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 ];
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
-  { id: "chart", label: "Chart" },
-  { id: "models", label: "Models" },
-  { id: "settings", label: "Settings" },
-  { id: "backtest", label: "Backtest" },
-  { id: "ai", label: "Gideon" }
+  { id: "chart", label: "Chart" }
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
@@ -550,12 +550,14 @@ const generateFakeCandles = (
   let driftBias = 0;
   let volMultiplier = 1;
   let momentumCarry = 0;
+  let regimeAnchor = basePrice;
 
   for (let i = 0; i < count; i += 1) {
     if (regimeBarsLeft <= 0) {
       regimeBarsLeft = 35 + Math.floor(rand() * 150);
       driftBias = (rand() - 0.5) * baseVolatility * (0.9 + rand() * 1.5);
       volMultiplier = 0.65 + rand() * 2.2;
+      regimeAnchor = basePrice * (0.94 + rand() * 0.12);
     } else {
       regimeBarsLeft -= 1;
     }
@@ -567,10 +569,12 @@ const generateFakeCandles = (
         : 0;
     const microNoise = (rand() - 0.5) * baseVolatility * 2.4 * volMultiplier;
     const trendNoise = Math.sin(i / (15 + rand() * 14)) * baseVolatility * 0.32;
-    const returnMove = driftBias + microNoise + trendNoise + momentumCarry + shock;
+    const meanReversion =
+      ((regimeAnchor - open) / Math.max(basePrice, 0.000001)) * baseVolatility * 0.55;
+    const returnMove = driftBias + microNoise + trendNoise + momentumCarry + shock + meanReversion;
 
-    close = Math.max(0.000001, open * (1 + returnMove));
-    momentumCarry = returnMove * 0.22;
+    close = clamp(open * (1 + returnMove), basePrice * 0.72, basePrice * 1.34);
+    momentumCarry = returnMove * 0.14;
 
     const wickVol = baseVolatility * (0.45 + rand() * 2.2) * volMultiplier;
     const high = Math.max(open, close) * (1 + wickVol * (0.35 + rand() * 0.8));
@@ -777,10 +781,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return floorToTimeframe(Date.now(), "1m");
   }, [showcaseMode]);
+  const [accountGateReady, setAccountGateReady] = useState(showcaseMode);
+  const [activeAccountRole, setActiveAccountRole] = useState<AccountRole | null>(
+    showcaseMode ? "User" : null
+  );
+  const [accountEntryMode, setAccountEntryMode] = useState<AccountRole | null>(null);
+  const [adminCodeInput, setAdminCodeInput] = useState("");
+  const [accountAccessError, setAccountAccessError] = useState("");
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
-  const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -811,6 +821,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
+  const selectedSurfaceTab: SurfaceTab = "chart";
+
+  useEffect(() => {
+    if (showcaseMode) {
+      return;
+    }
+
+    try {
+      const storedRole = window.sessionStorage.getItem(ACCOUNT_GATE_STORAGE_KEY);
+
+      if (storedRole === "Admin" || storedRole === "User") {
+        setActiveAccountRole(storedRole);
+      }
+    } finally {
+      setAccountGateReady(true);
+    }
+  }, [showcaseMode]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -2469,7 +2496,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     showAllTradesOnChart
   ]);
 
-  const isChartSurface = selectedSurfaceTab === "chart";
   const timeframeChanges = useMemo(() => {
     return timeframes.map((timeframe) => {
       const key = symbolTimeframeKey(selectedSymbol, timeframe);
@@ -2531,7 +2557,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? "Loading Databento"
       : marketStatus === "error"
         ? "Fallback replay"
-        : `${marketFeedMeta?.provider ?? "Databento"} · ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
+        : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const updatedAtLabel =
     marketFeedMeta?.updatedAt && !Number.isNaN(Date.parse(marketFeedMeta.updatedAt))
       ? formatClock(Date.parse(marketFeedMeta.updatedAt))
@@ -2539,6 +2565,142 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const liveAskLabel = formatPrice(liveQuote.ask);
   const liveBidLabel = formatPrice(liveQuote.bid);
   const liveSpreadLabel = formatPrice(liveQuote.spread);
+  const currentAccountLabel = activeAccountRole ?? "Guest";
+
+  const grantAccountAccess = (role: AccountRole) => {
+    setActiveAccountRole(role);
+    setAccountEntryMode(null);
+    setAdminCodeInput("");
+    setAccountAccessError("");
+    setNotificationsOpen(false);
+
+    if (!showcaseMode) {
+      window.sessionStorage.setItem(ACCOUNT_GATE_STORAGE_KEY, role);
+    }
+  };
+
+  const handleSwitchAccount = () => {
+    setActiveAccountRole(null);
+    setAccountEntryMode(null);
+    setAdminCodeInput("");
+    setAccountAccessError("");
+    setNotificationsOpen(false);
+    setPanelExpanded(false);
+    setActivePanelTab("active");
+    setSelectedHistoryId(null);
+    focusTradeIdRef.current = null;
+
+    if (!showcaseMode) {
+      window.sessionStorage.removeItem(ACCOUNT_GATE_STORAGE_KEY);
+    }
+  };
+
+  const handleAdminUnlock = () => {
+    if (adminCodeInput === ADMIN_ACCESS_CODE) {
+      grantAccountAccess("Admin");
+      return;
+    }
+
+    setAccountAccessError("Incorrect admin code. Enter the 5-digit code to continue.");
+  };
+
+  if (!accountGateReady) {
+    return (
+      <main className="terminal account-screen">
+        <section className="account-screen-shell">
+          <div className="account-shell-panel account-shell-panel-loading">
+            <span className="account-shell-kicker">Yazan Futures</span>
+            <div className="account-shell-header">
+              <h1>Loading access</h1>
+              <p>Checking for a saved session.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!showcaseMode && !activeAccountRole) {
+    return (
+      <main className="terminal account-screen">
+        <section className="account-screen-shell">
+          <div className="account-shell-panel">
+            <span className="account-shell-kicker">Yazan Futures</span>
+            <div className="account-shell-header">
+              <h1>Select an account</h1>
+              <p>Choose User for instant access, or unlock Admin with the 5-digit code.</p>
+            </div>
+
+            <div className="account-choice-grid">
+              <button
+                type="button"
+                className={`account-choice-card ${
+                  accountEntryMode === "Admin" ? "active" : ""
+                }`}
+                onClick={() => {
+                  setAccountEntryMode("Admin");
+                  setAdminCodeInput("");
+                  setAccountAccessError("");
+                }}
+              >
+                <span className="account-choice-kicker">Protected</span>
+                <strong>Admin</strong>
+                <p>Requires the 5-digit access code.</p>
+              </button>
+
+              <button
+                type="button"
+                className="account-choice-card"
+                onClick={() => grantAccountAccess("User")}
+              >
+                <span className="account-choice-kicker">Instant Access</span>
+                <strong>User</strong>
+                <p>Enter directly into the trading terminal.</p>
+              </button>
+            </div>
+
+            {accountEntryMode === "Admin" ? (
+              <form
+                className="account-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  handleAdminUnlock();
+                }}
+              >
+                <label className="account-field">
+                  <span>Admin Code</span>
+                  <input
+                    className="account-input"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={5}
+                    autoFocus
+                    value={adminCodeInput}
+                    onChange={(event) => {
+                      setAdminCodeInput(event.target.value.replace(/\D/g, "").slice(0, 5));
+                      setAccountAccessError("");
+                    }}
+                    placeholder="Enter 5 digits"
+                  />
+                </label>
+                <button type="submit" className="account-submit-btn">
+                  Unlock Admin
+                </button>
+              </form>
+            ) : (
+              <div className="account-inline-note">
+                Admin stays locked until the correct 5-digit code is entered.
+              </div>
+            )}
+
+            {accountAccessError ? (
+              <div className="account-form-error">{accountAccessError}</div>
+            ) : null}
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="terminal">
@@ -2550,13 +2712,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               key={tab.id}
               type="button"
               className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
-              onClick={() => setSelectedSurfaceTab(tab.id)}
+              aria-current={selectedSurfaceTab === tab.id ? "page" : undefined}
             >
               {tab.label}
             </button>
           ))}
         </nav>
         <div className="top-utility surface-actions">
+          <div className="account-switcher">
+            <span className={`account-badge account-${currentAccountLabel.toLowerCase()}`}>
+              {currentAccountLabel}
+            </span>
+            {!showcaseMode ? (
+              <button
+                type="button"
+                className="account-switch-btn"
+                onClick={handleSwitchAccount}
+              >
+                Switch
+              </button>
+            ) : null}
+          </div>
           <div className="notif-wrap" ref={notificationRef}>
             <button
               type="button"
@@ -2610,9 +2786,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         </div>
       </div>
 
-      {isChartSurface ? (
-        <>
-          <header className="topbar">
+      <header className="topbar">
             <div className="brand-area">
               <div className="asset-meta">
                 <h1>{selectedAsset.symbol}</h1>
@@ -2656,26 +2830,39 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </div>
           </header>
 
-          <section className="surface-stage">
-            <div className="surface-view">
-              <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
+      <section className="surface-stage">
+        <div className="surface-view">
+          <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
         <section className="chart-wrap">
           <div className="chart-toolbar">
-            <span className={hoveredCandle.close >= hoveredCandle.open ? "ohlc-up" : "ohlc-down"}>
-              O <strong>{formatPrice(hoveredCandle.open)}</strong>
-            </span>
-            <span className="ohlc-up">
-              H <strong>{formatPrice(hoveredCandle.high)}</strong>
-            </span>
-            <span className="ohlc-down">
-              L <strong>{formatPrice(hoveredCandle.low)}</strong>
-            </span>
-            <span className={hoveredCandle.close >= hoveredCandle.open ? "ohlc-up" : "ohlc-down"}>
-              C <strong>{formatPrice(hoveredCandle.close)}</strong>
-            </span>
+            {(() => {
+              const display = hoveredTime ? hoveredCandle : latestCandle ?? hoveredCandle;
+              const displayIndex = selectedCandles.indexOf(display);
+              const previousDisplay = displayIndex > 0 ? selectedCandles[displayIndex - 1] : null;
+              const openClass =
+                previousDisplay && previousDisplay.close < previousDisplay.open ? "ohlc-down" : "ohlc-up";
+              const closeClass = display.close >= display.open ? "ohlc-up" : "ohlc-down";
+
+              return (
+                <>
+                  <span className={openClass}>
+                    O <strong>{formatPrice(display.open)}</strong>
+                  </span>
+                  <span className="ohlc-up">
+                    H <strong>{formatPrice(display.high)}</strong>
+                  </span>
+                  <span className="ohlc-down">
+                    L <strong>{formatPrice(display.low)}</strong>
+                  </span>
+                  <span className={closeClass}>
+                    C <strong>{formatPrice(display.close)}</strong>
+                  </span>
+                </>
+              );
+            })()}
           </div>
           <div className="chart-overlay-stack">
-            <div className="quote-overlay-card" title="Synthetic bid/ask around the futures mid-price">
+            <div className="quote-overlay-card" title="Live quote around the current futures mid-price">
               <div className="quote-overlay-head">
                 <strong>Live Quote</strong>
                 <span>{selectedAsset.venue}</span>
@@ -2779,10 +2966,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   if (panelExpanded && activePanelTab === tab.id) {
                     setPanelExpanded(false);
                     return;
-                  }
-
-                  if (selectedSurfaceTab !== "chart") {
-                    setSelectedSurfaceTab("chart");
                   }
 
                   setActivePanelTab(tab.id);
@@ -2957,7 +3140,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           <span className="symbol-col">
                             <span>{row.symbol}</span>
                             <small>
-                              {row.name} · {row.category}
+                              {row.name} - {row.category}
                             </small>
                           </span>
 
@@ -3185,29 +3368,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </div>
           ) : null}
         </aside>
-              </section>
-            </div>
           </section>
-        </>
-      ) : (
-        <section className="surface-stage">
-          <div className="surface-placeholder">
-            <div className="surface-placeholder-card">
-              <strong>{surfaceTabs.find((tab) => tab.id === selectedSurfaceTab)?.label}</strong>
-              <p>Only the chart surface is mirrored from Korra in this futures build.</p>
-              <button
-                type="button"
-                className="chart-reset-btn"
-                onClick={() => setSelectedSurfaceTab("chart")}
-              >
-                Back To Chart
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
+        </div>
+      </section>
 
       <footer className="statusbar">
+        <span>Account: {currentAccountLabel}</span>
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
         <span>Model: {selectedModel.name}</span>

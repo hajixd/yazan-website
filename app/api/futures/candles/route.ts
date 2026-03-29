@@ -256,7 +256,7 @@ export async function GET(request: Request) {
   if (!apiKey) {
     return NextResponse.json(
       {
-        error: "Missing DATABENTO_API_KEY."
+        error: "Missing DATABENTO_API_KEY. Add it in Vercel or your local .env.local file."
       },
       { status: 500 }
     );

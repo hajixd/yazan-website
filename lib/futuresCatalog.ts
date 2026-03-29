@@ -16,7 +16,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 6771.0
+    basePrice: 6398.0
   },
   {
     symbol: "NQ",
@@ -25,7 +25,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 21314.5
+    basePrice: 23254.25
   },
   {
     symbol: "RTY",
@@ -34,7 +34,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 2312.8
+    basePrice: 2456.0
   },
   {
     symbol: "YM",
@@ -43,7 +43,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CBOT",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 42085
+    basePrice: 45310.0
   },
   {
     symbol: "CL",
@@ -52,7 +52,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "NYMEX",
     category: "Energy",
     contract: "Front month continuous",
-    basePrice: 67.35
+    basePrice: 101.18
   },
   {
     symbol: "NG",
@@ -61,7 +61,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "NYMEX",
     category: "Energy",
     contract: "Front month continuous",
-    basePrice: 4.18
+    basePrice: 3.081
   },
   {
     symbol: "MGC",
@@ -70,7 +70,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "COMEX",
     category: "Metals",
     contract: "Front month continuous",
-    basePrice: 2945.3
+    basePrice: 4488.9
   },
   {
     symbol: "HG",
@@ -79,7 +79,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "COMEX",
     category: "Metals",
     contract: "Front month continuous",
-    basePrice: 4.73
+    basePrice: 5.454
   },
   {
     symbol: "ZN",
@@ -88,7 +88,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CBOT",
     category: "Rates",
     contract: "Front month continuous",
-    basePrice: 111.25
+    basePrice: 110.1875
   },
   {
     symbol: "6E",
@@ -97,7 +97,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 1.0836
+    basePrice: 1.1521
   },
   {
     symbol: "6J",
@@ -106,7 +106,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 0.00672
+    basePrice: 0.0062485
   },
   {
     symbol: "6A",
@@ -115,7 +115,7 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 0.6484
+    basePrice: 0.6865
   }
 ];
 
