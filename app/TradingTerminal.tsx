@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ColorType,
-  CrosshairMode,
-  LineStyle,
-  createChart,
   type CandlestickData,
+  type ColorType,
+  type CrosshairMode,
   type IChartApi,
   type ISeriesApi,
+  type LineStyle,
   type MouseEventParams,
   type SeriesMarker,
   type Time,
@@ -160,6 +159,10 @@ type MarketFeedResponse = {
 
 const ACCOUNT_GATE_STORAGE_KEY = "yazan-active-account";
 const ADMIN_ACCESS_CODE = "12345";
+const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
+const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
+const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
+const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
@@ -807,6 +810,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [chartReadyVersion, setChartReadyVersion] = useState(0);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -1800,205 +1804,216 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [notificationsOpen, notificationItems]);
 
   useEffect(() => {
-    const container = chartContainerRef.current;
+    let cancelled = false;
+    let cleanupChart: (() => void) | null = null;
 
-    if (!container || chartRef.current) {
-      return;
-    }
+    void import("lightweight-charts").then(({ createChart }) => {
+      const container = chartContainerRef.current;
 
-    const initialWidth = Math.max(1, Math.floor(container.clientWidth));
-    const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+      if (cancelled || !container || chartRef.current) {
+        return;
+      }
 
-    const chart = createChart(container, {
-      width: initialWidth,
-      height: initialHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: "#090d13" },
-        textColor: "#7f889d"
-      },
-      localization: {
-        priceFormatter: (price: number) => formatPrice(price)
-      },
-      grid: {
-        vertLines: { visible: false },
-        horzLines: { visible: false }
-      },
-      rightPriceScale: {
-        borderVisible: true,
-        borderColor: "#182131"
-      },
-      leftPriceScale: {
-        visible: false
-      },
-      timeScale: {
-        borderVisible: true,
-        borderColor: "#182131",
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 3
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: "rgba(198, 208, 228, 0.28)",
-          width: 1,
-          style: 3,
-          labelBackgroundColor: "#141c2a"
+      const initialWidth = Math.max(1, Math.floor(container.clientWidth));
+      const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+
+      const chart = createChart(container, {
+        width: initialWidth,
+        height: initialHeight,
+        layout: {
+          background: { type: LIGHTWEIGHT_CHART_SOLID_BACKGROUND, color: "#090d13" },
+          textColor: "#7f889d"
         },
-        horzLine: {
-          color: "rgba(198, 208, 228, 0.28)",
-          width: 1,
-          style: 3,
-          labelBackgroundColor: "#141c2a"
+        localization: {
+          priceFormatter: (price: number) => formatPrice(price)
+        },
+        grid: {
+          vertLines: { visible: false },
+          horzLines: { visible: false }
+        },
+        rightPriceScale: {
+          borderVisible: true,
+          borderColor: "#182131"
+        },
+        leftPriceScale: {
+          visible: false
+        },
+        timeScale: {
+          borderVisible: true,
+          borderColor: "#182131",
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 3
+        },
+        crosshair: {
+          mode: LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL,
+          vertLine: {
+            color: "rgba(198, 208, 228, 0.28)",
+            width: 1,
+            style: 3,
+            labelBackgroundColor: "#141c2a"
+          },
+          horzLine: {
+            color: "rgba(198, 208, 228, 0.28)",
+            width: 1,
+            style: 3,
+            labelBackgroundColor: "#141c2a"
+          }
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true
         }
-      },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false
-      },
-      handleScale: {
-        axisPressedMouseMove: true,
-        mouseWheel: true,
-        pinch: true
-      }
-    });
-
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#1bae8a",
-      downColor: "#f0455a",
-      wickUpColor: "#1bae8a",
-      wickDownColor: "#f0455a",
-      borderUpColor: "#1bae8a",
-      borderDownColor: "#f0455a",
-      priceLineVisible: false,
-      lastValueVisible: true
-    });
-
-    const tradeEntryLine = chart.addLineSeries({
-      color: "rgba(232, 238, 250, 0.72)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeTargetLine = chart.addLineSeries({
-      color: "rgba(53, 201, 113, 0.95)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeStopLine = chart.addLineSeries({
-      color: "rgba(255, 76, 104, 0.95)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradePathLine = chart.addLineSeries({
-      color: "rgba(220, 230, 248, 0.82)",
-      lineWidth: 2,
-      lineStyle: LineStyle.Dotted,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeProfitZone = chart.addBaselineSeries({
-      baseValue: { type: "price", price: 0 },
-      topLineColor: "rgba(0,0,0,0)",
-      topFillColor1: "rgba(53, 201, 113, 0.22)",
-      topFillColor2: "rgba(53, 201, 113, 0.05)",
-      bottomLineColor: "rgba(0,0,0,0)",
-      bottomFillColor1: "rgba(0,0,0,0)",
-      bottomFillColor2: "rgba(0,0,0,0)",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeLossZone = chart.addBaselineSeries({
-      baseValue: { type: "price", price: 0 },
-      topLineColor: "rgba(0,0,0,0)",
-      topFillColor1: "rgba(0,0,0,0)",
-      topFillColor2: "rgba(0,0,0,0)",
-      bottomLineColor: "rgba(0,0,0,0)",
-      bottomFillColor1: "rgba(240, 69, 90, 0.24)",
-      bottomFillColor2: "rgba(240, 69, 90, 0.07)",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-
-    const onCrosshairMove = (param: MouseEventParams<Time>) => {
-      if (!param.point || !param.time) {
-        setHoveredTime(null);
-        return;
-      }
-
-      setHoveredTime(parseTimeFromCrosshair(param.time));
-    };
-
-    chart.subscribeCrosshairMove(onCrosshairMove);
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-
-      if (!entry) {
-        return;
-      }
-
-      const width = Math.max(1, Math.floor(entry.contentRect.width));
-      const height = Math.max(1, Math.floor(entry.contentRect.height));
-
-      chart.applyOptions({
-        width,
-        height
       });
-    });
 
-    resizeObserver.observe(container);
-
-    const settleResize = () => {
-      chart.applyOptions({
-        width: Math.max(1, Math.floor(container.clientWidth)),
-        height: Math.max(1, Math.floor(container.clientHeight))
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#1bae8a",
+        downColor: "#f0455a",
+        wickUpColor: "#1bae8a",
+        wickDownColor: "#f0455a",
+        borderUpColor: "#1bae8a",
+        borderDownColor: "#f0455a",
+        priceLineVisible: false,
+        lastValueVisible: true
       });
-    };
-    const resizeFrameA = window.requestAnimationFrame(settleResize);
-    const resizeFrameB = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(settleResize);
-    });
 
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    tradeProfitZoneRef.current = tradeProfitZone;
-    tradeLossZoneRef.current = tradeLossZone;
-    tradeEntryLineRef.current = tradeEntryLine;
-    tradeTargetLineRef.current = tradeTargetLine;
-    tradeStopLineRef.current = tradeStopLine;
-    tradePathLineRef.current = tradePathLine;
+      const tradeEntryLine = chart.addLineSeries({
+        color: "rgba(232, 238, 250, 0.72)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeTargetLine = chart.addLineSeries({
+        color: "rgba(53, 201, 113, 0.95)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeStopLine = chart.addLineSeries({
+        color: "rgba(255, 76, 104, 0.95)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradePathLine = chart.addLineSeries({
+        color: "rgba(220, 230, 248, 0.82)",
+        lineWidth: 2,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeProfitZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(53, 201, 113, 0.22)",
+        topFillColor2: "rgba(53, 201, 113, 0.05)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeLossZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(0,0,0,0)",
+        topFillColor2: "rgba(0,0,0,0)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(240, 69, 90, 0.24)",
+        bottomFillColor2: "rgba(240, 69, 90, 0.07)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+
+      const onCrosshairMove = (param: MouseEventParams<Time>) => {
+        if (!param.point || !param.time) {
+          setHoveredTime(null);
+          return;
+        }
+
+        setHoveredTime(parseTimeFromCrosshair(param.time));
+      };
+
+      chart.subscribeCrosshairMove(onCrosshairMove);
+
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+
+        if (!entry) {
+          return;
+        }
+
+        const width = Math.max(1, Math.floor(entry.contentRect.width));
+        const height = Math.max(1, Math.floor(entry.contentRect.height));
+
+        chart.applyOptions({
+          width,
+          height
+        });
+      });
+
+      resizeObserver.observe(container);
+
+      const settleResize = () => {
+        chart.applyOptions({
+          width: Math.max(1, Math.floor(container.clientWidth)),
+          height: Math.max(1, Math.floor(container.clientHeight))
+        });
+      };
+      const resizeFrameA = window.requestAnimationFrame(settleResize);
+      const resizeFrameB = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(settleResize);
+      });
+
+      chartRef.current = chart;
+      candleSeriesRef.current = candleSeries;
+      tradeProfitZoneRef.current = tradeProfitZone;
+      tradeLossZoneRef.current = tradeLossZone;
+      tradeEntryLineRef.current = tradeEntryLine;
+      tradeTargetLineRef.current = tradeTargetLine;
+      tradeStopLineRef.current = tradeStopLine;
+      tradePathLineRef.current = tradePathLine;
+      setChartReadyVersion((version) => version + 1);
+
+      cleanupChart = () => {
+        window.cancelAnimationFrame(resizeFrameA);
+        window.cancelAnimationFrame(resizeFrameB);
+        resizeObserver.disconnect();
+        chart.unsubscribeCrosshairMove(onCrosshairMove);
+        chart.remove();
+        chartRef.current = null;
+        candleSeriesRef.current = null;
+        tradeProfitZoneRef.current = null;
+        tradeLossZoneRef.current = null;
+        tradeEntryLineRef.current = null;
+        tradeTargetLineRef.current = null;
+        tradeStopLineRef.current = null;
+        tradePathLineRef.current = null;
+        multiTradeSeriesRef.current = [];
+      };
+    });
 
     return () => {
-      window.cancelAnimationFrame(resizeFrameA);
-      window.cancelAnimationFrame(resizeFrameB);
-      resizeObserver.disconnect();
-      chart.unsubscribeCrosshairMove(onCrosshairMove);
-      chart.remove();
-      chartRef.current = null;
-      candleSeriesRef.current = null;
-      tradeProfitZoneRef.current = null;
-      tradeLossZoneRef.current = null;
-      tradeEntryLineRef.current = null;
-      tradeTargetLineRef.current = null;
-      tradeStopLineRef.current = null;
-      tradePathLineRef.current = null;
-      multiTradeSeriesRef.current = [];
+      cancelled = true;
+      cleanupChart?.();
     };
-  }, []);
+  }, [accountGateReady, activeAccountRole, showcaseMode]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2032,7 +2047,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       chart.timeScale().setVisibleLogicalRange({ from, to });
       selectionRef.current = selection;
     }
-  }, [selectedCandles, selectedSymbol, selectedTimeframe]);
+  }, [chartReadyVersion, selectedCandles, selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2238,7 +2253,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const entryLine = chart.addLineSeries({
         color: "rgba(232, 238, 250, 0.62)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -2246,7 +2261,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const targetLine = chart.addLineSeries({
         color: "rgba(53, 201, 113, 0.7)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -2254,7 +2269,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const stopLine = chart.addLineSeries({
         color: "rgba(255, 76, 104, 0.7)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -2262,7 +2277,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const pathLine = chart.addLineSeries({
         color: "rgba(220, 230, 248, 0.64)",
         lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -2514,32 +2529,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       };
     });
   }, [selectedCandles, selectedSymbol, selectedTimeframe, timeframePreviewMap]);
-  const liveQuote = useMemo(() => {
-    const mid = latestCandle.close;
-    const spread = Math.max(mid * 0.00008, 0.0001);
-    const tone = quoteChange >= 0 ? "up" : "down";
-
-    return {
-      ask: mid + spread / 2,
-      bid: Math.max(0.000001, mid - spread / 2),
-      spread,
-      askTone: tone,
-      bidTone: tone
-    };
-  }, [latestCandle.close, quoteChange]);
-  const replayWinRate =
-    historyRows.length > 0
-      ? (historyRows.filter((row) => row.result === "Win").length / historyRows.length) * 100
-      : 0;
-  const replayPnlBias =
-    historyRows.length > 0
-      ? clamp(
-          (historyRows.filter((row) => row.pnlUsd >= 0).length / historyRows.length) * 100,
-          0,
-          100
-        )
-      : 0;
-  const replayProgress = activeTrade ? activeTrade.progressPct : 0;
   const resetChart = () => {
     const chart = chartRef.current;
 
@@ -2558,13 +2547,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       : marketStatus === "error"
         ? "Fallback replay"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
-  const updatedAtLabel =
-    marketFeedMeta?.updatedAt && !Number.isNaN(Date.parse(marketFeedMeta.updatedAt))
-      ? formatClock(Date.parse(marketFeedMeta.updatedAt))
-      : null;
-  const liveAskLabel = formatPrice(liveQuote.ask);
-  const liveBidLabel = formatPrice(liveQuote.bid);
-  const liveSpreadLabel = formatPrice(liveQuote.spread);
   const currentAccountLabel = activeAccountRole ?? "Guest";
 
   const grantAccountAccess = (role: AccountRole) => {
@@ -2860,85 +2842,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 </>
               );
             })()}
-          </div>
-          <div className="chart-overlay-stack">
-            <div className="quote-overlay-card" title="Live quote around the current futures mid-price">
-              <div className="quote-overlay-head">
-                <strong>Live Quote</strong>
-                <span>{selectedAsset.venue}</span>
-              </div>
-              <div className="quote-overlay-grid">
-                <div className="quote-overlay-item">
-                  <span>Ask</span>
-                  <strong className={liveQuote.askTone}>{liveAskLabel}</strong>
-                </div>
-                <div className="quote-overlay-item">
-                  <span>Spread</span>
-                  <strong className="neutral">{liveSpreadLabel}</strong>
-                </div>
-                <div className="quote-overlay-item">
-                  <span>Bid</span>
-                  <strong className={liveQuote.bidTone}>{liveBidLabel}</strong>
-                </div>
-              </div>
-            </div>
-            <div className="vp-proxy-card" title="Replay stats for the current futures chart">
-              <div className="vp-proxy-head">
-                <strong>Replay</strong>
-                <span>{selectedModel.name}</span>
-              </div>
-
-              <div className="vp-proxy-row">
-                <div className="vp-proxy-row-head">
-                  <span>Win rate</span>
-                  <span>{historyRows.length} trades</span>
-                </div>
-                <div className="vp-proxy-track">
-                  <span
-                    className="vp-proxy-fill buy"
-                    style={{ width: `${replayWinRate.toFixed(1)}%` }}
-                  />
-                  <span className="vp-proxy-midline" />
-                  <span className="vp-proxy-value">{replayWinRate.toFixed(0)}%</span>
-                </div>
-              </div>
-
-              <div className="vp-proxy-row">
-                <div className="vp-proxy-row-head">
-                  <span>PnL bias</span>
-                  <span>{feedStatusLabel}</span>
-                </div>
-                <div className="vp-proxy-track">
-                  <span
-                    className="vp-proxy-fill sell"
-                    style={{ width: `${replayPnlBias.toFixed(1)}%` }}
-                  />
-                  <span className="vp-proxy-midline" />
-                  <span className="vp-proxy-value">{replayPnlBias.toFixed(0)}%</span>
-                </div>
-              </div>
-
-              <div className="vp-proxy-row">
-                <div className="vp-proxy-row-head">
-                  <span>Active progress</span>
-                  <span>{updatedAtLabel ? `Sync ${updatedAtLabel}` : selectedAsset.contract}</span>
-                </div>
-                <div className="vp-proxy-track">
-                  <span
-                    className="vp-proxy-fill buy"
-                    style={{ width: `${replayProgress.toFixed(1)}%` }}
-                  />
-                  <span className="vp-proxy-midline" />
-                  <span className="vp-proxy-value">{replayProgress.toFixed(0)}%</span>
-                </div>
-              </div>
-
-              <div className="vp-proxy-meta">
-                <span>{selectedAsset.category}</span>
-                <span>{marketError ? "Fallback replay" : "Databento"}</span>
-                <span>{selectedAsset.venue}</span>
-              </div>
-            </div>
           </div>
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
