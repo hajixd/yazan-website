@@ -163,8 +163,6 @@ type AccountSyncDraft = {
   broker: string;
   platform: string;
   accountNumber: string;
-  syncMode: string;
-  notes: string;
 };
 
 type CandleRequestOptions = {
@@ -275,9 +273,7 @@ const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
   accountLabel: "Yazan Futures Primary",
   broker: "TradeLocker",
   platform: "Rithmic",
-  accountNumber: "YZ-884201",
-  syncMode: "Read-only mirror",
-  notes: "Mock sync flow only. Credentials, balances, and live orders are not connected."
+  accountNumber: "YZ-884201"
 };
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
@@ -845,11 +841,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
+  const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
   const [yazanSyncDraft, setYazanSyncDraft] = useState<AccountSyncDraft>(DEFAULT_YAZAN_SYNC_DRAFT);
-  const [yazanSyncStatus, setYazanSyncStatus] = useState<string | null>(null);
+  const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -862,6 +860,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
+  const yazanAccountMenuRef = useRef<HTMLLIElement | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -2179,6 +2178,69 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [chartReadyVersion, loadedSelectedCandles, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
 
   useEffect(() => {
+    const overlay = countdownOverlayRef.current;
+
+    if (!overlay || !latestCandle || showcaseMode) {
+      if (overlay) {
+        overlay.style.display = "none";
+      }
+      return;
+    }
+
+    const candleMs = getTimeframeMs(selectedTimeframe);
+    let frameId = 0;
+    let lastText = "";
+
+    const update = () => {
+      const candleSeries = candleSeriesRef.current;
+
+      if (!candleSeries) {
+        frameId = window.requestAnimationFrame(update);
+        return;
+      }
+
+      const candleEndMs = latestCandle.time + candleMs;
+      const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
+      const hours = Math.floor(remaining / 3600);
+      const minutes = Math.floor((remaining % 3600) / 60);
+      const seconds = remaining % 60;
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const timer =
+        hours > 0
+          ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+          : `${pad(minutes)}:${pad(seconds)}`;
+      const price = formatPrice(latestCandle.close);
+      const text = `${price}\n${timer}`;
+
+      if (text !== lastText) {
+        overlay.textContent = text;
+        lastText = text;
+      }
+
+      const isUp = latestCandle.close >= latestCandle.open;
+      overlay.style.background = isUp ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
+
+      const y = candleSeries.priceToCoordinate(latestCandle.close);
+
+      if (y !== null && Number.isFinite(y)) {
+        overlay.style.top = `${y - 9}px`;
+        overlay.style.display = "block";
+      } else {
+        overlay.style.display = "none";
+      }
+
+      frameId = window.requestAnimationFrame(update);
+    };
+
+    frameId = window.requestAnimationFrame(update);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      overlay.style.display = "none";
+    };
+  }, [latestCandle, selectedTimeframe, showcaseMode]);
+
+  useEffect(() => {
     const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
 
@@ -2727,13 +2789,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? "Guest";
   const isAdmin = activeAccountRole === "Admin";
+  const yazanAccountSummary = yazanAccount
+    ? [yazanAccount.accountLabel, yazanAccount.accountNumber].filter(Boolean).join(" #")
+    : null;
 
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
     setYazanSyncDraft((prev) => ({
       ...prev,
       [field]: value
     }));
-    setYazanSyncStatus(null);
   };
 
   const openYazanSyncDraft = () => {
@@ -2742,22 +2806,35 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     setSelectedModelId("yazan");
+    setShowYazanAccountMenu(false);
+    setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
     setShowYazanSyncDraft(true);
-    setYazanSyncStatus("Mock sync workspace opened for Yazan.");
   };
 
-  const resetYazanSyncDraft = () => {
+  const closeYazanSyncDraft = () => {
+    setShowYazanSyncDraft(false);
+    setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
+  };
+
+  const saveYazanSyncDraft = () => {
+    const normalized: AccountSyncDraft = {
+      accountLabel: yazanSyncDraft.accountLabel.trim(),
+      broker: yazanSyncDraft.broker.trim(),
+      platform: yazanSyncDraft.platform.trim(),
+      accountNumber: yazanSyncDraft.accountNumber.trim()
+    };
+    const hasContent = Object.values(normalized).some((value) => value.length > 0);
+
+    setYazanAccount(hasContent ? normalized : null);
+    setShowYazanSyncDraft(false);
+    setShowYazanAccountMenu(false);
+  };
+
+  const removeYazanAccount = () => {
+    setYazanAccount(null);
     setYazanSyncDraft(DEFAULT_YAZAN_SYNC_DRAFT);
-    setYazanSyncStatus("Mock account draft reset.");
-  };
-
-  const stageYazanSyncDraft = () => {
-    setShowYazanSyncDraft(true);
-    setYazanSyncStatus(
-      `Mock sync staged for ${yazanSyncDraft.accountLabel.trim() || "untitled account"} on ${
-        yazanSyncDraft.broker.trim() || "broker TBD"
-      }.`
-    );
+    setShowYazanSyncDraft(false);
+    setShowYazanAccountMenu(false);
   };
 
   useEffect(() => {
@@ -2765,9 +2842,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
+    setShowYazanAccountMenu(false);
     setShowYazanSyncDraft(false);
-    setYazanSyncStatus(null);
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (selectedModelId === "yazan") {
+      return;
+    }
+
+    setShowYazanAccountMenu(false);
+    setShowYazanSyncDraft(false);
+  }, [selectedModelId]);
+
+  useEffect(() => {
+    if (!showYazanAccountMenu) {
+      return;
+    }
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (!yazanAccountMenuRef.current) {
+        return;
+      }
+
+      const target = event.target as Node;
+
+      if (!yazanAccountMenuRef.current.contains(target)) {
+        setShowYazanAccountMenu(false);
+      }
+    };
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowYazanAccountMenu(false);
+      }
+    };
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [showYazanAccountMenu]);
 
   const grantAccountAccess = (role: AccountRole) => {
     setActiveAccountRole(role);
@@ -3065,6 +3183,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           </div>
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+            <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
             <div className="chart-stage-actions">
               <button
                 type="button"
@@ -3288,29 +3407,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "models" ? (
                 <div className="tab-view">
-                  <div className="watchlist-head with-action">
+                  <div className="watchlist-head">
                     <div>
                       <h2>Models / People</h2>
-                      <p>
-                        {isAdmin
-                          ? "Select a profile. Admin can right-click Yazan to draft a synced trading account."
-                          : "Select one profile to drive history and actions"}
-                      </p>
+                      <p>Select one profile to drive history and actions</p>
                     </div>
-                    {isAdmin && showYazanSyncDraft ? (
-                      <div className="panel-head-actions">
-                        <button
-                          type="button"
-                          className="panel-action-btn"
-                          onClick={() => {
-                            setShowYazanSyncDraft(false);
-                            setYazanSyncStatus(null);
-                          }}
-                        >
-                          Hide Sync Draft
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                   <ul className="model-list">
                     {modelProfiles.map((model) => {
@@ -3318,16 +3419,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       const isYazan = model.id === "yazan";
 
                       return (
-                        <li key={model.id}>
+                        <li
+                          key={model.id}
+                          className={isYazan && showYazanAccountMenu ? "model-list-item-menu-open" : ""}
+                          ref={isYazan ? yazanAccountMenuRef : undefined}
+                        >
                           <button
                             type="button"
                             className={`model-row ${selected ? "selected" : ""}`}
                             onClick={() => {
                               setSelectedModelId(model.id);
+                              setShowYazanAccountMenu(false);
 
                               if (model.id !== "yazan") {
                                 setShowYazanSyncDraft(false);
-                                setYazanSyncStatus(null);
                               }
                             }}
                             onContextMenu={(event) => {
@@ -3336,11 +3441,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               }
 
                               event.preventDefault();
-                              openYazanSyncDraft();
+                              setSelectedModelId("yazan");
+                              setShowYazanSyncDraft(false);
+                              setShowYazanAccountMenu(true);
                             }}
                             title={
                               isAdmin && isYazan
-                                ? "Right-click to open mock account sync"
+                                ? "Right-click for account options"
                                 : model.name
                             }
                           >
@@ -3348,36 +3455,45 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               <span className="model-name">{model.name}</span>
                               <span className="model-kind">{model.kind}</span>
                             </span>
-                            {model.accountNumber ? (
+                            {isYazan && yazanAccountSummary ? (
+                              <span className="model-account">{yazanAccountSummary}</span>
+                            ) : model.accountNumber ? (
                               <span className="model-account">
                                 Yazan Account #{model.accountNumber}
                               </span>
                             ) : null}
                             <span className="model-state">{selected ? "Selected" : "Select"}</span>
                           </button>
+                          {isAdmin && isYazan && showYazanAccountMenu ? (
+                            <div className="sync-account-menu">
+                              <button
+                                type="button"
+                                className="sync-account-menu-btn"
+                                onClick={openYazanSyncDraft}
+                              >
+                                Edit Account
+                              </button>
+                              <button
+                                type="button"
+                                className="sync-account-menu-btn danger"
+                                onClick={removeYazanAccount}
+                                disabled={!yazanAccount}
+                              >
+                                Remove Account
+                              </button>
+                            </div>
+                          ) : null}
                         </li>
                       );
                     })}
                   </ul>
-                  {isAdmin && !showYazanSyncDraft ? (
-                    <div className="sync-draft-tip">
-                      Right-click <strong>Yazan</strong> to open a mock trading-account sync form.
-                    </div>
-                  ) : null}
                   {isAdmin && showYazanSyncDraft ? (
-                    <section className="sync-draft-card" aria-label="mock account sync draft">
-                      <div className="sync-draft-head">
-                        <div>
-                          <h3>Mock Account Sync</h3>
-                          <p>Admin-only draft area for entering a trading account Yazan wants to sync.</p>
-                        </div>
-                        <span className="sync-draft-badge">Mock</span>
-                      </div>
+                    <section className="sync-draft-card" aria-label="account editor">
                       <form
                         className="sync-draft-form"
                         onSubmit={(event) => {
                           event.preventDefault();
-                          stageYazanSyncDraft();
+                          saveYazanSyncDraft();
                         }}
                       >
                         <div className="sync-draft-grid">
@@ -3425,43 +3541,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               placeholder="YZ-884201"
                             />
                           </label>
-                          <label className="account-field sync-draft-span">
-                            <span>Sync Mode</span>
-                            <input
-                              className="account-input"
-                              value={yazanSyncDraft.syncMode}
-                              onChange={(event) => {
-                                updateYazanSyncDraft("syncMode", event.target.value);
-                              }}
-                              placeholder="Read-only mirror"
-                            />
-                          </label>
                         </div>
-                        <label className="account-field">
-                          <span>Notes</span>
-                          <textarea
-                            className="sync-draft-textarea"
-                            value={yazanSyncDraft.notes}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("notes", event.target.value);
-                            }}
-                            rows={4}
-                            placeholder="Describe the account, permissions, or sync rules."
-                          />
-                        </label>
-                        {yazanSyncStatus ? (
-                          <p className="sync-draft-status">{yazanSyncStatus}</p>
-                        ) : null}
                         <div className="sync-draft-actions">
                           <button type="submit" className="account-submit-btn sync-draft-submit">
-                            Stage Mock Sync
+                            Save
                           </button>
                           <button
                             type="button"
                             className="panel-action-btn"
-                            onClick={resetYazanSyncDraft}
+                            onClick={closeYazanSyncDraft}
                           >
-                            Reset Draft
+                            Cancel
                           </button>
                         </div>
                       </form>
