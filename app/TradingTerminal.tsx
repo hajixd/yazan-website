@@ -164,6 +164,11 @@ type AccountSyncDraft = {
   accountNumber: string;
 };
 
+type AccountMenuPosition = {
+  x: number;
+  y: number;
+};
+
 type CandleRequestOptions = {
   signal?: AbortSignal;
   beforeMs?: number;
@@ -840,6 +845,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
   const [yazanSyncDraft, setYazanSyncDraft] = useState<AccountSyncDraft>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
+  const [yazanAccountMenuPosition, setYazanAccountMenuPosition] = useState<AccountMenuPosition>({
+    x: 0,
+    y: 0
+  });
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -855,7 +864,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
-  const yazanAccountMenuRef = useRef<HTMLLIElement | null>(null);
+  const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -2798,6 +2807,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const closeYazanSyncDraft = () => {
     setShowYazanSyncDraft(false);
+    setShowYazanAccountMenu(false);
     setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
   };
 
@@ -2871,6 +2881,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       window.removeEventListener("keydown", onEscape);
     };
   }, [showYazanAccountMenu]);
+
+  useEffect(() => {
+    if (!showYazanSyncDraft) {
+      return;
+    }
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowYazanSyncDraft(false);
+        setShowYazanAccountMenu(false);
+        setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
+      }
+    };
+
+    window.addEventListener("keydown", onEscape);
+
+    return () => {
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [showYazanSyncDraft, yazanAccount]);
 
   const grantAccountAccess = (role: AccountRole) => {
     setActiveAccountRole(role);
@@ -3078,6 +3108,123 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           </div>
         </div>
       </div>
+
+      {isAdmin && showYazanAccountMenu ? (
+        <div
+          ref={yazanAccountMenuRef}
+          className="sync-account-menu"
+          style={{
+            left: `${yazanAccountMenuPosition.x}px`,
+            top: `${yazanAccountMenuPosition.y}px`
+          }}
+        >
+          <button type="button" className="sync-account-menu-btn" onClick={openYazanSyncDraft}>
+            Edit Account
+          </button>
+          <button
+            type="button"
+            className="sync-account-menu-btn danger"
+            onClick={removeYazanAccount}
+            disabled={!yazanAccount}
+          >
+            Remove Account
+          </button>
+        </div>
+      ) : null}
+
+      {isAdmin && showYazanSyncDraft ? (
+        <div
+          className="account-window-backdrop"
+          onClick={() => {
+            closeYazanSyncDraft();
+          }}
+        >
+          <section
+            className="account-window"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit account"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div className="account-window-head">
+              <div className="account-window-title">
+                <span className="account-window-kicker">Account</span>
+                <h2>Edit Account</h2>
+              </div>
+              <button
+                type="button"
+                className="account-window-close"
+                onClick={closeYazanSyncDraft}
+                aria-label="Close account window"
+              >
+                Close
+              </button>
+            </div>
+            <form
+              className="account-window-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveYazanSyncDraft();
+              }}
+            >
+              <label className="account-window-row">
+                <span>Account Name</span>
+                <input
+                  className="account-input"
+                  value={yazanSyncDraft.accountLabel}
+                  onChange={(event) => {
+                    updateYazanSyncDraft("accountLabel", event.target.value);
+                  }}
+                  placeholder="Roman Capital Primary"
+                />
+              </label>
+              <label className="account-window-row">
+                <span>Broker</span>
+                <input
+                  className="account-input"
+                  value={yazanSyncDraft.broker}
+                  onChange={(event) => {
+                    updateYazanSyncDraft("broker", event.target.value);
+                  }}
+                  placeholder="TradeLocker"
+                />
+              </label>
+              <label className="account-window-row">
+                <span>Platform</span>
+                <input
+                  className="account-input"
+                  value={yazanSyncDraft.platform}
+                  onChange={(event) => {
+                    updateYazanSyncDraft("platform", event.target.value);
+                  }}
+                  placeholder="Rithmic"
+                />
+              </label>
+              <label className="account-window-row">
+                <span>Account Number</span>
+                <input
+                  className="account-input"
+                  value={yazanSyncDraft.accountNumber}
+                  onChange={(event) => {
+                    updateYazanSyncDraft("accountNumber", event.target.value);
+                  }}
+                  placeholder="YZ-884201"
+                />
+              </label>
+              <div className="account-window-actions">
+                <button type="submit" className="account-submit-btn account-window-submit">
+                  Save
+                </button>
+                <button type="button" className="panel-action-btn" onClick={closeYazanSyncDraft}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       <header className="topbar">
             <div className="brand-area">
@@ -3392,11 +3539,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       const isYazan = model.id === "yazan";
 
                       return (
-                        <li
-                          key={model.id}
-                          className={isYazan && showYazanAccountMenu ? "model-list-item-menu-open" : ""}
-                          ref={isYazan ? yazanAccountMenuRef : undefined}
-                        >
+                        <li key={model.id}>
                           <button
                             type="button"
                             className={`model-row ${selected ? "selected" : ""}`}
@@ -3416,6 +3559,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               event.preventDefault();
                               setSelectedModelId("yazan");
                               setShowYazanSyncDraft(false);
+                              setYazanAccountMenuPosition({
+                                x: Math.max(12, Math.min(event.clientX + 6, window.innerWidth - 188)),
+                                y: Math.max(18, event.clientY - 108)
+                              });
                               setShowYazanAccountMenu(true);
                             }}
                             title={
@@ -3437,99 +3584,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             ) : null}
                             <span className="model-state">{selected ? "Selected" : "Select"}</span>
                           </button>
-                          {isAdmin && isYazan && showYazanAccountMenu ? (
-                            <div className="sync-account-menu">
-                              <button
-                                type="button"
-                                className="sync-account-menu-btn"
-                                onClick={openYazanSyncDraft}
-                              >
-                                Edit Account
-                              </button>
-                              <button
-                                type="button"
-                                className="sync-account-menu-btn danger"
-                                onClick={removeYazanAccount}
-                                disabled={!yazanAccount}
-                              >
-                                Remove Account
-                              </button>
-                            </div>
-                          ) : null}
                         </li>
                       );
                     })}
                   </ul>
-                  {isAdmin && showYazanSyncDraft ? (
-                    <section className="sync-draft-card" aria-label="account editor">
-                      <form
-                        className="sync-draft-form"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          saveYazanSyncDraft();
-                        }}
-                      >
-                        <div className="sync-draft-grid">
-                          <label className="account-field">
-                            <span>Account Name</span>
-                            <input
-                              className="account-input"
-                              value={yazanSyncDraft.accountLabel}
-                              onChange={(event) => {
-                                updateYazanSyncDraft("accountLabel", event.target.value);
-                              }}
-                              placeholder="Roman Capital Primary"
-                            />
-                          </label>
-                          <label className="account-field">
-                            <span>Broker</span>
-                            <input
-                              className="account-input"
-                              value={yazanSyncDraft.broker}
-                              onChange={(event) => {
-                                updateYazanSyncDraft("broker", event.target.value);
-                              }}
-                              placeholder="TradeLocker"
-                            />
-                          </label>
-                          <label className="account-field">
-                            <span>Platform</span>
-                            <input
-                              className="account-input"
-                              value={yazanSyncDraft.platform}
-                              onChange={(event) => {
-                                updateYazanSyncDraft("platform", event.target.value);
-                              }}
-                              placeholder="Rithmic"
-                            />
-                          </label>
-                          <label className="account-field">
-                            <span>Account Number</span>
-                            <input
-                              className="account-input"
-                              value={yazanSyncDraft.accountNumber}
-                              onChange={(event) => {
-                                updateYazanSyncDraft("accountNumber", event.target.value);
-                              }}
-                              placeholder="YZ-884201"
-                            />
-                          </label>
-                        </div>
-                        <div className="sync-draft-actions">
-                          <button type="submit" className="account-submit-btn sync-draft-submit">
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            className="panel-action-btn"
-                            onClick={closeYazanSyncDraft}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    </section>
-                  ) : null}
                 </div>
               ) : null}
 
