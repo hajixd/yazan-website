@@ -180,6 +180,7 @@ const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
+const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
@@ -628,32 +629,6 @@ const generateFakeCandles = (
   return series;
 };
 
-const randomDriftForCandle = (volatility: number): number => {
-  return (Math.random() - 0.5) * volatility * (1.15 + Math.random() * 1.1);
-};
-
-const createNextCandle = (
-  previousClose: number,
-  timestampMs: number,
-  timeframe: Timeframe
-): Candle => {
-  const volatility = timeframeVolatility[timeframe];
-  const drift = randomDriftForCandle(volatility);
-  const open = previousClose;
-  const close = Math.max(0.000001, open * (1 + drift));
-  const wickRange = volatility * (0.5 + Math.random() * 1.5);
-  const high = Math.max(open, close) * (1 + wickRange * (0.28 + Math.random() * 0.72));
-  const low = Math.max(0.000001, Math.min(open, close) * (1 - wickRange * (0.28 + Math.random() * 0.72)));
-
-  return {
-    open,
-    close,
-    high,
-    low,
-    time: timestampMs
-  };
-};
-
 const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number => {
   if (candles.length === 0) {
     return -1;
@@ -970,22 +945,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           return;
         }
 
-        setSeriesMap((prev) => {
-          if (prev[selectedKey]?.length) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            [selectedKey]: generateFakeCandles(
-              selectedAsset.basePrice,
-              selectedSymbol,
-              selectedTimeframe,
-              candleHistoryCountByTimeframe[selectedTimeframe],
-              referenceNowMs
-            )
-          };
-        });
         setMarketStatus("error");
         setMarketError(error instanceof Error ? error.message : "Failed to load market candles.");
       });
@@ -1053,17 +1012,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
           if (result.status === "fulfilled" && result.value.candles.length > 0) {
             next[key] = result.value.candles;
-            return;
-          }
-
-          if (!next[key]) {
-            next[key] = generateFakeCandles(
-              asset.basePrice,
-              asset.symbol,
-              selectedTimeframe,
-              watchlistSnapshotCountByTimeframe[selectedTimeframe],
-              referenceNowMs
-            );
           }
         });
 
@@ -1129,17 +1077,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
           if (result.status === "fulfilled" && result.value.candles.length > 0) {
             next[key] = result.value.candles;
-            return;
-          }
-
-          if (!next[key]) {
-            next[key] = generateFakeCandles(
-              selectedAsset.basePrice,
-              selectedSymbol,
-              timeframe,
-              watchlistSnapshotCountByTimeframe[timeframe],
-              referenceNowMs
-            );
           }
         });
 
@@ -1153,84 +1090,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     };
   }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, showcaseMode]);
 
-  useEffect(() => {
-    if (showcaseMode) {
-      return;
-    }
-
-    const key = selectedKey;
-    const timeframeMs = getTimeframeMs(selectedTimeframe);
-    const baseHistoryCount = candleHistoryCountByTimeframe[selectedTimeframe];
-
-    const timer = window.setInterval(() => {
-      setSeriesMap((prev) => {
-        const currentSeries = prev[key];
-
-        if (!currentSeries || currentSeries.length < 2) {
-          return prev;
-        }
-
-        const maxBars = Math.max(
-          baseHistoryCount,
-          Math.min(MAX_CHART_CANDLE_COUNT, currentSeries.length)
-        );
-
-        const nextSeries = currentSeries.slice();
-        let changed = false;
-        const latestBoundary = floorToTimeframe(Date.now(), selectedTimeframe);
-
-        while (nextSeries[nextSeries.length - 1].time < latestBoundary) {
-          const previous = nextSeries[nextSeries.length - 1];
-          nextSeries.push(
-            createNextCandle(previous.close, previous.time + timeframeMs, selectedTimeframe)
-          );
-          changed = true;
-        }
-
-        const formingIndex = nextSeries.length - 1;
-        const forming = { ...nextSeries[formingIndex] };
-        const drift = randomDriftForCandle(timeframeVolatility[selectedTimeframe]) * 0.42;
-        const nextClose = Math.max(0.000001, forming.close * (1 + drift));
-
-        if (nextClose !== forming.close) {
-          forming.close = nextClose;
-          forming.high = Math.max(forming.high, nextClose, forming.open);
-          forming.low = Math.max(0.000001, Math.min(forming.low, nextClose, forming.open));
-          nextSeries[formingIndex] = forming;
-          changed = true;
-        }
-
-        if (!changed) {
-          return prev;
-        }
-
-        const trimmedSeries =
-          nextSeries.length > maxBars ? nextSeries.slice(nextSeries.length - maxBars) : nextSeries;
-
-        return {
-          ...prev,
-          [key]: trimmedSeries
-        };
-      });
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [selectedKey, selectedTimeframe, showcaseMode]);
-
-  const fallbackCandles = useMemo(() => {
-    return generateFakeCandles(
-      selectedAsset.basePrice,
-      selectedSymbol,
-      selectedTimeframe,
-      candleHistoryCountByTimeframe[selectedTimeframe],
-      referenceNowMs
-    );
-  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, selectedTimeframe]);
-
   const loadedSelectedCandles = seriesMap[selectedKey];
-  const selectedCandles = loadedSelectedCandles ?? fallbackCandles;
+  const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
 
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
@@ -1242,35 +1103,33 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return map;
   }, [selectedCandles]);
 
-  const latestCandle = selectedCandles[selectedCandles.length - 1];
-  const previousCandle = selectedCandles[selectedCandles.length - 2] ?? latestCandle;
+  const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
+  const previousCandle =
+    selectedCandles.length > 1 ? selectedCandles[selectedCandles.length - 2] : latestCandle;
 
   const quoteChange =
-    previousCandle.close > 0
+    latestCandle && previousCandle && previousCandle.close > 0
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
-      : 0;
+      : null;
 
-  const hoveredCandle = hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
+  const hoveredCandle = latestCandle
+    ? hoveredTime
+      ? candleByUnix.get(hoveredTime) ?? latestCandle
+      : latestCandle
+    : null;
 
   const hoveredChange =
-    hoveredCandle.open > 0
+    hoveredCandle && hoveredCandle.open > 0
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
-      : 0;
+      : null;
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
       const list =
         asset.symbol === selectedSymbol
-          ? seriesMap[key] ?? fallbackCandles
-          : watchlistSeriesMap[key] ??
-            generateFakeCandles(
-              asset.basePrice,
-              asset.symbol,
-              selectedTimeframe,
-              watchlistSnapshotCountByTimeframe[selectedTimeframe],
-              referenceNowMs
-            );
+          ? seriesMap[key] ?? []
+          : watchlistSeriesMap[key] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
       const change =
@@ -1283,8 +1142,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       };
     });
   }, [
-    fallbackCandles,
-    referenceNowMs,
     selectedSymbol,
     selectedTimeframe,
     seriesMap,
@@ -1942,8 +1799,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         wickDownColor: "#f0455a",
         borderUpColor: "#1bae8a",
         borderDownColor: "#f0455a",
-        priceLineVisible: false,
-        lastValueVisible: true
+        priceLineVisible: true,
+        priceLineStyle: LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED,
+        priceLineColor: "rgba(27, 174, 138, 0.72)",
+        priceLineWidth: 1,
+        lastValueVisible: false
       });
 
       const tradeEntryLine = chart.addLineSeries({
@@ -2237,8 +2097,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
+    const selection = `${selectedSymbol}-${selectedTimeframe}`;
 
-    if (!chart || !candleSeries || selectedCandles.length === 0) {
+    if (!chart || !candleSeries) {
+      return;
+    }
+
+    if (selectedCandles.length === 0) {
+      candleSeries.setData([]);
+      delete pendingVisibleRangeShiftRef.current[selectedKey];
+      selectionRef.current = "";
       return;
     }
 
@@ -2252,7 +2120,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     candleSeries.setData(candleData);
 
-    const selection = `${selectedSymbol}-${selectedTimeframe}`;
+    const lastBar = selectedCandles[selectedCandles.length - 1];
+
+    if (lastBar) {
+      const isUp = lastBar.close >= lastBar.open;
+      candleSeries.applyOptions({
+        priceLineColor: isUp ? "rgba(27, 174, 138, 0.72)" : "rgba(240, 69, 90, 0.72)"
+      });
+    }
 
     if (selectionRef.current !== selection) {
       const to = candleData.length - 1;
@@ -2779,7 +2654,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     marketStatus === "loading"
       ? "Loading Databento"
       : marketStatus === "error"
-        ? "Fallback replay"
+        ? "Databento unavailable"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? "Guest";
   const isAdmin = activeAccountRole === "Admin";
@@ -3132,100 +3007,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         </div>
       ) : null}
 
-      {isAdmin && showYazanSyncDraft ? (
-        <div
-          className="account-window-backdrop"
-          onClick={() => {
-            closeYazanSyncDraft();
-          }}
-        >
-          <section
-            className="account-window"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Edit account"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <div className="account-window-head">
-              <div className="account-window-title">
-                <span className="account-window-kicker">Account</span>
-                <h2>Edit Account</h2>
-              </div>
-              <button
-                type="button"
-                className="account-window-close"
-                onClick={closeYazanSyncDraft}
-                aria-label="Close account window"
-              >
-                Close
-              </button>
-            </div>
-            <form
-              className="account-window-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                saveYazanSyncDraft();
-              }}
-            >
-              <label className="account-window-row">
-                <span>Account Name</span>
-                <input
-                  className="account-input"
-                  value={yazanSyncDraft.accountLabel}
-                  onChange={(event) => {
-                    updateYazanSyncDraft("accountLabel", event.target.value);
-                  }}
-                  placeholder="Roman Capital Primary"
-                />
-              </label>
-              <label className="account-window-row">
-                <span>Broker</span>
-                <input
-                  className="account-input"
-                  value={yazanSyncDraft.broker}
-                  onChange={(event) => {
-                    updateYazanSyncDraft("broker", event.target.value);
-                  }}
-                  placeholder="TradeLocker"
-                />
-              </label>
-              <label className="account-window-row">
-                <span>Platform</span>
-                <input
-                  className="account-input"
-                  value={yazanSyncDraft.platform}
-                  onChange={(event) => {
-                    updateYazanSyncDraft("platform", event.target.value);
-                  }}
-                  placeholder="Rithmic"
-                />
-              </label>
-              <label className="account-window-row">
-                <span>Account Number</span>
-                <input
-                  className="account-input"
-                  value={yazanSyncDraft.accountNumber}
-                  onChange={(event) => {
-                    updateYazanSyncDraft("accountNumber", event.target.value);
-                  }}
-                  placeholder="YZ-884201"
-                />
-              </label>
-              <div className="account-window-actions">
-                <button type="submit" className="account-submit-btn account-window-submit">
-                  Save
-                </button>
-                <button type="button" className="panel-action-btn" onClick={closeYazanSyncDraft}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-      ) : null}
-
       <header className="topbar">
             <div className="brand-area">
               <div className="asset-meta">
@@ -3233,8 +3014,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 <p>{selectedAsset.name}</p>
               </div>
               <div className="live-quote">
-                <span className={quoteChange >= 0 ? "up" : "down"}>
-                  ${formatPrice(latestCandle.close)}
+                <span className={quoteChange === null ? "neutral" : quoteChange >= 0 ? "up" : "down"}>
+                  {latestCandle ? `$${formatPrice(latestCandle.close)}` : "--"}
                 </span>
                 <div className="tf-changes">
                   {timeframeChanges.map(({ timeframe, change }) => (
@@ -3273,10 +3054,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       <section className="surface-stage">
         <div className="surface-view">
           <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
-        <section className="chart-wrap">
+          <section className="chart-wrap">
           <div className="chart-toolbar">
             {(() => {
               const display = hoveredTime ? hoveredCandle : latestCandle ?? hoveredCandle;
+
+              if (!display) {
+                return (
+                  <>
+                    <span className="neutral">
+                      O <strong>--</strong>
+                    </span>
+                    <span className="neutral">
+                      H <strong>--</strong>
+                    </span>
+                    <span className="neutral">
+                      L <strong>--</strong>
+                    </span>
+                    <span className="neutral">
+                      C <strong>--</strong>
+                    </span>
+                  </>
+                );
+              }
+
               const displayIndex = selectedCandles.indexOf(display);
               const previousDisplay = displayIndex > 0 ? selectedCandles[displayIndex - 1] : null;
               const openClass =
@@ -3304,12 +3105,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
             <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
+            {selectedCandles.length === 0 ? (
+              <div className="chart-empty-state" role="status" aria-live="polite">
+                <strong>
+                  {marketStatus === "loading" ? "Loading futures candles" : "Futures candles unavailable"}
+                </strong>
+                <p>
+                  {marketStatus === "loading"
+                    ? "Waiting for real Databento bars."
+                    : marketError ?? "No real candles were returned for this contract and timeframe."}
+                </p>
+              </div>
+            ) : null}
             <div className="chart-stage-actions">
               <button
                 type="button"
                 className="chart-reset-btn"
                 onClick={resetChart}
                 title="Reset chart view (Opt+R)"
+                disabled={selectedCandles.length === 0}
               >
                 Reset Chart
               </button>
@@ -3527,67 +3341,139 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "models" ? (
                 <div className="tab-view">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>Models / People</h2>
-                      <p>Select one profile to drive history and actions</p>
-                    </div>
-                  </div>
-                  <ul className="model-list">
-                    {modelProfiles.map((model) => {
-                      const selected = model.id === selectedModelId;
-                      const isYazan = model.id === "yazan";
-
-                      return (
-                        <li key={model.id}>
-                          <button
-                            type="button"
-                            className={`model-row ${selected ? "selected" : ""}`}
-                            onClick={() => {
-                              setSelectedModelId(model.id);
-                              setShowYazanAccountMenu(false);
-
-                              if (model.id !== "yazan") {
-                                setShowYazanSyncDraft(false);
-                              }
+                  {showYazanSyncDraft ? (
+                    <>
+                      <div className="watchlist-head with-action">
+                        <div>
+                          <h2>Edit Account</h2>
+                        </div>
+                        <button type="button" className="panel-action-btn" onClick={closeYazanSyncDraft}>
+                          Back
+                        </button>
+                      </div>
+                      <form
+                        className="account-editor-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          saveYazanSyncDraft();
+                        }}
+                      >
+                        <label className="account-editor-row">
+                          <span>Account Name</span>
+                          <input
+                            className="account-input"
+                            value={yazanSyncDraft.accountLabel}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("accountLabel", event.target.value);
                             }}
-                            onContextMenu={(event) => {
-                              if (!isAdmin || !isYazan) {
-                                return;
-                              }
-
-                              event.preventDefault();
-                              setSelectedModelId("yazan");
-                              setShowYazanSyncDraft(false);
-                              setYazanAccountMenuPosition({
-                                x: Math.max(12, Math.min(event.clientX + 6, window.innerWidth - 188)),
-                                y: Math.max(18, event.clientY - 108)
-                              });
-                              setShowYazanAccountMenu(true);
+                            placeholder="Roman Capital Primary"
+                          />
+                        </label>
+                        <label className="account-editor-row">
+                          <span>Broker</span>
+                          <input
+                            className="account-input"
+                            value={yazanSyncDraft.broker}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("broker", event.target.value);
                             }}
-                            title={
-                              isAdmin && isYazan
-                                ? "Right-click for account options"
-                                : model.name
-                            }
-                          >
-                            <span className="model-main">
-                              <span className="model-name">{model.name}</span>
-                              <span className="model-kind">{model.kind}</span>
-                            </span>
-                            {isYazan && yazanAccountSummary ? (
-                              <span className="model-account">{yazanAccountSummary}</span>
-                            ) : model.accountNumber ? (
-                              <span className="model-account">
-                                Yazan Account #{model.accountNumber}
-                              </span>
-                            ) : null}
-                            <span className="model-state">{selected ? "Selected" : "Select"}</span>
+                            placeholder="TradeLocker"
+                          />
+                        </label>
+                        <label className="account-editor-row">
+                          <span>Platform</span>
+                          <input
+                            className="account-input"
+                            value={yazanSyncDraft.platform}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("platform", event.target.value);
+                            }}
+                            placeholder="Rithmic"
+                          />
+                        </label>
+                        <label className="account-editor-row">
+                          <span>Account Number</span>
+                          <input
+                            className="account-input"
+                            value={yazanSyncDraft.accountNumber}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("accountNumber", event.target.value);
+                            }}
+                            placeholder="YZ-884201"
+                          />
+                        </label>
+                        <div className="account-editor-actions">
+                          <button type="submit" className="account-submit-btn account-editor-submit">
+                            Save
                           </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                        </div>
+                      </form>
+                    </>
+                  ) : (
+                    <>
+                      <div className="watchlist-head">
+                        <div>
+                          <h2>Models / People</h2>
+                          <p>Select one profile to drive history and actions</p>
+                        </div>
+                      </div>
+                      <ul className="model-list">
+                        {modelProfiles.map((model) => {
+                          const selected = model.id === selectedModelId;
+                          const isYazan = model.id === "yazan";
+
+                          return (
+                            <li key={model.id}>
+                              <button
+                                type="button"
+                                className={`model-row ${selected ? "selected" : ""}`}
+                                onClick={() => {
+                                  setSelectedModelId(model.id);
+                                  setShowYazanAccountMenu(false);
+
+                                  if (model.id !== "yazan") {
+                                    setShowYazanSyncDraft(false);
+                                  }
+                                }}
+                                onContextMenu={(event) => {
+                                  if (!isAdmin || !isYazan) {
+                                    return;
+                                  }
+
+                                  event.preventDefault();
+                                  setSelectedModelId("yazan");
+                                  setShowYazanSyncDraft(false);
+                                  setYazanAccountMenuPosition({
+                                    x: Math.max(12, Math.min(event.clientX + 6, window.innerWidth - 188)),
+                                    y: Math.max(18, event.clientY - 108)
+                                  });
+                                  setShowYazanAccountMenu(true);
+                                }}
+                                title={
+                                  isAdmin && isYazan
+                                    ? "Right-click for account options"
+                                    : model.name
+                                }
+                              >
+                                <span className="model-main">
+                                  <span className="model-name">{model.name}</span>
+                                  <span className="model-kind">{model.kind}</span>
+                                </span>
+                                {isYazan && yazanAccountSummary ? (
+                                  <span className="model-account">{yazanAccountSummary}</span>
+                                ) : model.accountNumber ? (
+                                  <span className="model-account">
+                                    Yazan Account #{model.accountNumber}
+                                  </span>
+                                ) : null}
+                                <span className="model-state">{selected ? "Selected" : "Select"}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  )}
                 </div>
               ) : null}
 
@@ -3755,7 +3641,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>{selectedTimeframe}</span>
         <span>Model: {selectedModel.name}</span>
         <span>Feed: {feedStatusLabel}</span>
-        <span>{marketError ? "Mode: fallback replay" : `Contract: ${selectedAsset.contract}`}</span>
+        <span>{marketError ? "Feed unavailable" : `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>
       </footer>
     </main>
