@@ -238,6 +238,7 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 
 const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
+const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
   accountLabel: "Roman Capital Primary",
   broker: "TradeLocker",
@@ -948,47 +949,70 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    const controller = new AbortController();
     let cancelled = false;
+    let refreshInFlight = false;
+    const activeControllers = new Set<AbortController>();
 
-    Promise.allSettled(
-      futuresAssets.map(async (asset) => {
-        const payload = await fetchFuturesCandles(
-          asset.symbol,
-          selectedTimeframe,
-          watchlistSnapshotCountByTimeframe[selectedTimeframe],
-          { signal: controller.signal }
-        );
-
-        return {
-          symbol: asset.symbol,
-          candles: Array.isArray(payload.candles) ? payload.candles : []
-        };
-      })
-    ).then((results) => {
-      if (cancelled || controller.signal.aborted) {
+    const loadWatchlistCandles = async () => {
+      if (refreshInFlight || cancelled) {
         return;
       }
 
-      setWatchlistSeriesMap((prev) => {
-        const next = { ...prev };
+      refreshInFlight = true;
+      const controller = new AbortController();
+      activeControllers.add(controller);
 
-        results.forEach((result, index) => {
-          const asset = futuresAssets[index];
-          const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+      try {
+        const results = await Promise.allSettled(
+          futuresAssets.map(async (asset) => {
+            const payload = await fetchFuturesCandles(
+              asset.symbol,
+              selectedTimeframe,
+              watchlistSnapshotCountByTimeframe[selectedTimeframe],
+              { signal: controller.signal }
+            );
 
-          if (result.status === "fulfilled" && result.value.candles.length > 0) {
-            next[key] = result.value.candles;
-          }
+            return {
+              symbol: asset.symbol,
+              candles: Array.isArray(payload.candles) ? payload.candles : []
+            };
+          })
+        );
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        setWatchlistSeriesMap((prev) => {
+          const next = { ...prev };
+
+          results.forEach((result, index) => {
+            const asset = futuresAssets[index];
+            const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+
+            if (result.status === "fulfilled" && result.value.candles.length > 0) {
+              next[key] = result.value.candles;
+            }
+          });
+
+          return next;
         });
+      } finally {
+        activeControllers.delete(controller);
+        refreshInFlight = false;
+      }
+    };
 
-        return next;
-      });
-    });
+    void loadWatchlistCandles();
+    const intervalId = window.setInterval(() => {
+      void loadWatchlistCandles();
+    }, WATCHLIST_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      controller.abort();
+      window.clearInterval(intervalId);
+      activeControllers.forEach((controller) => controller.abort());
+      activeControllers.clear();
     };
   }, [referenceNowMs, selectedTimeframe, showcaseMode]);
 
@@ -1093,10 +1117,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-      const list =
-        asset.symbol === selectedSymbol
-          ? seriesMap[key] ?? []
-          : watchlistSeriesMap[key] ?? [];
+      const liveWatchlistCandles = watchlistSeriesMap[key] ?? [];
+      const list = liveWatchlistCandles.length > 0 ? liveWatchlistCandles : seriesMap[key] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
       const change =
@@ -1109,7 +1131,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       };
     });
   }, [
-    selectedSymbol,
     selectedTimeframe,
     seriesMap,
     watchlistSeriesMap
@@ -1429,32 +1450,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     const items: NotificationItem[] = [];
 
-    if (activeTrade) {
-      const tradeTone: NotificationTone = activeTrade.result === "Win" ? "up" : "down";
-
-      items.push({
-        id: `latest-trade-${activeTrade.id}`,
-        title: `${activeTrade.symbol} latest trade`,
-        details: `${activeTrade.side === "Long" ? "Buy" : "Sell"} ${formatSignedUsd(
-          activeTrade.pnlUsd
-        )} (${activeTrade.pnlPct >= 0 ? "+" : ""}${activeTrade.pnlPct.toFixed(2)}%)`,
-        time: activeTrade.exitAt,
-        timestamp: Number(activeTrade.exitTime) * 1000,
-        tone: tradeTone
-      });
-
-      items.push({
-        id: `latest-trade-levels-${activeTrade.id}`,
-        title: `${activeTrade.symbol} ${activeTrade.result}`,
-        details: `Entry ${formatPrice(activeTrade.entryPrice)} | Exit ${formatPrice(
-          activeTrade.outcomePrice
-        )} | TP ${formatPrice(activeTrade.targetPrice)} | SL ${formatPrice(activeTrade.stopPrice)}`,
-        time: activeTrade.exitAt,
-        timestamp: Number(activeTrade.exitTime) * 1000 - 1,
-        tone: tradeTone
-      });
-    }
-
     for (const action of actionRows.slice(0, 10)) {
       const title = `${action.symbol} ${action.label}`;
       const tone: NotificationTone =
@@ -1475,7 +1470,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12);
-  }, [actionRows, activeTrade, referenceNowMs, selectedSymbol, showcaseMode]);
+  }, [actionRows, referenceNowMs, selectedSymbol, showcaseMode]);
 
   const seenNotificationSet = useMemo(() => {
     return new Set(seenNotificationIds);
@@ -2972,7 +2967,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             {selectedCandles.length === 0 ? (
               <div className="chart-empty-state" role="status" aria-live="polite">
                 <strong>
-                  {marketStatus === "loading" ? "Loading futures candles" : "Futures candles unavailable"}
+                  {marketStatus === "loading" ? "Loading candles" : "Futures candles unavailable"}
                 </strong>
                 <p>
                   {marketStatus === "loading"
