@@ -16,10 +16,20 @@ import {
   type UTCTimestamp
 } from "lightweight-charts";
 import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
+import {
+  listRomanSeenNotificationIds,
+  markRomanNotificationEventsDelivered,
+  markRomanNotificationEventsSeen,
+  requestRomanNotificationPermission,
+  showRomanNotification,
+  syncRomanNotificationDevice,
+  upsertRomanNotificationEvents
+} from "../lib/romanNotificationCenter";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions";
 type AccountRole = "Admin" | "User";
+type MobileWorkspaceTab = "trade" | "history";
 
 type Candle = {
   open: number;
@@ -70,7 +80,19 @@ type NotificationItem = {
   time: string;
   timestamp: number;
   tone: NotificationTone;
+  symbol?: string | null;
+  tradeId?: string | null;
+  entityType?: string | null;
+  actionCode?: string | null;
+  link?: string;
   live?: boolean;
+};
+
+type SparklineGeometry = {
+  width: number;
+  height: number;
+  path: string;
+  points: Array<{ x: number; y: number }>;
 };
 
 type ModelProfile = {
@@ -396,6 +418,22 @@ const formatClock = (timestampMs: number): string => {
   });
 };
 
+const formatMobileDate = (timestampMs: number): string => {
+  return new Date(timestampMs).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+};
+
+const formatMobileTime = (timestampMs: number): string => {
+  return new Date(timestampMs).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
@@ -698,6 +736,48 @@ const generateTradeBlueprintsFromCandles = (
   return blueprints.sort((a, b) => b.exitMs - a.exitMs);
 };
 
+const buildSparklineGeometry = (
+  values: number[],
+  width = 312,
+  height = 166
+): SparklineGeometry | null => {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+
+  if (finiteValues.length < 2) {
+    return null;
+  }
+
+  const min = Math.min(...finiteValues);
+  const max = Math.max(...finiteValues);
+  const range = Math.max(0.000001, max - min);
+  const stepX = width / Math.max(1, finiteValues.length - 1);
+  const points = finiteValues.map((value, index) => {
+    const x = index * stepX;
+    const normalized = (value - min) / range;
+    const y = height - normalized * (height - 8) - 4;
+
+    return {
+      x,
+      y
+    };
+  });
+
+  const path = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+
+  return {
+    width,
+    height,
+    path,
+    points
+  };
+};
+
+const getMobileHistoryRailTone = (trade: HistoryItem): "tp" | "sl" => {
+  return trade.result === "Win" ? "tp" : "sl";
+};
+
 const buildHistoryRowsFromCandles = (
   candles: Candle[],
   tradeBlueprints: TradeBlueprint[]
@@ -800,6 +880,35 @@ const buildHistoryRowsFromCandles = (
   return rows;
 };
 
+const MobileWorkspaceTabIcon = ({ tab }: { tab: MobileWorkspaceTab }) => {
+  if (tab === "trade") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path
+          d="M5 16.5 9.4 11l3.2 3.2L19 6.8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path
+        d="M7 6.5h10M7 12h10M7 17.5h10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
+
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
   if (tab === "active") {
     return (
@@ -890,6 +999,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
+  const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
+  const [isStandaloneMobileWorkspace, setIsStandaloneMobileWorkspace] = useState(false);
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("trade");
+  const [mobileNowMs, setMobileNowMs] = useState(Date.now());
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [watchlistSeriesMap, setWatchlistSeriesMap] = useState<Record<string, Candle[]>>({});
@@ -924,6 +1037,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
   const adminCodeInputRef = useRef<HTMLInputElement | null>(null);
   const watchlistSeriesMapRef = useRef<Record<string, Candle[]>>({});
+  const deliveredNotificationIdsRef = useRef<Set<string>>(new Set());
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -943,6 +1057,52 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       setAccountGateReady(true);
     }
   }, [showcaseMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
+    const syncViewportMode = () => {
+      setIsMobileWorkspace(mediaQuery.matches);
+      setIsStandaloneMobileWorkspace(
+        standaloneQuery.matches || Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone)
+      );
+    };
+
+    syncViewportMode();
+    mediaQuery.addEventListener("change", syncViewportMode);
+    standaloneQuery.addEventListener("change", syncViewportMode);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncViewportMode);
+      standaloneQuery.removeEventListener("change", syncViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setMobileNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    void listRomanSeenNotificationIds().then((ids) => {
+      setSeenNotificationIds(ids);
+    });
+  }, []);
+
+  useEffect(() => {
+    void syncRomanNotificationDevice(
+      typeof Notification !== "undefined" && Notification.permission === "granted"
+    );
+  }, []);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -1390,6 +1550,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedHistoryId === activeTrade.id &&
     activeTrade.symbol === selectedSymbol;
 
+  const mobileDisplayTrade = selectedHistoryTrade ?? activeTrade;
+  const mobileDisplayTradeDuration = useMemo(() => {
+    if (!mobileDisplayTrade) {
+      return null;
+    }
+
+    return formatElapsed(Number(mobileDisplayTrade.entryTime), Number(mobileDisplayTrade.exitTime));
+  }, [mobileDisplayTrade]);
+  const mobileDisplayTradeRiskReward = useMemo(() => {
+    if (!mobileDisplayTrade) {
+      return null;
+    }
+
+    return (
+      Math.abs(mobileDisplayTrade.targetPrice - mobileDisplayTrade.entryPrice) /
+      Math.max(0.000001, Math.abs(mobileDisplayTrade.entryPrice - mobileDisplayTrade.stopPrice))
+    );
+  }, [mobileDisplayTrade]);
+  const mobileHistoryRows = useMemo(() => {
+    return historyRows.slice(0, 18);
+  }, [historyRows]);
+  const mobileDateLabel = useMemo(() => formatMobileDate(mobileNowMs), [mobileNowMs]);
+  const mobileTimeLabel = useMemo(() => formatMobileTime(mobileNowMs), [mobileNowMs]);
+  const mobileTradeSparkline = useMemo(() => {
+    if (!mobileDisplayTrade) {
+      return null;
+    }
+
+    const candles = marketCandlesBySymbol[mobileDisplayTrade.symbol] ?? [];
+
+    if (candles.length === 0) {
+      return null;
+    }
+
+    const entryIndex = findCandleIndexAtOrBefore(candles, Number(mobileDisplayTrade.entryTime) * 1000);
+    const exitIndex = findCandleIndexAtOrBefore(candles, Number(mobileDisplayTrade.exitTime) * 1000);
+    const startIndex = Math.max(0, Math.min(entryIndex, exitIndex, candles.length - 1));
+    const endIndex = Math.max(startIndex + 1, Math.min(candles.length - 1, Math.max(entryIndex, exitIndex)));
+    const slice = candles.slice(startIndex, endIndex + 1);
+    const values = (slice.length >= 2 ? slice : candles.slice(-24)).map((candle) => candle.close);
+
+    return buildSparklineGeometry(values);
+  }, [marketCandlesBySymbol, mobileDisplayTrade]);
+
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
 
@@ -1465,6 +1669,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           time: formatClock(now),
           timestamp: now,
           tone: "up" as NotificationTone,
+          entityType: "system",
+          actionCode: "risk_guard_active",
+          link: "/",
           live: true
         },
         {
@@ -1474,6 +1681,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           time: formatClock(now - 14_000),
           timestamp: now - 14_000,
           tone: "up" as NotificationTone,
+          symbol: selectedSymbol,
+          entityType: "trade",
+          actionCode: "tp_hit",
+          link: "/",
           live: true
         },
         {
@@ -1483,6 +1694,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           time: formatClock(now - 34_000),
           timestamp: now - 34_000,
           tone: "neutral" as NotificationTone,
+          symbol: selectedSymbol,
+          entityType: "trade",
+          actionCode: "entry_executed",
+          link: "/",
           live: true
         },
         ...actionRows.slice(0, 8).map<NotificationItem>((action, index) => {
@@ -1499,7 +1714,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             details: action.details,
             time: action.time,
             timestamp: now - (index + 3) * 55_000,
-            tone
+            tone,
+            symbol: action.symbol,
+            tradeId: action.tradeId,
+            entityType: "trade",
+            actionCode: action.label.toLowerCase().replaceAll(" ", "_"),
+            link: "/"
           };
         })
       ];
@@ -1524,7 +1744,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         details: action.details,
         time: action.time,
         timestamp: Number(action.timestamp) * 1000,
-        tone
+        tone,
+        symbol: action.symbol,
+        tradeId: action.tradeId,
+        entityType: "trade",
+        actionCode: action.label.toLowerCase().replaceAll(" ", "_"),
+        link: "/"
       });
     }
 
@@ -1540,6 +1765,75 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return count + (seenNotificationSet.has(item.id) ? 0 : 1);
     }, 0);
   }, [notificationItems, seenNotificationSet]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const insertedIds = await upsertRomanNotificationEvents(
+        notificationItems.map((item) => ({
+          id: item.id,
+          title: item.title,
+          body: item.details,
+          tone: item.tone,
+          link: item.link ?? "/",
+          symbol: item.symbol ?? null,
+          tradeId: item.tradeId ?? null,
+          entityType: item.entityType ?? null,
+          actionCode: item.actionCode ?? null,
+          occurredAt: item.timestamp
+        }))
+      );
+
+      if (cancelled || insertedIds.length === 0) {
+        return;
+      }
+
+      const hiddenDocument =
+        typeof document !== "undefined" && document.visibilityState !== "visible";
+
+      if (!hiddenDocument) {
+        return;
+      }
+
+      const deliveredIds: string[] = [];
+
+      for (const item of notificationItems) {
+        if (
+          !insertedIds.includes(item.id) ||
+          deliveredNotificationIdsRef.current.has(item.id)
+        ) {
+          continue;
+        }
+
+        const shown = await showRomanNotification({
+          id: item.id,
+          title: item.title,
+          body: item.details,
+          tone: item.tone,
+          link: item.link ?? "/",
+          symbol: item.symbol ?? null,
+          tradeId: item.tradeId ?? null,
+          entityType: item.entityType ?? null,
+          actionCode: item.actionCode ?? null,
+          occurredAt: item.timestamp
+        });
+
+        if (shown) {
+          deliveredIds.push(item.id);
+          deliveredNotificationIdsRef.current.add(item.id);
+        }
+      }
+
+      if (deliveredIds.length > 0) {
+        await markRomanNotificationEventsDelivered(deliveredIds);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [notificationItems]);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -1600,6 +1894,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
+    const unseenIds = notificationItems
+      .map((item) => item.id)
+      .filter((id) => !seenNotificationSet.has(id));
+
     setSeenNotificationIds((prev) => {
       const next = new Set(prev);
       let changed = false;
@@ -1613,7 +1911,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       return changed ? Array.from(next) : prev;
     });
-  }, [notificationsOpen, notificationItems]);
+
+    if (unseenIds.length > 0) {
+      void markRomanNotificationEventsSeen(unseenIds);
+    }
+  }, [notificationsOpen, notificationItems, seenNotificationSet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2830,6 +3132,251 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }
 
+  if (isMobileWorkspace) {
+    return (
+      <main
+        className={`terminal mobile-phone-shell${
+          isStandaloneMobileWorkspace ? " mobile-phone-shell-standalone" : ""
+        }`}
+      >
+        <section className="mobile-phone-frame">
+          <header className="mobile-phone-header">
+            <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
+              <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
+                <span className="mobile-phone-brand">Roman Capital</span>
+                <h1>{mobileWorkspaceTab === "trade" ? "Trade" : "Trade History"}</h1>
+                <p className="mobile-phone-header-date">{mobileDateLabel}</p>
+                <div className="mobile-phone-header-time-row">
+                  <span className="mobile-phone-header-time">{mobileTimeLabel}</span>
+                  <span className="mobile-phone-header-time-badge live">Live</span>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div className="mobile-phone-body">
+            {mobileWorkspaceTab === "trade" ? (
+              <section className="mobile-phone-card mobile-phone-card-active">
+                {mobileDisplayTrade ? (
+                  <>
+                    <div className="mobile-phone-card-head">
+                      <div className="mobile-phone-card-copy">
+                        <span className="mobile-phone-card-kicker">
+                          {mobileDisplayTrade.symbol}
+                        </span>
+                        <h2>{selectedHistoryTrade ? "Selected Trade" : "Latest Trade"}</h2>
+                      </div>
+                      <span
+                        className={`mobile-phone-side-pill ${
+                          mobileDisplayTrade.side === "Long" ? "up" : "down"
+                        }`}
+                      >
+                        {mobileDisplayTrade.side === "Long" ? "Buy" : "Sell"}
+                      </span>
+                    </div>
+
+                    <div className="mobile-phone-pnl-block">
+                      <span>Trade PnL</span>
+                      <strong className={mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"}>
+                        {formatSignedUsd(mobileDisplayTrade.pnlUsd)}
+                      </strong>
+                      <small className={mobileDisplayTrade.pnlPct >= 0 ? "up" : "down"}>
+                        {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
+                        {mobileDisplayTrade.pnlPct.toFixed(2)}%
+                      </small>
+                    </div>
+
+                    {mobileTradeSparkline ? (
+                      <div className="mobile-phone-active-chart-shell">
+                        <div
+                          className={`mobile-phone-active-chart-change ${
+                            mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"
+                          }`}
+                        >
+                          <strong>{formatSignedUsd(mobileDisplayTrade.pnlUsd)}</strong>
+                          <span>
+                            {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
+                            {mobileDisplayTrade.pnlPct.toFixed(2)}%
+                          </span>
+                          <em>{mobileDisplayTrade.symbol}</em>
+                        </div>
+                        <div
+                          className={`mobile-phone-active-chart ${
+                            mobileDisplayTrade.pnlUsd >= 0
+                              ? "mobile-phone-active-chart-up"
+                              : "mobile-phone-active-chart-down"
+                          }`}
+                        >
+                          <svg
+                            viewBox={`0 0 ${mobileTradeSparkline.width} ${mobileTradeSparkline.height}`}
+                            preserveAspectRatio="none"
+                            aria-hidden="true"
+                          >
+                            <line
+                              x1="0"
+                              y1={mobileTradeSparkline.height - 1}
+                              x2={mobileTradeSparkline.width}
+                              y2={mobileTradeSparkline.height - 1}
+                              className="mobile-phone-active-chart-baseline"
+                            />
+                            <path
+                              d={mobileTradeSparkline.path}
+                              className="mobile-phone-active-chart-path"
+                            />
+                          </svg>
+                          {mobileTradeSparkline.points.length > 0 ? (
+                            <span
+                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-endpoint"
+                              style={{
+                                left: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.x / mobileTradeSparkline.width) * 100}%`,
+                                top: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.y / mobileTradeSparkline.height) * 100}%`
+                              }}
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="mobile-phone-detail-list">
+                      <div className="mobile-phone-detail-row">
+                        <span>Entry Price</span>
+                        <strong>{formatPrice(mobileDisplayTrade.entryPrice)}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Exit Price</span>
+                        <strong>{formatPrice(mobileDisplayTrade.outcomePrice)}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Take Profit</span>
+                        <strong className="up">{formatPrice(mobileDisplayTrade.targetPrice)}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Stop Loss</span>
+                        <strong className="down">{formatPrice(mobileDisplayTrade.stopPrice)}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Result</span>
+                        <strong className={mobileDisplayTrade.result === "Win" ? "up" : "down"}>
+                          {mobileDisplayTrade.result}
+                        </strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Duration</span>
+                        <strong>{mobileDisplayTradeDuration ?? "--"}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>R:R</span>
+                        <strong>
+                          {mobileDisplayTradeRiskReward
+                            ? `1:${mobileDisplayTradeRiskReward.toFixed(2)}`
+                            : "--"}
+                        </strong>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">Active Position</span>
+                    <h2>No trade available</h2>
+                    <p>Trade simulation needs candle history before the mobile workspace can populate.</p>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <section className="mobile-phone-card mobile-phone-card-history">
+                <div className="mobile-phone-card-head">
+                  <div className="mobile-phone-card-copy">
+                    <span className="mobile-phone-card-kicker">Recent Trades</span>
+                    <h2>History</h2>
+                  </div>
+                  <span className="mobile-phone-count-chip">
+                    {mobileHistoryRows.length.toLocaleString("en-US")}
+                  </span>
+                </div>
+
+                {mobileHistoryRows.length === 0 ? (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">History</span>
+                    <h2>No trades yet</h2>
+                    <p>As new simulated trades close, they will appear here.</p>
+                  </div>
+                ) : (
+                  <div className="mobile-phone-history-list">
+                    {mobileHistoryRows.map((trade) => {
+                      const railTone = getMobileHistoryRailTone(trade);
+
+                      return (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className="mobile-phone-history-row"
+                          onClick={() => {
+                            setSelectedHistoryId(trade.id);
+                            setSelectedSymbol(trade.symbol);
+                            setShowAllTradesOnChart(false);
+                            focusTradeIdRef.current = trade.id;
+                            setMobileWorkspaceTab("trade");
+                          }}
+                        >
+                          <div className="mobile-phone-history-main">
+                            <div className="mobile-phone-history-copy">
+                              <strong>{trade.symbol}</strong>
+                              <span>
+                                {trade.side === "Long" ? "Buy" : "Sell"} | {trade.result}
+                              </span>
+                            </div>
+                            <div className="mobile-phone-history-values">
+                              <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(trade.pnlUsd)}
+                              </strong>
+                              <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                                {trade.pnlPct >= 0 ? "+" : ""}
+                                {trade.pnlPct.toFixed(2)}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mobile-phone-history-meta">
+                            <span>{trade.time}</span>
+                            <span>Entry {formatPrice(trade.entryPrice)}</span>
+                            <span>Exit {formatPrice(trade.outcomePrice)}</span>
+                          </div>
+                          <span
+                            className={`mobile-phone-history-rail ${railTone}`}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+
+          <nav className="mobile-phone-tabbar" aria-label="Mobile workspace tabs">
+            {([
+              { id: "trade", label: "Trade" },
+              { id: "history", label: "History" }
+            ] as Array<{ id: MobileWorkspaceTab; label: string }>).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`mobile-phone-tab${mobileWorkspaceTab === tab.id ? " active" : ""}`}
+                onClick={() => setMobileWorkspaceTab(tab.id)}
+                aria-pressed={mobileWorkspaceTab === tab.id}
+              >
+                <span className="mobile-phone-tab-icon">
+                  <MobileWorkspaceTabIcon tab={tab.id} />
+                </span>
+                <span className="mobile-phone-tab-label">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="terminal">
       <div className="surface-strip">
@@ -2864,7 +3411,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               type="button"
               className="notif-btn"
               aria-label="notifications"
-              onClick={() => setNotificationsOpen((open) => !open)}
+              onClick={async () => {
+                if (typeof Notification !== "undefined" && Notification.permission === "default") {
+                  await requestRomanNotificationPermission();
+                }
+
+                await syncRomanNotificationDevice(
+                  typeof Notification !== "undefined" && Notification.permission === "granted"
+                );
+                setNotificationsOpen((open) => !open);
+              }}
             >
               <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
                 <path
