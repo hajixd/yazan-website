@@ -869,6 +869,15 @@ button {
   pointer-events: none;
 }
 
+.chart-empty-state.loading {
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .chart-empty-state strong {
   color: #edf3fb;
   font-size: 0.82rem;
@@ -2152,6 +2161,10 @@ button {
   line-height: 1.15;
 }
 
+.mobile-phone-active-chart-arrow {
+  font-size: 0.72rem;
+}
+
 .mobile-phone-active-chart-change strong {
   font-size: 0.76rem;
   letter-spacing: -0.02em;
@@ -2160,12 +2173,6 @@ button {
 .mobile-phone-active-chart-change span {
   font-size: 0.72rem;
   font-weight: 700;
-}
-
-.mobile-phone-active-chart-change em {
-  color: rgba(236, 240, 235, 0.68);
-  font-size: 0.74rem;
-  font-style: normal;
 }
 
 .mobile-phone-active-chart {
@@ -2195,18 +2202,38 @@ button {
   stroke-linejoin: round;
 }
 
+.mobile-phone-active-chart-scrubline {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.mobile-phone-active-chart-point {
+  border: 2px solid #f7faf7;
+}
+
 .mobile-phone-active-chart-dot {
   position: absolute;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: #060706;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
+.mobile-phone-active-chart-point.mobile-phone-active-chart-dot {
+  width: 10px;
+  height: 10px;
+}
+
 .mobile-phone-active-chart-endpoint {
   border: 1.6px solid #d6ff12;
+}
+
+.mobile-phone-active-chart-endpoint.mobile-phone-active-chart-dot {
+  width: 9px;
+  height: 9px;
 }
 
 .mobile-phone-active-chart-up .mobile-phone-active-chart-path {
@@ -2296,7 +2323,6 @@ button {
   display: grid;
   gap: 0.5rem;
   text-align: left;
-  cursor: pointer;
   transition:
     transform 140ms ease,
     border-color 140ms ease,
@@ -2423,7 +2449,6 @@ button {
   line-height: 1;
 }
 
-.mobile-phone-history-row:hover,
 .mobile-phone-tab:hover {
   transform: translateY(-1px);
 }

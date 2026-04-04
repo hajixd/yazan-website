@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type CandlestickData,
@@ -88,11 +89,19 @@ type NotificationItem = {
   live?: boolean;
 };
 
+type WatchlistFetchMeta = {
+  lastAttemptAt: number;
+  lastSuccessAt: number;
+  failureCount: number;
+  lastError: string | null;
+};
+
 type SparklineGeometry = {
   width: number;
   height: number;
   path: string;
   points: Array<{ x: number; y: number }>;
+  values: number[];
 };
 
 type ModelProfile = {
@@ -263,6 +272,7 @@ const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 3;
+const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
   accountLabel: "Roman Capital Primary",
@@ -683,6 +693,34 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
+const buildTradeBlueprintId = (
+  modelId: string,
+  symbol: string,
+  tradeIndex: number,
+  entryMs: number,
+  exitMs: number
+) => {
+  return `${modelId}-${symbol}-t${String(tradeIndex + 1).padStart(2, "0")}-${entryMs}-${exitMs}`;
+};
+
+const shouldRequestWatchlistHistory = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  referenceNowMs: number
+) => {
+  if (candles.length < MIN_MULTI_ASSET_TRADE_CANDLES) {
+    return true;
+  }
+
+  const latestTime = candles[candles.length - 1]?.time ?? 0;
+
+  if (latestTime <= 0) {
+    return true;
+  }
+
+  return referenceNowMs - latestTime > getTimeframeMs(timeframe) * 3;
+};
+
 const generateTradeBlueprintsFromCandles = (
   model: ModelProfile,
   symbol: string,
@@ -720,7 +758,7 @@ const generateTradeBlueprintsFromCandles = (
     }
 
     blueprints.push({
-      id: `${model.id}-t${String(i + 1).padStart(2, "0")}`,
+      id: buildTradeBlueprintId(model.id, symbol, i, candles[entryIndex].time, candles[exitIndex].time),
       modelId: model.id,
       symbol,
       side,
@@ -770,7 +808,8 @@ const buildSparklineGeometry = (
     width,
     height,
     path,
-    points
+    points,
+    values: finiteValues
   };
 };
 
@@ -803,7 +842,7 @@ const buildHistoryRowsFromCandles = (
     }
 
     const entryPrice = candles[entryIndex].close;
-    const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
+    const rand = createSeededRng(hashString(`mapped-${blueprint.id}-${blueprint.symbol}`));
     let atr = 0;
     let atrCount = 0;
 
@@ -1003,6 +1042,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [isStandaloneMobileWorkspace, setIsStandaloneMobileWorkspace] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("trade");
   const [mobileNowMs, setMobileNowMs] = useState(Date.now());
+  const [mobileTradeChartScrubIndex, setMobileTradeChartScrubIndex] = useState<number | null>(null);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [watchlistSeriesMap, setWatchlistSeriesMap] = useState<Record<string, Candle[]>>({});
@@ -1037,7 +1077,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
   const adminCodeInputRef = useRef<HTMLInputElement | null>(null);
   const watchlistSeriesMapRef = useRef<Record<string, Candle[]>>({});
+  const watchlistFetchMetaRef = useRef<Record<string, WatchlistFetchMeta>>({});
   const deliveredNotificationIdsRef = useRef<Set<string>>(new Set());
+  const mobileTradeChartRef = useRef<HTMLDivElement | null>(null);
+  const mobileTradeChartPointerIdRef = useRef<number | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -1083,6 +1126,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, []);
 
   useEffect(() => {
+    if (!isMobileWorkspace || showcaseMode || activeAccountRole) {
+      return;
+    }
+
+    setActiveAccountRole("User");
+  }, [activeAccountRole, isMobileWorkspace, showcaseMode]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setMobileNowMs(Date.now());
     }, 1000);
@@ -1116,6 +1167,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     setHoveredTime(null);
   }, [selectedKey]);
+
+  useEffect(() => {
+    setMobileTradeChartScrubIndex(null);
+  }, [mobileWorkspaceTab, selectedSymbol, selectedHistoryId]);
 
   useEffect(() => {
     currentSelectedKeyRef.current = selectedKey;
@@ -1242,10 +1297,85 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       refreshInFlight = true;
       const nextResults = new Map<string, Candle[]>();
+      const sortedAssets = [...futuresAssets].sort((left, right) => {
+        const leftKey = symbolTimeframeKey(left.symbol, selectedTimeframe);
+        const rightKey = symbolTimeframeKey(right.symbol, selectedTimeframe);
+        const leftExisting = watchlistSeriesMapRef.current[leftKey] ?? [];
+        const rightExisting = watchlistSeriesMapRef.current[rightKey] ?? [];
+        const leftNeedsHistory = shouldRequestWatchlistHistory(
+          leftExisting,
+          selectedTimeframe,
+          referenceNowMs
+        );
+        const rightNeedsHistory = shouldRequestWatchlistHistory(
+          rightExisting,
+          selectedTimeframe,
+          referenceNowMs
+        );
+
+        if (leftNeedsHistory !== rightNeedsHistory) {
+          return leftNeedsHistory ? -1 : 1;
+        }
+
+        const leftLatestTime = leftExisting[leftExisting.length - 1]?.time ?? 0;
+        const rightLatestTime = rightExisting[rightExisting.length - 1]?.time ?? 0;
+
+        if (leftLatestTime !== rightLatestTime) {
+          return leftLatestTime - rightLatestTime;
+        }
+
+        const leftMeta = watchlistFetchMetaRef.current[leftKey];
+        const rightMeta = watchlistFetchMetaRef.current[rightKey];
+
+        return (leftMeta?.lastSuccessAt ?? 0) - (rightMeta?.lastSuccessAt ?? 0);
+      });
+
+      const fetchWatchlistCandlesForAsset = async (
+        symbol: string,
+        requestCount: number,
+        signal: AbortSignal
+      ) => {
+        let lastError: unknown = null;
+
+        for (let attempt = 0; attempt < WATCHLIST_FETCH_RETRY_ATTEMPTS; attempt += 1) {
+          if (cancelled || signal.aborted) {
+            throw lastError ?? new Error("Watchlist candle request was aborted.");
+          }
+
+          try {
+            const payload = await fetchFuturesCandles(symbol, selectedTimeframe, requestCount, {
+              signal
+            });
+            const candles = Array.isArray(payload.candles) ? payload.candles : [];
+
+            if (candles.length === 0) {
+              throw new Error(`No candles returned for ${symbol}.`);
+            }
+
+            return candles;
+          } catch (error) {
+            if (cancelled || signal.aborted) {
+              throw error;
+            }
+
+            lastError = error;
+
+            if (attempt >= WATCHLIST_FETCH_RETRY_ATTEMPTS - 1) {
+              break;
+            }
+
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, 350 * (attempt + 1));
+            });
+          }
+        }
+
+        throw (lastError instanceof Error ? lastError : new Error("Failed to load watchlist candles."));
+      };
 
       try {
-        for (let start = 0; start < futuresAssets.length; start += WATCHLIST_FETCH_BATCH_SIZE) {
-          const batch = futuresAssets.slice(start, start + WATCHLIST_FETCH_BATCH_SIZE);
+        for (let start = 0; start < sortedAssets.length; start += WATCHLIST_FETCH_BATCH_SIZE) {
+          const batch = sortedAssets.slice(start, start + WATCHLIST_FETCH_BATCH_SIZE);
           const batchControllers = batch.map(() => new AbortController());
 
           batchControllers.forEach((controller) => activeControllers.add(controller));
@@ -1255,15 +1385,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               batch.map(async (asset, index) => {
                 const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
                 const existing = watchlistSeriesMapRef.current[key] ?? [];
-                const requestCount =
-                  existing.length < MIN_MULTI_ASSET_TRADE_CANDLES ? historyCount : snapshotCount;
-                const payload = await fetchFuturesCandles(asset.symbol, selectedTimeframe, requestCount, {
-                  signal: batchControllers[index].signal
-                });
+                const requestCount = shouldRequestWatchlistHistory(
+                  existing,
+                  selectedTimeframe,
+                  referenceNowMs
+                )
+                  ? historyCount
+                  : snapshotCount;
+                const currentMeta = watchlistFetchMetaRef.current[key];
+
+                watchlistFetchMetaRef.current[key] = {
+                  lastAttemptAt: Date.now(),
+                  lastSuccessAt: currentMeta?.lastSuccessAt ?? 0,
+                  failureCount: currentMeta?.failureCount ?? 0,
+                  lastError: null
+                };
+                const candles = await fetchWatchlistCandlesForAsset(
+                  asset.symbol,
+                  requestCount,
+                  batchControllers[index].signal
+                );
 
                 return {
                   symbol: asset.symbol,
-                  candles: Array.isArray(payload.candles) ? payload.candles : []
+                  candles
                 };
               })
             );
@@ -1272,10 +1417,42 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               return;
             }
 
-            results.forEach((result) => {
+            results.forEach((result, index) => {
               if (result.status === "fulfilled" && result.value.candles.length > 0) {
+                const fulfilledKey = symbolTimeframeKey(result.value.symbol, selectedTimeframe);
+
                 nextResults.set(result.value.symbol, result.value.candles);
+                watchlistFetchMetaRef.current[fulfilledKey] = {
+                  lastAttemptAt:
+                    watchlistFetchMetaRef.current[fulfilledKey]?.lastAttemptAt ?? Date.now(),
+                  lastSuccessAt: Date.now(),
+                  failureCount: 0,
+                  lastError: null
+                };
+                return;
               }
+
+              const failedAsset = batch[index];
+
+              if (!failedAsset) {
+                return;
+              }
+
+              const failedKey = symbolTimeframeKey(failedAsset.symbol, selectedTimeframe);
+              const failedMeta = watchlistFetchMetaRef.current[failedKey];
+              const errorMessage =
+                result.status === "rejected"
+                  ? result.reason instanceof Error
+                    ? result.reason.message
+                    : "Failed to load watchlist candles."
+                  : "Failed to load watchlist candles.";
+
+              watchlistFetchMetaRef.current[failedKey] = {
+                lastAttemptAt: failedMeta?.lastAttemptAt ?? Date.now(),
+                lastSuccessAt: failedMeta?.lastSuccessAt ?? 0,
+                failureCount: (failedMeta?.failureCount ?? 0) + 1,
+                lastError: errorMessage
+              };
             });
           } finally {
             batchControllers.forEach((controller) => activeControllers.delete(controller));
@@ -1399,6 +1576,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return next;
   }, [selectedTimeframe, seriesMap, watchlistSeriesMap]);
 
+  const historyCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
+    const next: Record<string, Candle[]> = {};
+
+    for (const asset of futuresAssets) {
+      const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+      const backgroundCandles = watchlistSeriesMap[key] ?? [];
+      const chartCandles = seriesMap[key] ?? [];
+
+      next[asset.symbol] =
+        backgroundCandles.length >= MIN_MULTI_ASSET_TRADE_CANDLES
+          ? backgroundCandles
+          : mergeCandles(backgroundCandles, chartCandles);
+    }
+
+    return next;
+  }, [selectedTimeframe, seriesMap, watchlistSeriesMap]);
+
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
@@ -1453,7 +1647,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const rows: HistoryItem[] = [];
 
     for (const asset of futuresAssets) {
-      const list = marketCandlesBySymbol[asset.symbol] ?? [];
+      const list = historyCandlesBySymbol[asset.symbol] ?? [];
 
       if (list.length < 16) {
         continue;
@@ -1503,7 +1697,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [chartSimulationEnabled, marketCandlesBySymbol, selectedModel, showcaseMode]);
+  }, [chartSimulationEnabled, historyCandlesBySymbol, selectedModel, showcaseMode]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -1550,7 +1744,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedHistoryId === activeTrade.id &&
     activeTrade.symbol === selectedSymbol;
 
-  const mobileDisplayTrade = selectedHistoryTrade ?? activeTrade;
+  const mobileDisplayTrade = useMemo(() => {
+    if (!chartSimulationEnabled) {
+      return null;
+    }
+
+    return historyRows[0] ?? null;
+  }, [chartSimulationEnabled, historyRows]);
   const mobileDisplayTradeDuration = useMemo(() => {
     if (!mobileDisplayTrade) {
       return null;
@@ -1578,7 +1778,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return null;
     }
 
-    const candles = marketCandlesBySymbol[mobileDisplayTrade.symbol] ?? [];
+    const candles = historyCandlesBySymbol[mobileDisplayTrade.symbol] ?? [];
 
     if (candles.length === 0) {
       return null;
@@ -1592,7 +1792,91 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const values = (slice.length >= 2 ? slice : candles.slice(-24)).map((candle) => candle.close);
 
     return buildSparklineGeometry(values);
-  }, [marketCandlesBySymbol, mobileDisplayTrade]);
+  }, [historyCandlesBySymbol, mobileDisplayTrade]);
+  const mobileTradeChartDisplayIndex =
+    mobileTradeSparkline && mobileTradeChartScrubIndex !== null
+      ? clamp(mobileTradeChartScrubIndex, 0, mobileTradeSparkline.points.length - 1)
+      : mobileTradeSparkline
+        ? mobileTradeSparkline.points.length - 1
+        : null;
+  const mobileTradeChartDisplayPoint =
+    mobileTradeSparkline && mobileTradeChartDisplayIndex !== null
+      ? mobileTradeSparkline.points[mobileTradeChartDisplayIndex] ?? null
+      : null;
+
+  const updateMobileTradeChartScrub = (clientX: number) => {
+    const chart = mobileTradeChartRef.current;
+
+    if (!chart || !mobileTradeSparkline || mobileTradeSparkline.points.length === 0) {
+      return;
+    }
+
+    const bounds = chart.getBoundingClientRect();
+
+    if (bounds.width <= 0) {
+      return;
+    }
+
+    const chartX = clamp(
+      ((clientX - bounds.left) / bounds.width) * mobileTradeSparkline.width,
+      0,
+      mobileTradeSparkline.width
+    );
+    let nextIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    mobileTradeSparkline.points.forEach((point, index) => {
+      const distance = Math.abs(point.x - chartX);
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nextIndex = index;
+      }
+    });
+
+    setMobileTradeChartScrubIndex(nextIndex);
+  };
+
+  const handleMobileTradeChartPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    mobileTradeChartPointerIdRef.current = event.pointerId;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Ignore pointer capture failures on unsupported pointer types.
+    }
+    updateMobileTradeChartScrub(event.clientX);
+  };
+
+  const handleMobileTradeChartPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      !mobileTradeSparkline ||
+      (event.pointerType !== "mouse" && mobileTradeChartPointerIdRef.current !== event.pointerId)
+    ) {
+      return;
+    }
+
+    if (event.pointerType !== "mouse") {
+      event.preventDefault();
+    }
+
+    updateMobileTradeChartScrub(event.clientX);
+  };
+
+  const handleMobileTradeChartPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      mobileTradeChartPointerIdRef.current !== null &&
+      mobileTradeChartPointerIdRef.current === event.pointerId
+    ) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Ignore release failures when capture was never established.
+      }
+    }
+
+    mobileTradeChartPointerIdRef.current = null;
+    setMobileTradeChartScrubIndex(null);
+  };
 
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
@@ -2833,7 +3117,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       : marketStatus === "error"
         ? "Databento unavailable"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
-  const currentAccountLabel = activeAccountRole ?? "Guest";
+  const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
   const yazanAccountSummary = yazanAccount
     ? [yazanAccount.accountLabel, yazanAccount.accountNumber].filter(Boolean).join(" #")
@@ -3029,7 +3313,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }
 
-  if (!showcaseMode && !activeAccountRole) {
+  if (!showcaseMode && !activeAccountRole && !isMobileWorkspace) {
     return (
       <main className="terminal account-screen">
         <section className="account-screen-shell">
@@ -3164,7 +3448,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <span className="mobile-phone-card-kicker">
                           {mobileDisplayTrade.symbol}
                         </span>
-                        <h2>{selectedHistoryTrade ? "Selected Trade" : "Latest Trade"}</h2>
+                        <h2>Latest Trade</h2>
                       </div>
                       <span
                         className={`mobile-phone-side-pill ${
@@ -3193,19 +3477,31 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"
                           }`}
                         >
+                          <span className="mobile-phone-active-chart-arrow" aria-hidden="true">
+                            {mobileDisplayTrade.pnlUsd >= 0 ? "^" : "v"}
+                          </span>
                           <strong>{formatSignedUsd(mobileDisplayTrade.pnlUsd)}</strong>
                           <span>
                             {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
                             {mobileDisplayTrade.pnlPct.toFixed(2)}%
                           </span>
-                          <em>{mobileDisplayTrade.symbol}</em>
                         </div>
                         <div
+                          ref={mobileTradeChartRef}
                           className={`mobile-phone-active-chart ${
                             mobileDisplayTrade.pnlUsd >= 0
                               ? "mobile-phone-active-chart-up"
                               : "mobile-phone-active-chart-down"
                           }`}
+                          onPointerDown={handleMobileTradeChartPointerDown}
+                          onPointerMove={handleMobileTradeChartPointerMove}
+                          onPointerUp={handleMobileTradeChartPointerEnd}
+                          onPointerCancel={handleMobileTradeChartPointerEnd}
+                          onPointerLeave={(event) => {
+                            if (event.pointerType === "mouse") {
+                              setMobileTradeChartScrubIndex(null);
+                            }
+                          }}
                         >
                           <svg
                             viewBox={`0 0 ${mobileTradeSparkline.width} ${mobileTradeSparkline.height}`}
@@ -3223,6 +3519,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               d={mobileTradeSparkline.path}
                               className="mobile-phone-active-chart-path"
                             />
+                            {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
+                              <line
+                                x1={mobileTradeChartDisplayPoint.x}
+                                y1="0"
+                                x2={mobileTradeChartDisplayPoint.x}
+                                y2={mobileTradeSparkline.height}
+                                className="mobile-phone-active-chart-scrubline"
+                              />
+                            ) : null}
                           </svg>
                           {mobileTradeSparkline.points.length > 0 ? (
                             <span
@@ -3230,6 +3535,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               style={{
                                 left: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.x / mobileTradeSparkline.width) * 100}%`,
                                 top: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.y / mobileTradeSparkline.height) * 100}%`
+                              }}
+                            />
+                          ) : null}
+                          {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
+                            <span
+                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-point"
+                              style={{
+                                left: `${(mobileTradeChartDisplayPoint.x / mobileTradeSparkline.width) * 100}%`,
+                                top: `${(mobileTradeChartDisplayPoint.y / mobileTradeSparkline.height) * 100}%`
                               }}
                             />
                           ) : null}
@@ -3306,18 +3620,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       const railTone = getMobileHistoryRailTone(trade);
 
                       return (
-                        <button
-                          key={trade.id}
-                          type="button"
-                          className="mobile-phone-history-row"
-                          onClick={() => {
-                            setSelectedHistoryId(trade.id);
-                            setSelectedSymbol(trade.symbol);
-                            setShowAllTradesOnChart(false);
-                            focusTradeIdRef.current = trade.id;
-                            setMobileWorkspaceTab("trade");
-                          }}
-                        >
+                        <article key={trade.id} className="mobile-phone-history-row">
                           <div className="mobile-phone-history-main">
                             <div className="mobile-phone-history-copy">
                               <strong>{trade.symbol}</strong>
@@ -3344,7 +3647,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             className={`mobile-phone-history-rail ${railTone}`}
                             aria-hidden="true"
                           />
-                        </button>
+                        </article>
                       );
                     })}
                   </div>
@@ -3590,7 +3893,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
             <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
             {selectedCandles.length === 0 ? (
-              <div className="chart-empty-state" role="status" aria-live="polite">
+              <div
+                className={`chart-empty-state${marketStatus === "loading" ? " loading" : ""}`}
+                role="status"
+                aria-live="polite"
+              >
                 <strong>
                   {marketStatus === "loading" ? "Loading candles" : "Futures candles unavailable"}
                 </strong>
