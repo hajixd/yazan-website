@@ -277,6 +277,16 @@ button {
   text-align: center;
 }
 
+.account-gate-panel {
+  width: min(460px, 100%);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  justify-items: center;
+}
+
 .account-shell-kicker {
   color: rgba(255, 255, 255, 0.52);
   font-size: 0.68rem;
@@ -311,19 +321,23 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
+  width: min(460px, 100%);
 }
 
 .account-choice-card {
-  min-height: 200px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
-  padding: 1.2rem;
+  min-height: 192px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0;
   display: grid;
-  align-content: space-between;
-  gap: 0.75rem;
-  text-align: left;
+  place-items: center;
+  text-align: center;
   cursor: pointer;
+  color: #edf3fb;
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 600;
+  letter-spacing: -0.05em;
   transition:
     transform 0.18s ease,
     border-color 0.18s ease,
@@ -335,8 +349,75 @@ button {
 .account-choice-card.active {
   transform: translateY(-2px);
   border-color: rgba(255, 255, 255, 0.28);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
+  background: rgba(255, 255, 255, 0.045);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+}
+
+.account-choice-card:focus-visible {
+  outline: none;
+  border-color: rgba(212, 175, 55, 0.46);
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.24);
+}
+
+.account-pin-form {
+  position: relative;
+  min-height: 220px;
+  width: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 1rem;
+}
+
+.account-pin-hidden {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.account-pin-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 64px));
+  gap: 0.7rem;
+  justify-content: center;
+}
+
+.account-pin-box {
+  width: 64px;
+  height: 76px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #f3f6fb;
+  font-size: 1.9rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  line-height: 1;
+}
+
+.account-pin-box.filled {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.account-pin-box.active {
+  border-color: rgba(212, 175, 55, 0.46);
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.22);
+}
+
+.account-pin-error {
+  min-height: 1rem;
+  color: rgba(240, 182, 191, 0.94);
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
 }
 
 .account-choice-kicker {
@@ -1139,18 +1220,14 @@ button {
 }
 
 .watchlist-head.with-action {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.6rem;
+  display: grid;
+  gap: 0.55rem;
 }
 
 .panel-head-actions {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 0.38rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  width: 100%;
 }
 
 .watchlist-head h2 {
@@ -1176,6 +1253,11 @@ button {
   text-transform: uppercase;
   cursor: pointer;
   line-height: 1.2;
+}
+
+.panel-head-actions .panel-action-btn,
+.watchlist-head.with-action > .panel-action-btn {
+  width: 100%;
 }
 
 .panel-action-btn:hover {
@@ -1794,12 +1876,19 @@ button {
   }
 
   .account-choice-card {
-    min-height: 170px;
+    min-height: 148px;
   }
 
-  .account-form,
-  .account-form-error {
-    width: 100%;
+  .account-pin-grid {
+    grid-template-columns: repeat(5, minmax(0, 52px));
+    gap: 0.45rem;
+  }
+
+  .account-pin-box {
+    width: 52px;
+    height: 64px;
+    border-radius: 14px;
+    font-size: 1.55rem;
   }
 
   .active-metrics-grid {

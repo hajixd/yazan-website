@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Pro Futures Terminal",
-  description: "Clean, professional dark trading UI built with Next.js for Vercel deployment."
+  title: "Roman Capital",
+  description: "Roman Capital futures terminal."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

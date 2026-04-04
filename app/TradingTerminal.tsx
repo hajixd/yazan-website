@@ -72,23 +72,6 @@ type NotificationItem = {
   live?: boolean;
 };
 
-type ActiveTrade = {
-  symbol: string;
-  side: TradeSide;
-  units: number;
-  entryPrice: number;
-  markPrice: number;
-  targetPrice: number;
-  stopPrice: number;
-  openedAt: UTCTimestamp;
-  openedAtLabel: string;
-  elapsed: string;
-  pnlPct: number;
-  pnlValue: number;
-  progressPct: number;
-  rr: number;
-};
-
 type ModelProfile = {
   id: string;
   name: string;
@@ -113,21 +96,6 @@ type TradeBlueprint = {
   riskPct: number;
   rr: number;
   units: number;
-};
-
-type OverlayTrade = {
-  id: string;
-  symbol: string;
-  side: TradeSide;
-  status: "closed" | "pending";
-  entryTime: UTCTimestamp;
-  exitTime: UTCTimestamp;
-  entryPrice: number;
-  targetPrice: number;
-  stopPrice: number;
-  outcomePrice: number;
-  result: TradeResult;
-  pnlUsd: number;
 };
 
 type MultiTradeOverlaySeries = {
@@ -803,9 +771,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [chartSimulationEnabled, setChartSimulationEnabled] = useState(true);
-  const [activePanelSimulationEnabled, setActivePanelSimulationEnabled] = useState(true);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
-  const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
@@ -840,6 +806,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
+  const adminCodeInputRef = useRef<HTMLInputElement | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -1161,125 +1128,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }, [chartSimulationEnabled, selectedCandles, selectedModel, selectedSymbol, showcaseMode]);
 
-  const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (!activePanelSimulationEnabled || selectedCandles.length < 70) {
-      return null;
-    }
-
-    const latestIndex = selectedCandles.length - 1;
-    const latest = selectedCandles[latestIndex];
-    const rand = createSeededRng(hashString(`active-${selectedModel.id}-${selectedSymbol}`));
-    const lookbackBars = 6 + Math.floor(rand() * Math.max(18, Math.min(120, latestIndex - 24)));
-    let entryIndex = Math.max(20, latestIndex - lookbackBars);
-
-    if (entryIndex < 22 || entryIndex >= latestIndex - 4) {
-      const fallbackBars = 28 + Math.floor(rand() * Math.max(8, Math.min(220, latestIndex - 30)));
-      entryIndex = Math.max(20, latestIndex - fallbackBars);
-    }
-
-    const entryPrice = selectedCandles[entryIndex].close;
-    const side: TradeSide = rand() <= selectedModel.longBias ? "Long" : "Short";
-    const rr = selectedModel.rrMin + rand() * (selectedModel.rrMax - selectedModel.rrMin);
-
-    let atr = 0;
-    let atrCount = 0;
-
-    for (let i = Math.max(1, entryIndex - 28); i <= entryIndex; i += 1) {
-      atr += selectedCandles[i].high - selectedCandles[i].low;
-      atrCount += 1;
-    }
-
-    atr /= Math.max(1, atrCount);
-
-    let riskPerUnit = Math.max(
-      entryPrice * (selectedModel.riskMin + rand() * (selectedModel.riskMax - selectedModel.riskMin)),
-      atr * (0.75 + rand() * 1.1)
-    );
-
-    let stopPrice = side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
-    let targetPrice =
-      side === "Long"
-        ? entryPrice + riskPerUnit * rr
-        : Math.max(0.000001, entryPrice - riskPerUnit * rr);
-
-    for (let attempt = 0; attempt < 7; attempt += 1) {
-      const path = evaluateTpSlPath(
-        selectedCandles,
-        side,
-        entryIndex,
-        targetPrice,
-        stopPrice,
-        latestIndex
-      );
-
-      if (!path.hit) {
-        break;
-      }
-
-      riskPerUnit *= 1.22;
-      stopPrice =
-        side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
-      targetPrice =
-        side === "Long"
-          ? entryPrice + riskPerUnit * rr
-          : Math.max(0.000001, entryPrice - riskPerUnit * rr);
-    }
-
-    const maxRiskUsd = 60 + rand() * 240;
-    const maxNotionalUsd = 1400 + rand() * 5200;
-    const units = Math.max(
-      0.001,
-      Math.min(
-        maxRiskUsd / Math.max(0.000001, riskPerUnit),
-        maxNotionalUsd / Math.max(0.000001, entryPrice)
-      )
-    );
-    const curatedMarkPrice =
-      side === "Long"
-        ? entryPrice + (targetPrice - entryPrice) * 0.86
-        : entryPrice - (entryPrice - targetPrice) * 0.86;
-    const markPrice = showcaseMode
-      ? clamp(
-          curatedMarkPrice,
-          Math.min(targetPrice, stopPrice) + 0.000001,
-          Math.max(targetPrice, stopPrice) - 0.000001
-        )
-      : latest.close;
-    const pnlPct =
-      side === "Long"
-        ? ((markPrice - entryPrice) / entryPrice) * 100
-        : ((entryPrice - markPrice) / entryPrice) * 100;
-    const pnlValue = side === "Long" ? (markPrice - entryPrice) * units : (entryPrice - markPrice) * units;
-    const progressRaw =
-      side === "Long"
-        ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
-        : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
-    const openedAt = toUtcTimestamp(selectedCandles[entryIndex].time);
-
-    return {
-      symbol: selectedSymbol,
-      side,
-      units,
-      entryPrice,
-      markPrice,
-      targetPrice,
-      stopPrice,
-      openedAt,
-      openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
-      elapsed: formatElapsed(Number(openedAt), toUtcTimestamp(selectedCandles[latestIndex].time)),
-      pnlPct,
-      pnlValue,
-      progressPct: clamp(progressRaw * 100, 0, 100),
-      rr
-    };
-  }, [
-    activePanelSimulationEnabled,
-    selectedCandles,
-    selectedModel,
-    selectedSymbol,
-    showcaseMode
-  ]);
-
   const historyRows = useMemo(() => {
     if (!chartSimulationEnabled) {
       return [];
@@ -1429,6 +1277,39 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return historyRows.filter((row) => row.symbol === selectedSymbol);
   }, [historyRows, selectedSymbol]);
 
+  const activeTrade = useMemo(() => {
+    if (!chartSimulationEnabled) {
+      return null;
+    }
+
+    return currentSymbolHistoryRows[0] ?? null;
+  }, [chartSimulationEnabled, currentSymbolHistoryRows]);
+
+  const activeTradeDuration = useMemo(() => {
+    if (!activeTrade) {
+      return null;
+    }
+
+    return formatElapsed(Number(activeTrade.entryTime), Number(activeTrade.exitTime));
+  }, [activeTrade]);
+
+  const activeTradeRiskReward = useMemo(() => {
+    if (!activeTrade) {
+      return null;
+    }
+
+    return (
+      Math.abs(activeTrade.targetPrice - activeTrade.entryPrice) /
+      Math.max(0.000001, Math.abs(activeTrade.entryPrice - activeTrade.stopPrice))
+    );
+  }, [activeTrade]);
+
+  const activeTradeShownOnChart =
+    !!activeTrade &&
+    !showAllTradesOnChart &&
+    selectedHistoryId === activeTrade.id &&
+    activeTrade.symbol === selectedSymbol;
+
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
 
@@ -1438,32 +1319,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return map;
   }, [selectedCandles]);
-
-  const activeChartTrade = useMemo<OverlayTrade | null>(() => {
-    if (!activeTrade || selectedCandles.length === 0) {
-      return null;
-    }
-
-    const latestTime = toUtcTimestamp(selectedCandles[selectedCandles.length - 1].time);
-
-    return {
-      id: "active-live",
-      symbol: activeTrade.symbol,
-      side: activeTrade.side,
-      status: "pending",
-      entryTime: activeTrade.openedAt,
-      exitTime:
-        latestTime > activeTrade.openedAt
-          ? latestTime
-          : ((activeTrade.openedAt + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp),
-      entryPrice: activeTrade.entryPrice,
-      targetPrice: activeTrade.targetPrice,
-      stopPrice: activeTrade.stopPrice,
-      outcomePrice: activeTrade.markPrice,
-      result: activeTrade.pnlValue >= 0 ? "Win" : "Loss",
-      pnlUsd: activeTrade.pnlValue
-    };
-  }, [activeTrade, selectedCandles, selectedTimeframe]);
 
   const actionRows = useMemo(() => {
     const rows: ActionItem[] = [];
@@ -1573,44 +1428,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     const items: NotificationItem[] = [];
-    const now = Date.now();
 
     if (activeTrade) {
-      const liveTitle =
-        activeTrade.progressPct >= 78
-          ? `${activeTrade.symbol} near TP`
-          : activeTrade.progressPct <= 22
-            ? `${activeTrade.symbol} near SL`
-            : `${activeTrade.symbol} mark update`;
-      const liveTone: NotificationTone =
-        activeTrade.progressPct >= 78
-          ? "up"
-          : activeTrade.progressPct <= 22
-            ? "down"
-            : "neutral";
+      const tradeTone: NotificationTone = activeTrade.result === "Win" ? "up" : "down";
 
       items.push({
-        id: `live-progress-${activeTrade.symbol}`,
-        title: liveTitle,
-        details: `Progress ${activeTrade.progressPct.toFixed(1)}% | TP ${formatPrice(
-          activeTrade.targetPrice
-        )} | SL ${formatPrice(activeTrade.stopPrice)}`,
-        time: formatClock(now),
-        timestamp: now,
-        tone: liveTone,
-        live: true
+        id: `latest-trade-${activeTrade.id}`,
+        title: `${activeTrade.symbol} latest trade`,
+        details: `${activeTrade.side === "Long" ? "Buy" : "Sell"} ${formatSignedUsd(
+          activeTrade.pnlUsd
+        )} (${activeTrade.pnlPct >= 0 ? "+" : ""}${activeTrade.pnlPct.toFixed(2)}%)`,
+        time: activeTrade.exitAt,
+        timestamp: Number(activeTrade.exitTime) * 1000,
+        tone: tradeTone
       });
 
       items.push({
-        id: `live-pnl-${activeTrade.symbol}`,
-        title: `${activeTrade.symbol} unrealized`,
-        details: `${activeTrade.pnlValue >= 0 ? "+" : "-"}$${formatUsd(
-          Math.abs(activeTrade.pnlValue)
-        )} (${activeTrade.pnlPct >= 0 ? "+" : ""}${activeTrade.pnlPct.toFixed(2)}%)`,
-        time: formatClock(now - 1000),
-        timestamp: now - 1000,
-        tone: activeTrade.pnlValue >= 0 ? "up" : "down",
-        live: true
+        id: `latest-trade-levels-${activeTrade.id}`,
+        title: `${activeTrade.symbol} ${activeTrade.result}`,
+        details: `Entry ${formatPrice(activeTrade.entryPrice)} | Exit ${formatPrice(
+          activeTrade.outcomePrice
+        )} | TP ${formatPrice(activeTrade.targetPrice)} | SL ${formatPrice(activeTrade.stopPrice)}`,
+        time: activeTrade.exitAt,
+        timestamp: Number(activeTrade.exitTime) * 1000 - 1,
+        tone: tradeTone
       });
     }
 
@@ -1659,14 +1500,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     setSelectedHistoryId(null);
     setShowAllTradesOnChart(false);
-    setShowActiveTradeOnChart(false);
     focusTradeIdRef.current = null;
   }, [selectedModelId]);
 
   useEffect(() => {
     setSelectedHistoryId(null);
     setShowAllTradesOnChart(false);
-    setShowActiveTradeOnChart(false);
     focusTradeIdRef.current = null;
   }, [selectedTimeframe]);
 
@@ -2577,22 +2416,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    if (showActiveTradeOnChart && activeChartTrade && activeChartTrade.symbol === selectedSymbol) {
-      renderSingleTrade({
-        side: activeChartTrade.side,
-        status: activeChartTrade.status,
-        result: activeChartTrade.result,
-        entryTime: activeChartTrade.entryTime,
-        exitTime: activeChartTrade.exitTime,
-        entryPrice: activeChartTrade.entryPrice,
-        targetPrice: activeChartTrade.targetPrice,
-        stopPrice: activeChartTrade.stopPrice,
-        outcomePrice: activeChartTrade.outcomePrice,
-        pnlUsd: activeChartTrade.pnlUsd
-      });
-      return;
-    }
-
     if (!selectedHistoryTrade || selectedHistoryTrade.symbol !== selectedSymbol) {
       clearTradeOverlays();
       return;
@@ -2611,12 +2434,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       pnlUsd: selectedHistoryTrade.pnlUsd
     });
   }, [
-    activeChartTrade,
     currentSymbolHistoryRows,
     selectedHistoryTrade,
     selectedSymbol,
     selectedTimeframe,
-    showActiveTradeOnChart,
     showAllTradesOnChart
   ]);
 
@@ -2805,14 +2626,36 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
   };
 
-  const handleAdminUnlock = () => {
-    if (adminCodeInput === ADMIN_ACCESS_CODE) {
+  const handleAdminUnlock = (code = adminCodeInput) => {
+    if (code.length < 5) {
+      return;
+    }
+
+    if (code === ADMIN_ACCESS_CODE) {
       grantAccountAccess("Admin");
       return;
     }
 
-    setAccountAccessError("Incorrect admin code. Enter the 5-digit code to continue.");
+    setAdminCodeInput("");
+    setAccountAccessError("Incorrect code");
+    window.requestAnimationFrame(() => {
+      adminCodeInputRef.current?.focus();
+    });
   };
+
+  useEffect(() => {
+    if (accountEntryMode !== "Admin" || activeAccountRole) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      adminCodeInputRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [accountEntryMode, activeAccountRole]);
 
   if (!accountGateReady) {
     return (
@@ -2834,78 +2677,99 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return (
       <main className="terminal account-screen">
         <section className="account-screen-shell">
-          <div className="account-shell-panel">
-            <span className="account-shell-kicker">Roman Capital</span>
-            <div className="account-shell-header">
-              <h1>Select an account</h1>
-              <p>Choose User for instant access, or unlock Admin with the 5-digit code.</p>
-            </div>
-
-            <div className="account-choice-grid">
-              <button
-                type="button"
-                className={`account-choice-card ${
-                  accountEntryMode === "Admin" ? "active" : ""
-                }`}
-                onClick={() => {
-                  setAccountEntryMode("Admin");
-                  setAdminCodeInput("");
-                  setAccountAccessError("");
-                }}
-              >
-                <span className="account-choice-kicker">Protected</span>
-                <strong>Admin</strong>
-                <p>Requires the 5-digit access code.</p>
-              </button>
-
-              <button
-                type="button"
-                className="account-choice-card"
-                onClick={() => grantAccountAccess("User")}
-              >
-                <span className="account-choice-kicker">Instant Access</span>
-                <strong>User</strong>
-                <p>Enter directly into the trading terminal.</p>
-              </button>
-            </div>
-
+          <div className="account-shell-panel account-gate-panel">
             {accountEntryMode === "Admin" ? (
               <form
-                className="account-form"
+                className="account-pin-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   handleAdminUnlock();
                 }}
+                onClick={() => {
+                  adminCodeInputRef.current?.focus();
+                }}
               >
-                <label className="account-field">
-                  <span>Admin Code</span>
-                  <input
-                    className="account-input"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={5}
-                    autoFocus
-                    value={adminCodeInput}
-                    onChange={(event) => {
-                      setAdminCodeInput(event.target.value.replace(/\D/g, "").slice(0, 5));
+                <input
+                  ref={adminCodeInputRef}
+                  className="account-pin-hidden"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={5}
+                  autoFocus
+                  value={adminCodeInput}
+                  onChange={(event) => {
+                    const nextValue = event.target.value.replace(/\D/g, "").slice(0, 5);
+                    setAdminCodeInput(nextValue);
+                    setAccountAccessError("");
+
+                    if (nextValue.length === 5) {
+                      handleAdminUnlock(nextValue);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setAccountEntryMode(null);
+                      setAdminCodeInput("");
                       setAccountAccessError("");
-                    }}
-                    placeholder="Enter 5 digits"
-                  />
-                </label>
-                <button type="submit" className="account-submit-btn">
-                  Unlock Admin
-                </button>
+                    }
+
+                    if (event.key === "Backspace" && adminCodeInput.length === 0) {
+                      setAccountEntryMode(null);
+                      setAccountAccessError("");
+                    }
+                  }}
+                  aria-label="Admin code"
+                />
+
+                <div className="account-pin-grid" aria-hidden>
+                  {Array.from({ length: 5 }, (_, index) => {
+                    const digit = adminCodeInput[index] ?? "";
+                    const isActiveSlot = adminCodeInput.length === index && adminCodeInput.length < 5;
+
+                    return (
+                      <button
+                        key={`pin-slot-${index + 1}`}
+                        type="button"
+                        className={`account-pin-box${digit ? " filled" : ""}${isActiveSlot ? " active" : ""}`}
+                        onClick={() => {
+                          adminCodeInputRef.current?.focus();
+                        }}
+                        tabIndex={-1}
+                        aria-label={`Digit ${index + 1}`}
+                      >
+                        {digit}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {accountAccessError ? (
+                  <div className="account-pin-error">{accountAccessError}</div>
+                ) : null}
               </form>
             ) : (
-              <div className="account-inline-note">
-                Admin stays locked until the correct 5-digit code is entered.
+              <div className="account-choice-grid">
+                <button
+                  type="button"
+                  className="account-choice-card"
+                  onClick={() => {
+                    setAccountEntryMode("Admin");
+                    setAdminCodeInput("");
+                    setAccountAccessError("");
+                  }}
+                >
+                  Admin
+                </button>
+
+                <button
+                  type="button"
+                  className="account-choice-card"
+                  onClick={() => grantAccountAccess("User")}
+                >
+                  User
+                </button>
               </div>
             )}
-
-            {accountAccessError ? (
-              <div className="account-form-error">{accountAccessError}</div>
-            ) : null}
           </div>
         </section>
       </main>
@@ -3163,17 +3027,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>Active Trade</h2>
-                      <p>{selectedAsset.symbol} replayed on live futures candles</p>
                     </div>
                     <div className="panel-head-actions">
                       <button
                         type="button"
                         className={`panel-action-btn panel-mode-btn ${
-                          activePanelSimulationEnabled ? "on" : "off"
+                          chartSimulationEnabled ? "on" : "off"
                         }`}
-                        onClick={() => setActivePanelSimulationEnabled((current) => !current)}
+                        onClick={() => setChartSimulationEnabled((current) => !current)}
                       >
-                        {activePanelSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
                       </button>
                       <button
                         type="button"
@@ -3184,14 +3047,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             return;
                           }
 
-                          setSelectedSymbol(activeTrade.symbol);
                           setShowAllTradesOnChart(false);
-                          setShowActiveTradeOnChart((current) => !current);
-                          setSelectedHistoryId(null);
-                          focusTradeIdRef.current = null;
+
+                          if (activeTradeShownOnChart) {
+                            setSelectedHistoryId(null);
+                            focusTradeIdRef.current = null;
+                            return;
+                          }
+
+                          setSelectedSymbol(activeTrade.symbol);
+                          setSelectedHistoryId(activeTrade.id);
+                          focusTradeIdRef.current = activeTrade.id;
                         }}
                       >
-                        {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
+                        {activeTradeShownOnChart ? "Hide On Chart" : "Show On Chart"}
                       </button>
                     </div>
                   </div>
@@ -3209,13 +3078,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           </span>
                           <h3>{activeTrade.symbol}</h3>
                         </div>
-                        <span className="active-live-tag">Live</span>
+                        <span className="active-live-tag">Latest</span>
                       </div>
 
                       <div className="active-pnl">
-                        <span>Unrealized PnL</span>
-                        <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
-                          {activeTrade.pnlValue >= 0 ? "+" : "-"}${formatUsd(Math.abs(activeTrade.pnlValue))}
+                        <span>Trade PnL</span>
+                        <strong className={activeTrade.pnlUsd >= 0 ? "up" : "down"}>
+                          {formatSignedUsd(activeTrade.pnlUsd)}
                         </strong>
                         <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
                           {activeTrade.pnlPct >= 0 ? "+" : ""}
@@ -3229,8 +3098,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           <strong>{formatPrice(activeTrade.entryPrice)}</strong>
                         </div>
                         <div className="active-metric">
-                          <span>Mark</span>
-                          <strong>{formatPrice(activeTrade.markPrice)}</strong>
+                          <span>Exit</span>
+                          <strong>{formatPrice(activeTrade.outcomePrice)}</strong>
                         </div>
                         <div className="active-metric">
                           <span>TP</span>
@@ -3246,37 +3115,34 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         </div>
                         <div className="active-metric">
                           <span>R:R</span>
-                          <strong>1:{activeTrade.rr.toFixed(2)}</strong>
+                          <strong>{activeTradeRiskReward ? `1:${activeTradeRiskReward.toFixed(2)}` : "--"}</strong>
                         </div>
                         <div className="active-metric">
                           <span>Opened</span>
-                          <strong>{activeTrade.openedAtLabel}</strong>
+                          <strong>{activeTrade.entryAt}</strong>
+                        </div>
+                        <div className="active-metric">
+                          <span>Closed</span>
+                          <strong>{activeTrade.exitAt}</strong>
+                        </div>
+                        <div className="active-metric">
+                          <span>Result</span>
+                          <strong className={activeTrade.result === "Win" ? "up" : "down"}>
+                            {activeTrade.result}
+                          </strong>
                         </div>
                         <div className="active-metric">
                           <span>Duration</span>
-                          <strong>{activeTrade.elapsed}</strong>
-                        </div>
-                      </div>
-
-                      <div className="active-progress">
-                        <div className="active-progress-head">
-                          <span>Progress To TP</span>
-                          <span>{activeTrade.progressPct.toFixed(1)}%</span>
-                        </div>
-                        <div className="active-progress-track">
-                          <div
-                            className="active-progress-fill"
-                            style={{ width: `${activeTrade.progressPct}%` }}
-                          />
+                          <strong>{activeTradeDuration ?? "--"}</strong>
                         </div>
                       </div>
                     </div>
                   ) : (
                     <div className="ai-placeholder">
                       <p>
-                        {activePanelSimulationEnabled
-                          ? "No active replay trade is open on this chart yet."
-                          : "Active trade simulation is turned off."}
+                        {chartSimulationEnabled
+                          ? "No replay trades are available for the current chart yet."
+                          : "Trade simulation is turned off."}
                       </p>
                     </div>
                   )}
@@ -3288,7 +3154,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head">
                     <div>
                       <h2>Assets</h2>
-                      <p>Databento continuous futures watchlist</p>
                     </div>
                   </div>
 
@@ -3309,7 +3174,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             setSelectedSymbol(row.symbol);
                             setSelectedHistoryId(null);
                             setShowAllTradesOnChart(false);
-                            setShowActiveTradeOnChart(false);
                             focusTradeIdRef.current = null;
                           }}
                         >
@@ -3414,7 +3278,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <div className="watchlist-head">
                         <div>
                           <h2>Models / People</h2>
-                          <p>Select one profile to drive history and actions</p>
                         </div>
                       </div>
                       <ul className="model-list">
@@ -3482,7 +3345,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>History</h2>
-                      <p>{selectedAsset.symbol} simulated fills from {selectedModel.name}</p>
                     </div>
                     <div className="panel-head-actions">
                       <button
@@ -3500,7 +3362,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         onClick={() => {
                           const next = !showAllTradesOnChart;
                           setShowAllTradesOnChart(next);
-                          setShowActiveTradeOnChart(false);
                           focusTradeIdRef.current = null;
 
                           if (next) {
@@ -3526,7 +3387,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               setSelectedHistoryId(item.id);
                               setSelectedSymbol(item.symbol);
                               setShowAllTradesOnChart(false);
-                              setShowActiveTradeOnChart(false);
                             }}
                           >
                             <span className="history-info">
@@ -3573,7 +3433,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head with-action">
                     <div>
                       <h2>Action</h2>
-                      <p>{selectedAsset.symbol} order timeline and risk actions</p>
                     </div>
                     <div className="panel-head-actions">
                       <button
@@ -3599,7 +3458,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               setSelectedHistoryId(action.tradeId);
                               setSelectedSymbol(action.symbol);
                               setShowAllTradesOnChart(false);
-                              setShowActiveTradeOnChart(false);
                             }}
                           >
                             <span className="history-info">
