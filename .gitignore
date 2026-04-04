@@ -17,12 +17,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.next-dev*.log
+.playwright-*.png
 
 # local render temp
 .render/
 
 # env files
 .env*
+!.env.example
 
 # typescript
 *.tsbuildinfo

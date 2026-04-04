@@ -1442,6 +1442,124 @@ button {
   color: #c9d6ef;
 }
 
+.sync-draft-tip {
+  margin: 0;
+  padding: 0.7rem 0.72rem 0.82rem;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+
+.sync-draft-tip strong {
+  color: var(--text);
+}
+
+.sync-draft-card {
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, rgba(10, 15, 23, 0.96), rgba(7, 10, 16, 0.98));
+  padding: 0.8rem 0.72rem 0.9rem;
+  display: grid;
+  gap: 0.72rem;
+}
+
+.sync-draft-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.sync-draft-head h3 {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.sync-draft-head p {
+  margin: 0.16rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.67rem;
+  line-height: 1.5;
+}
+
+.sync-draft-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(245, 195, 92, 0.3);
+  background: rgba(245, 195, 92, 0.08);
+  color: #f2d383;
+  border-radius: 999px;
+  padding: 0.15rem 0.42rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.sync-draft-form {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.sync-draft-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.62rem;
+}
+
+.sync-draft-span {
+  grid-column: 1 / -1;
+}
+
+.sync-draft-textarea {
+  width: 100%;
+  min-height: 96px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: #06080b;
+  color: #f4f7fb;
+  padding: 0.78rem 0.9rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.sync-draft-textarea:focus {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: #0b0e13;
+}
+
+.sync-draft-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.sync-draft-status {
+  margin: 0;
+  padding: 0.62rem 0.72rem;
+  border: 1px solid rgba(45, 108, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(45, 108, 255, 0.08);
+  color: #cfe0ff;
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+
+.sync-draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  flex-wrap: wrap;
+}
+
+.sync-draft-submit {
+  width: auto;
+  min-width: 170px;
+}
+
 .history-list {
   list-style: none;
   margin: 0;
@@ -1567,6 +1685,10 @@ button {
       minmax(0, 1.62fr)
       minmax(76px, 0.96fr)
       minmax(62px, 0.84fr);
+  }
+
+  .sync-draft-grid {
+    grid-template-columns: 1fr;
   }
 }
 

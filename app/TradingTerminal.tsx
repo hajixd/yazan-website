@@ -8,6 +8,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type LineStyle,
+  type LogicalRange,
   type MouseEventParams,
   type SeriesMarker,
   type Time,
@@ -16,7 +17,7 @@ import {
 import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
+type PanelTab = "active" | "assets" | "models" | "history" | "actions";
 type SurfaceTab = "chart";
 type AccountRole = "Admin" | "User";
 
@@ -157,6 +158,20 @@ type MarketFeedResponse = {
   error?: string;
 };
 
+type AccountSyncDraft = {
+  accountLabel: string;
+  broker: string;
+  platform: string;
+  accountNumber: string;
+  syncMode: string;
+  notes: string;
+};
+
+type CandleRequestOptions = {
+  signal?: AbortSignal;
+  beforeMs?: number;
+};
+
 const ACCOUNT_GATE_STORAGE_KEY = "yazan-active-account";
 const ADMIN_ACCESS_CODE = "12345";
 const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
@@ -229,39 +244,6 @@ const modelProfiles: ModelProfile[] = [
     rrMax: 3.1,
     longBias: 0.51,
     winRate: 0.55
-  },
-  {
-    id: "lyra",
-    name: "Lyra",
-    kind: "Model",
-    riskMin: 0.0012,
-    riskMax: 0.0032,
-    rrMin: 1.15,
-    rrMax: 2.0,
-    longBias: 0.49,
-    winRate: 0.53
-  },
-  {
-    id: "atlas",
-    name: "Atlas",
-    kind: "Model",
-    riskMin: 0.002,
-    riskMax: 0.0055,
-    rrMin: 1.25,
-    rrMax: 2.3,
-    longBias: 0.54,
-    winRate: 0.57
-  },
-  {
-    id: "orion",
-    name: "Orion",
-    kind: "Model",
-    riskMin: 0.0017,
-    riskMax: 0.0044,
-    rrMin: 1.3,
-    rrMax: 2.7,
-    longBias: 0.5,
-    winRate: 0.56
   }
 ];
 
@@ -270,8 +252,7 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "assets", label: "Assets" },
   { id: "models", label: "Models" },
   { id: "history", label: "History" },
-  { id: "actions", label: "Action" },
-  { id: "ai", label: "AI" }
+  { id: "actions", label: "Action" }
 ];
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
@@ -286,6 +267,17 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "4H": 320,
   "1D": 320,
   "1W": 208
+};
+
+const MAX_CHART_CANDLE_COUNT = 5000;
+const CHART_BACKFILL_TRIGGER_BUFFER = 35;
+const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
+  accountLabel: "Yazan Futures Primary",
+  broker: "TradeLocker",
+  platform: "Rithmic",
+  accountNumber: "YZ-884201",
+  syncMode: "Read-only mirror",
+  notes: "Mock sync flow only. Credentials, balances, and live orders are not connected."
 };
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
@@ -514,16 +506,21 @@ const fetchFuturesCandles = async (
   symbol: string,
   timeframe: Timeframe,
   count: number,
-  signal?: AbortSignal
+  options: CandleRequestOptions = {}
 ): Promise<MarketFeedResponse> => {
   const params = new URLSearchParams({
     symbol,
     timeframe,
     count: String(count)
   });
+
+  if (typeof options.beforeMs === "number" && Number.isFinite(options.beforeMs)) {
+    params.set("before", String(Math.floor(options.beforeMs)));
+  }
+
   const response = await fetch(`/api/futures/candles?${params.toString()}`, {
     cache: "no-store",
-    signal
+    signal: options.signal
   });
   const payload = (await response.json()) as MarketFeedResponse;
 
@@ -532,6 +529,43 @@ const fetchFuturesCandles = async (
   }
 
   return payload;
+};
+
+const mergeCandles = (olderCandles: Candle[], newerCandles: Candle[]): Candle[] => {
+  const merged: Candle[] = [];
+  let olderIndex = 0;
+  let newerIndex = 0;
+
+  while (olderIndex < olderCandles.length || newerIndex < newerCandles.length) {
+    const nextOlder = olderCandles[olderIndex];
+    const nextNewer = newerCandles[newerIndex];
+    let nextCandle: Candle | undefined;
+
+    if (nextOlder && (!nextNewer || nextOlder.time < nextNewer.time)) {
+      nextCandle = nextOlder;
+      olderIndex += 1;
+    } else if (nextNewer) {
+      nextCandle = nextNewer;
+      newerIndex += 1;
+
+      if (nextOlder && nextOlder.time === nextNewer.time) {
+        olderIndex += 1;
+      }
+    }
+
+    if (!nextCandle) {
+      continue;
+    }
+
+    if (merged[merged.length - 1]?.time === nextCandle.time) {
+      merged[merged.length - 1] = nextCandle;
+      continue;
+    }
+
+    merged.push(nextCandle);
+  }
+
+  return merged;
 };
 
 const generateFakeCandles = (
@@ -811,6 +845,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
+  const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
+  const [yazanSyncDraft, setYazanSyncDraft] = useState<AccountSyncDraft>(DEFAULT_YAZAN_SYNC_DRAFT);
+  const [yazanSyncStatus, setYazanSyncStatus] = useState<string | null>(null);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -825,6 +862,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
+  const currentSelectedKeyRef = useRef<string>("");
+  const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
+  const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
+  const pendingVisibleRangeShiftRef = useRef<Record<string, number>>({});
   const selectedSurfaceTab: SurfaceTab = "chart";
 
   useEffect(() => {
@@ -857,7 +898,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedKey]);
 
   useEffect(() => {
+    currentSelectedKeyRef.current = selectedKey;
+    chartBackfillInFlightRef.current[selectedKey] = false;
+    chartBackfillExhaustedRef.current[selectedKey] = false;
+    delete pendingVisibleRangeShiftRef.current[selectedKey];
+  }, [selectedKey]);
+
+  useEffect(() => {
     if (showcaseMode) {
+      chartBackfillInFlightRef.current[selectedKey] = false;
+      chartBackfillExhaustedRef.current[selectedKey] = false;
       setSeriesMap((prev) => ({
         ...prev,
         [selectedKey]: generateFakeCandles(
@@ -882,6 +932,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     const controller = new AbortController();
     let cancelled = false;
+    chartBackfillInFlightRef.current[selectedKey] = false;
+    chartBackfillExhaustedRef.current[selectedKey] = false;
+    delete pendingVisibleRangeShiftRef.current[selectedKey];
     setMarketStatus("loading");
     setMarketError(null);
 
@@ -889,7 +942,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       selectedSymbol,
       selectedTimeframe,
       candleHistoryCountByTimeframe[selectedTimeframe],
-      controller.signal
+      { signal: controller.signal }
     )
       .then((payload) => {
         if (cancelled || controller.signal.aborted) {
@@ -906,6 +959,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           ...prev,
           [selectedKey]: nextCandles
         }));
+        chartBackfillExhaustedRef.current[selectedKey] =
+          nextCandles.length >= MAX_CHART_CANDLE_COUNT;
         setMarketFeedMeta(payload.meta ?? null);
         setMarketStatus("ready");
       })
@@ -975,7 +1030,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           asset.symbol,
           selectedTimeframe,
           watchlistSnapshotCountByTimeframe[selectedTimeframe],
-          controller.signal
+          { signal: controller.signal }
         );
 
         return {
@@ -1051,7 +1106,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           selectedSymbol,
           timeframe,
           watchlistSnapshotCountByTimeframe[timeframe],
-          controller.signal
+          { signal: controller.signal }
         );
 
         return {
@@ -1104,7 +1159,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     const key = selectedKey;
     const timeframeMs = getTimeframeMs(selectedTimeframe);
-    const maxBars = candleHistoryCountByTimeframe[selectedTimeframe];
+    const baseHistoryCount = candleHistoryCountByTimeframe[selectedTimeframe];
 
     const timer = window.setInterval(() => {
       setSeriesMap((prev) => {
@@ -1113,6 +1168,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         if (!currentSeries || currentSeries.length < 2) {
           return prev;
         }
+
+        const maxBars = Math.max(
+          baseHistoryCount,
+          Math.min(MAX_CHART_CANDLE_COUNT, currentSeries.length)
+        );
 
         const nextSeries = currentSeries.slice();
         let changed = false;
@@ -1168,7 +1228,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, selectedTimeframe]);
 
-  const selectedCandles = seriesMap[selectedKey] ?? fallbackCandles;
+  const loadedSelectedCandles = seriesMap[selectedKey];
+  const selectedCandles = loadedSelectedCandles ?? fallbackCandles;
 
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
@@ -2017,6 +2078,108 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   useEffect(() => {
     const chart = chartRef.current;
+    const currentSeries = loadedSelectedCandles;
+
+    if (!chart || showcaseMode || !currentSeries || currentSeries.length === 0) {
+      return;
+    }
+
+    const timeScale = chart.timeScale();
+
+    const requestEarlierCandles = (range: LogicalRange | null) => {
+      if (!range || range.from > CHART_BACKFILL_TRIGGER_BUFFER) {
+        return;
+      }
+
+      if (
+        chartBackfillInFlightRef.current[selectedKey] ||
+        chartBackfillExhaustedRef.current[selectedKey]
+      ) {
+        return;
+      }
+
+      const earliestCandle = currentSeries[0];
+      const remainingCapacity = MAX_CHART_CANDLE_COUNT - currentSeries.length;
+
+      if (!earliestCandle || remainingCapacity <= 0) {
+        chartBackfillExhaustedRef.current[selectedKey] = true;
+        return;
+      }
+
+      const requestCount = Math.min(
+        candleHistoryCountByTimeframe[selectedTimeframe],
+        remainingCapacity
+      );
+
+      if (requestCount <= 0) {
+        chartBackfillExhaustedRef.current[selectedKey] = true;
+        return;
+      }
+
+      chartBackfillInFlightRef.current[selectedKey] = true;
+
+      void fetchFuturesCandles(selectedSymbol, selectedTimeframe, requestCount, {
+        beforeMs: earliestCandle.time
+      })
+        .then((payload) => {
+          const olderCandles = Array.isArray(payload.candles) ? payload.candles : [];
+
+          if (olderCandles.length === 0) {
+            chartBackfillExhaustedRef.current[selectedKey] = true;
+            return;
+          }
+
+          setSeriesMap((prev) => {
+            const activeSeries = prev[selectedKey];
+
+            if (!activeSeries || activeSeries.length === 0) {
+              return prev;
+            }
+
+            const merged = mergeCandles(olderCandles, activeSeries);
+            const addedBars = merged.length - activeSeries.length;
+
+            if (addedBars <= 0) {
+              chartBackfillExhaustedRef.current[selectedKey] = true;
+              return prev;
+            }
+
+            if (currentSelectedKeyRef.current === selectedKey) {
+              pendingVisibleRangeShiftRef.current[selectedKey] =
+                (pendingVisibleRangeShiftRef.current[selectedKey] ?? 0) + addedBars;
+            }
+
+            return {
+              ...prev,
+              [selectedKey]: merged
+            };
+          });
+
+          if (olderCandles.length < requestCount) {
+            chartBackfillExhaustedRef.current[selectedKey] = true;
+          }
+
+          if (payload.meta && currentSelectedKeyRef.current === selectedKey) {
+            setMarketFeedMeta(payload.meta);
+          }
+        })
+        .catch(() => {
+          chartBackfillExhaustedRef.current[selectedKey] = false;
+        })
+        .finally(() => {
+          chartBackfillInFlightRef.current[selectedKey] = false;
+        });
+    };
+
+    timeScale.subscribeVisibleLogicalRangeChange(requestEarlierCandles);
+
+    return () => {
+      timeScale.unsubscribeVisibleLogicalRangeChange(requestEarlierCandles);
+    };
+  }, [chartReadyVersion, loadedSelectedCandles, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
 
     if (!chart || !candleSeries || selectedCandles.length === 0) {
@@ -2047,7 +2210,22 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       chart.timeScale().setVisibleLogicalRange({ from, to });
       selectionRef.current = selection;
     }
-  }, [chartReadyVersion, selectedCandles, selectedSymbol, selectedTimeframe]);
+
+    const pendingShift = pendingVisibleRangeShiftRef.current[selectedKey];
+
+    if (pendingShift) {
+      const visibleRange = chart.timeScale().getVisibleLogicalRange();
+
+      if (visibleRange) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: visibleRange.from + pendingShift,
+          to: visibleRange.to + pendingShift
+        });
+      }
+
+      delete pendingVisibleRangeShiftRef.current[selectedKey];
+    }
+  }, [chartReadyVersion, selectedCandles, selectedKey, selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2548,6 +2726,48 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         ? "Fallback replay"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? "Guest";
+  const isAdmin = activeAccountRole === "Admin";
+
+  const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
+    setYazanSyncDraft((prev) => ({
+      ...prev,
+      [field]: value
+    }));
+    setYazanSyncStatus(null);
+  };
+
+  const openYazanSyncDraft = () => {
+    if (!isAdmin) {
+      return;
+    }
+
+    setSelectedModelId("yazan");
+    setShowYazanSyncDraft(true);
+    setYazanSyncStatus("Mock sync workspace opened for Yazan.");
+  };
+
+  const resetYazanSyncDraft = () => {
+    setYazanSyncDraft(DEFAULT_YAZAN_SYNC_DRAFT);
+    setYazanSyncStatus("Mock account draft reset.");
+  };
+
+  const stageYazanSyncDraft = () => {
+    setShowYazanSyncDraft(true);
+    setYazanSyncStatus(
+      `Mock sync staged for ${yazanSyncDraft.accountLabel.trim() || "untitled account"} on ${
+        yazanSyncDraft.broker.trim() || "broker TBD"
+      }.`
+    );
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      return;
+    }
+
+    setShowYazanSyncDraft(false);
+    setYazanSyncStatus(null);
+  }, [isAdmin]);
 
   const grantAccountAccess = (role: AccountRole) => {
     setActiveAccountRole(role);
@@ -3068,22 +3288,61 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "models" ? (
                 <div className="tab-view">
-                  <div className="watchlist-head">
+                  <div className="watchlist-head with-action">
                     <div>
                       <h2>Models / People</h2>
-                      <p>Select one profile to drive history and actions</p>
+                      <p>
+                        {isAdmin
+                          ? "Select a profile. Admin can right-click Yazan to draft a synced trading account."
+                          : "Select one profile to drive history and actions"}
+                      </p>
                     </div>
+                    {isAdmin && showYazanSyncDraft ? (
+                      <div className="panel-head-actions">
+                        <button
+                          type="button"
+                          className="panel-action-btn"
+                          onClick={() => {
+                            setShowYazanSyncDraft(false);
+                            setYazanSyncStatus(null);
+                          }}
+                        >
+                          Hide Sync Draft
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <ul className="model-list">
                     {modelProfiles.map((model) => {
                       const selected = model.id === selectedModelId;
+                      const isYazan = model.id === "yazan";
 
                       return (
                         <li key={model.id}>
                           <button
                             type="button"
                             className={`model-row ${selected ? "selected" : ""}`}
-                            onClick={() => setSelectedModelId(model.id)}
+                            onClick={() => {
+                              setSelectedModelId(model.id);
+
+                              if (model.id !== "yazan") {
+                                setShowYazanSyncDraft(false);
+                                setYazanSyncStatus(null);
+                              }
+                            }}
+                            onContextMenu={(event) => {
+                              if (!isAdmin || !isYazan) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              openYazanSyncDraft();
+                            }}
+                            title={
+                              isAdmin && isYazan
+                                ? "Right-click to open mock account sync"
+                                : model.name
+                            }
                           >
                             <span className="model-main">
                               <span className="model-name">{model.name}</span>
@@ -3100,6 +3359,114 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       );
                     })}
                   </ul>
+                  {isAdmin && !showYazanSyncDraft ? (
+                    <div className="sync-draft-tip">
+                      Right-click <strong>Yazan</strong> to open a mock trading-account sync form.
+                    </div>
+                  ) : null}
+                  {isAdmin && showYazanSyncDraft ? (
+                    <section className="sync-draft-card" aria-label="mock account sync draft">
+                      <div className="sync-draft-head">
+                        <div>
+                          <h3>Mock Account Sync</h3>
+                          <p>Admin-only draft area for entering a trading account Yazan wants to sync.</p>
+                        </div>
+                        <span className="sync-draft-badge">Mock</span>
+                      </div>
+                      <form
+                        className="sync-draft-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          stageYazanSyncDraft();
+                        }}
+                      >
+                        <div className="sync-draft-grid">
+                          <label className="account-field">
+                            <span>Account Name</span>
+                            <input
+                              className="account-input"
+                              value={yazanSyncDraft.accountLabel}
+                              onChange={(event) => {
+                                updateYazanSyncDraft("accountLabel", event.target.value);
+                              }}
+                              placeholder="Yazan Futures Primary"
+                            />
+                          </label>
+                          <label className="account-field">
+                            <span>Broker</span>
+                            <input
+                              className="account-input"
+                              value={yazanSyncDraft.broker}
+                              onChange={(event) => {
+                                updateYazanSyncDraft("broker", event.target.value);
+                              }}
+                              placeholder="TradeLocker"
+                            />
+                          </label>
+                          <label className="account-field">
+                            <span>Platform</span>
+                            <input
+                              className="account-input"
+                              value={yazanSyncDraft.platform}
+                              onChange={(event) => {
+                                updateYazanSyncDraft("platform", event.target.value);
+                              }}
+                              placeholder="Rithmic"
+                            />
+                          </label>
+                          <label className="account-field">
+                            <span>Account Number</span>
+                            <input
+                              className="account-input"
+                              value={yazanSyncDraft.accountNumber}
+                              onChange={(event) => {
+                                updateYazanSyncDraft("accountNumber", event.target.value);
+                              }}
+                              placeholder="YZ-884201"
+                            />
+                          </label>
+                          <label className="account-field sync-draft-span">
+                            <span>Sync Mode</span>
+                            <input
+                              className="account-input"
+                              value={yazanSyncDraft.syncMode}
+                              onChange={(event) => {
+                                updateYazanSyncDraft("syncMode", event.target.value);
+                              }}
+                              placeholder="Read-only mirror"
+                            />
+                          </label>
+                        </div>
+                        <label className="account-field">
+                          <span>Notes</span>
+                          <textarea
+                            className="sync-draft-textarea"
+                            value={yazanSyncDraft.notes}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("notes", event.target.value);
+                            }}
+                            rows={4}
+                            placeholder="Describe the account, permissions, or sync rules."
+                          />
+                        </label>
+                        {yazanSyncStatus ? (
+                          <p className="sync-draft-status">{yazanSyncStatus}</p>
+                        ) : null}
+                        <div className="sync-draft-actions">
+                          <button type="submit" className="account-submit-btn sync-draft-submit">
+                            Stage Mock Sync
+                          </button>
+                          <button
+                            type="button"
+                            className="panel-action-btn"
+                            onClick={resetYazanSyncDraft}
+                          >
+                            Reset Draft
+                          </button>
+                        </div>
+                      </form>
+                    </section>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -3254,20 +3621,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 </div>
               ) : null}
 
-              {activePanelTab === "ai" ? (
-                <div className="tab-view ai-tab">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>AI</h2>
-                      <p>Assistant module</p>
-                    </div>
-                  </div>
-                  <div className="ai-placeholder">
-                    <p>AI panel is reserved for upcoming features.</p>
-                    <p>No actions are connected yet.</p>
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </aside>

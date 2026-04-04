@@ -54,6 +54,22 @@ const parsePositiveInt = (value: string | null, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const parseTimestampMs = (value: string | null): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const numeric = Number(value);
+
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(value);
+
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const normalizeNumber = (value: string | number | undefined): number => {
   const next = typeof value === "number" ? value : Number(value);
   return Number.isFinite(next) ? next : NaN;
@@ -196,7 +212,8 @@ const fetchDatabentoCandles = async (
   databentoSymbol: string,
   timeframe: Timeframe,
   targetCount: number,
-  apiKey: string
+  apiKey: string,
+  beforeMs?: number
 ): Promise<Candle[]> => {
   const source = targetSourceMap[timeframe];
   const stepMs = timeframeStepMs[source.sourceTimeframe];
@@ -205,7 +222,9 @@ const fetchDatabentoCandles = async (
     Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
     Accept: "application/json"
   };
-  let endMs = Date.now();
+  const requestedEndMs =
+    typeof beforeMs === "number" && Number.isFinite(beforeMs) ? Math.max(stepMs, beforeMs - 1) : Date.now();
+  let endMs = requestedEndMs;
   let startMs = endMs - rawBars * stepMs;
   let response = await fetch(buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs), {
     headers: authHeaders,
@@ -217,7 +236,7 @@ const fetchDatabentoCandles = async (
     const availableEndMatch = payload.match(/available up to '([^']+)'/i);
     const availableEndMs = availableEndMatch ? Date.parse(availableEndMatch[1]) : NaN;
 
-    if (Number.isFinite(availableEndMs)) {
+    if (Number.isFinite(availableEndMs) && endMs > availableEndMs) {
       endMs = availableEndMs;
       startMs = endMs - rawBars * stepMs;
       response = await fetch(buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs), {
@@ -245,6 +264,7 @@ export async function GET(request: Request) {
     ? (timeframeRaw as Timeframe)
     : "15m";
   const targetCount = Math.min(parsePositiveInt(searchParams.get("count"), 500), MAX_TARGET_COUNT);
+  const beforeMs = parseTimestampMs(searchParams.get("before"));
   const asset = getAssetBySymbol(symbol);
 
   if (!futuresAssets.some((entry) => entry.symbol === symbol)) {
@@ -263,7 +283,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const candles = await fetchDatabentoCandles(asset.databentoSymbol, timeframe, targetCount, apiKey);
+    const candles = await fetchDatabentoCandles(
+      asset.databentoSymbol,
+      timeframe,
+      targetCount,
+      apiKey,
+      beforeMs ?? undefined
+    );
 
     return NextResponse.json(
       {
