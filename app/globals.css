@@ -321,13 +321,13 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  width: min(460px, 100%);
+  width: min(420px, 100%);
 }
 
 .account-choice-card {
-  min-height: 192px;
+  min-height: 164px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 20px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
   padding: 0;
   display: grid;
@@ -335,9 +335,9 @@ button {
   text-align: center;
   cursor: pointer;
   color: #edf3fb;
-  font-size: clamp(2rem, 5vw, 3rem);
+  font-size: clamp(1.55rem, 3.5vw, 2.15rem);
   font-weight: 600;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.035em;
   transition:
     transform 0.18s ease,
     border-color 0.18s ease,
@@ -1649,7 +1649,7 @@ button {
 
 .account-editor-row span {
   color: rgba(255, 255, 255, 0.5);
-  font-size: 0.58rem;
+  font-size: 0.54rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
@@ -1661,8 +1661,28 @@ button {
   padding-top: 0.2rem;
 }
 
+.account-editor-form .account-input {
+  height: 40px;
+  padding: 0 0.78rem;
+  border-radius: 10px;
+  font-size: 0.74rem;
+}
+
+.account-editor-form .account-input::placeholder {
+  font-size: 0.7rem;
+}
+
 .account-editor-submit {
   width: 100%;
+  height: 38px;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+}
+
+.account-editor-actions .panel-action-btn {
+  height: 38px;
+  padding: 0 0.72rem;
+  font-size: 0.58rem;
 }
 
 .history-list {
