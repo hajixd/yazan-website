@@ -273,6 +273,7 @@ const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 3;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
+const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
   accountLabel: "Roman Capital Primary",
@@ -1079,6 +1080,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const watchlistSeriesMapRef = useRef<Record<string, Candle[]>>({});
   const watchlistFetchMetaRef = useRef<Record<string, WatchlistFetchMeta>>({});
   const deliveredNotificationIdsRef = useRef<Set<string>>(new Set());
+  const notificationSessionStartedAtRef = useRef(Date.now());
   const mobileTradeChartRef = useRef<HTMLDivElement | null>(null);
   const mobileTradeChartPointerIdRef = useRef<number | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
@@ -2033,11 +2035,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         tradeId: action.tradeId,
         entityType: "trade",
         actionCode: action.label.toLowerCase().replaceAll(" ", "_"),
-        link: "/"
+        link: "/",
+        live: true
       });
     }
 
-    return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12);
+    const liveCutoffMs = Date.now() - NOTIFICATION_LIVE_WINDOW_MS;
+
+    return items
+      .filter((item) => item.timestamp >= liveCutoffMs)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 12);
   }, [actionRows, referenceNowMs, selectedSymbol, showcaseMode]);
 
   const seenNotificationSet = useMemo(() => {
@@ -2085,7 +2093,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       for (const item of notificationItems) {
         if (
           !insertedIds.includes(item.id) ||
-          deliveredNotificationIdsRef.current.has(item.id)
+          deliveredNotificationIdsRef.current.has(item.id) ||
+          item.timestamp < notificationSessionStartedAtRef.current
         ) {
           continue;
         }
