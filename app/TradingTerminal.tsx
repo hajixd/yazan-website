@@ -18,7 +18,6 @@ import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions";
-type SurfaceTab = "chart";
 type AccountRole = "Admin" | "User";
 
 type Candle = {
@@ -253,10 +252,6 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "actions", label: "Action" }
 ];
 
-const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
-  { id: "chart", label: "Chart" }
-];
-
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 1440,
   "5m": 1000,
@@ -270,7 +265,7 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
-  accountLabel: "Yazan Futures Primary",
+  accountLabel: "Roman Capital Primary",
   broker: "TradeLocker",
   platform: "Rithmic",
   accountNumber: "YZ-884201"
@@ -865,8 +860,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
   const pendingVisibleRangeShiftRef = useRef<Record<string, number>>({});
-  const selectedSurfaceTab: SurfaceTab = "chart";
-
   useEffect(() => {
     if (showcaseMode) {
       return;
@@ -2180,35 +2173,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     const overlay = countdownOverlayRef.current;
 
-    if (!overlay || !latestCandle || showcaseMode) {
-      if (overlay) {
-        overlay.style.display = "none";
-      }
+    if (!overlay || !latestCandle) {
+      if (overlay) overlay.style.display = "none";
       return;
     }
 
     const candleMs = getTimeframeMs(selectedTimeframe);
-    let frameId = 0;
+    let raf = 0;
     let lastText = "";
 
     const update = () => {
       const candleSeries = candleSeriesRef.current;
 
       if (!candleSeries) {
-        frameId = window.requestAnimationFrame(update);
+        raf = window.requestAnimationFrame(update);
         return;
       }
 
       const candleEndMs = latestCandle.time + candleMs;
       const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
-      const hours = Math.floor(remaining / 3600);
-      const minutes = Math.floor((remaining % 3600) / 60);
-      const seconds = remaining % 60;
-      const pad = (value: number) => String(value).padStart(2, "0");
-      const timer =
-        hours > 0
-          ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
-          : `${pad(minutes)}:${pad(seconds)}`;
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const timer = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
       const price = formatPrice(latestCandle.close);
       const text = `${price}\n${timer}`;
 
@@ -2229,16 +2217,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         overlay.style.display = "none";
       }
 
-      frameId = window.requestAnimationFrame(update);
+      raf = window.requestAnimationFrame(update);
     };
 
-    frameId = window.requestAnimationFrame(update);
+    raf = window.requestAnimationFrame(update);
 
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      overlay.style.display = "none";
-    };
-  }, [latestCandle, selectedTimeframe, showcaseMode]);
+    return () => window.cancelAnimationFrame(raf);
+  }, [latestCandle, selectedTimeframe, selectedCandles]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2929,7 +2914,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel account-shell-panel-loading">
-            <span className="account-shell-kicker">Yazan Futures</span>
+            <span className="account-shell-kicker">Roman Capital</span>
             <div className="account-shell-header">
               <h1>Loading access</h1>
               <p>Checking for a saved session.</p>
@@ -2945,7 +2930,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
-            <span className="account-shell-kicker">Yazan Futures</span>
+            <span className="account-shell-kicker">Roman Capital</span>
             <div className="account-shell-header">
               <h1>Select an account</h1>
               <p>Choose User for instant access, or unlock Admin with the 5-digit code.</p>
@@ -3025,19 +3010,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   return (
     <main className="terminal">
       <div className="surface-strip">
-        <span className="site-tag surface-brand">Yazan Futures</span>
-        <nav className="surface-tabs" aria-label="primary views">
-          {surfaceTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
-              aria-current={selectedSurfaceTab === tab.id ? "page" : undefined}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+        <span className="site-tag surface-brand">Roman Capital</span>
         <div className="top-utility surface-actions">
           <div className="account-switcher">
             <span className={`account-badge account-${currentAccountLabel.toLowerCase()}`}>
@@ -3505,7 +3478,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               onChange={(event) => {
                                 updateYazanSyncDraft("accountLabel", event.target.value);
                               }}
-                              placeholder="Yazan Futures Primary"
+                              placeholder="Roman Capital Primary"
                             />
                           </label>
                           <label className="account-field">

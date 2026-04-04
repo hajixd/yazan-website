@@ -779,7 +779,7 @@ button {
   width: 12ch;
   box-sizing: border-box;
   font-variant-numeric: tabular-nums;
-  z-index: 9;
+  z-index: 9000;
   letter-spacing: 0.01em;
   display: none;
 }
