@@ -242,8 +242,22 @@ button {
   font-size: 0.72rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.04em;
-  text-transform: lowercase;
+  text-transform: none;
   white-space: nowrap;
+}
+
+.site-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.site-brand-mark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: block;
+  border-radius: 4px;
 }
 
 .terminal.account-screen {

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type CandlestickData,
@@ -239,6 +240,8 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
+const WATCHLIST_FETCH_BATCH_SIZE = 3;
+const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
   accountLabel: "Roman Capital Primary",
   broker: "TradeLocker",
@@ -254,6 +257,16 @@ const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "4H": 4,
   "1D": 4,
   "1W": 4
+};
+
+const multiAssetHistoryCountByTimeframe: Record<Timeframe, number> = {
+  "1m": 360,
+  "5m": 320,
+  "15m": 260,
+  "1H": 220,
+  "4H": 200,
+  "1D": 180,
+  "1W": 120
 };
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -685,6 +698,108 @@ const generateTradeBlueprintsFromCandles = (
   return blueprints.sort((a, b) => b.exitMs - a.exitMs);
 };
 
+const buildHistoryRowsFromCandles = (
+  candles: Candle[],
+  tradeBlueprints: TradeBlueprint[]
+): HistoryItem[] => {
+  const rows: HistoryItem[] = [];
+
+  if (candles.length < 16 || tradeBlueprints.length === 0) {
+    return rows;
+  }
+
+  for (const blueprint of tradeBlueprints) {
+    const entryIndex = findCandleIndexAtOrBefore(candles, blueprint.entryMs);
+    const rawExitIndex = findCandleIndexAtOrBefore(candles, blueprint.exitMs);
+
+    if (entryIndex < 0 || rawExitIndex < 0) {
+      continue;
+    }
+
+    const exitIndex = Math.min(candles.length - 1, Math.max(entryIndex + 1, rawExitIndex));
+
+    if (exitIndex <= entryIndex) {
+      continue;
+    }
+
+    const entryPrice = candles[entryIndex].close;
+    const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
+    let atr = 0;
+    let atrCount = 0;
+
+    for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
+      atr += candles[i].high - candles[i].low;
+      atrCount += 1;
+    }
+
+    atr /= Math.max(1, atrCount);
+
+    const riskPerUnit = Math.max(
+      entryPrice * blueprint.riskPct,
+      atr * (0.6 + rand() * 0.6),
+      entryPrice * 0.0009
+    );
+    const stopPrice =
+      blueprint.side === "Long"
+        ? Math.max(0.000001, entryPrice - riskPerUnit)
+        : entryPrice + riskPerUnit;
+    const targetPrice =
+      blueprint.side === "Long"
+        ? entryPrice + riskPerUnit * blueprint.rr
+        : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
+    const path = evaluateTpSlPath(
+      candles,
+      blueprint.side,
+      entryIndex,
+      targetPrice,
+      stopPrice,
+      exitIndex
+    );
+
+    const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
+    const rawOutcomePrice = path.hit ? path.outcomePrice : candles[resolvedExitIndex].close;
+    const outcomePrice = Math.max(0.000001, rawOutcomePrice);
+    const result: TradeResult = path.hit
+      ? (path.result ?? "Loss")
+      : blueprint.side === "Long"
+        ? outcomePrice >= entryPrice
+          ? "Win"
+          : "Loss"
+        : outcomePrice <= entryPrice
+          ? "Win"
+          : "Loss";
+    const pnlPct =
+      blueprint.side === "Long"
+        ? ((outcomePrice - entryPrice) / entryPrice) * 100
+        : ((entryPrice - outcomePrice) / entryPrice) * 100;
+    const pnlUsd =
+      blueprint.side === "Long"
+        ? (outcomePrice - entryPrice) * blueprint.units
+        : (entryPrice - outcomePrice) * blueprint.units;
+
+    rows.push({
+      id: blueprint.id,
+      symbol: blueprint.symbol,
+      side: blueprint.side,
+      result,
+      pnlPct,
+      pnlUsd,
+      entryTime: toUtcTimestamp(candles[entryIndex].time),
+      exitTime: toUtcTimestamp(candles[resolvedExitIndex].time),
+      entryPrice,
+      targetPrice,
+      stopPrice,
+      outcomePrice,
+      units: blueprint.units,
+      entryAt: formatDateTime(candles[entryIndex].time),
+      exitAt: formatDateTime(candles[resolvedExitIndex].time),
+      time: formatDateTime(candles[resolvedExitIndex].time)
+    });
+  }
+
+  return rows;
+};
+
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
   if (tab === "active") {
     return (
@@ -808,6 +923,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
   const adminCodeInputRef = useRef<HTMLInputElement | null>(null);
+  const watchlistSeriesMapRef = useRef<Record<string, Candle[]>>({});
   const currentSelectedKeyRef = useRef<string>("");
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
@@ -931,6 +1047,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   ]);
 
   useEffect(() => {
+    watchlistSeriesMapRef.current = watchlistSeriesMap;
+  }, [watchlistSeriesMap]);
+
+  useEffect(() => {
     if (showcaseMode) {
       const next: Record<string, Candle[]> = {};
 
@@ -940,7 +1060,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           asset.basePrice,
           asset.symbol,
           selectedTimeframe,
-          watchlistSnapshotCountByTimeframe[selectedTimeframe],
+          multiAssetHistoryCountByTimeframe[selectedTimeframe],
           referenceNowMs
         );
       }
@@ -952,6 +1072,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     let cancelled = false;
     let refreshInFlight = false;
     const activeControllers = new Set<AbortController>();
+    const historyCount = multiAssetHistoryCountByTimeframe[selectedTimeframe];
+    const snapshotCount = watchlistSnapshotCountByTimeframe[selectedTimeframe];
 
     const loadWatchlistCandles = async () => {
       if (refreshInFlight || cancelled) {
@@ -959,46 +1081,66 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       refreshInFlight = true;
-      const controller = new AbortController();
-      activeControllers.add(controller);
+      const nextResults = new Map<string, Candle[]>();
 
       try {
-        const results = await Promise.allSettled(
-          futuresAssets.map(async (asset) => {
-            const payload = await fetchFuturesCandles(
-              asset.symbol,
-              selectedTimeframe,
-              watchlistSnapshotCountByTimeframe[selectedTimeframe],
-              { signal: controller.signal }
+        for (let start = 0; start < futuresAssets.length; start += WATCHLIST_FETCH_BATCH_SIZE) {
+          const batch = futuresAssets.slice(start, start + WATCHLIST_FETCH_BATCH_SIZE);
+          const batchControllers = batch.map(() => new AbortController());
+
+          batchControllers.forEach((controller) => activeControllers.add(controller));
+
+          try {
+            const results = await Promise.allSettled(
+              batch.map(async (asset, index) => {
+                const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+                const existing = watchlistSeriesMapRef.current[key] ?? [];
+                const requestCount =
+                  existing.length < MIN_MULTI_ASSET_TRADE_CANDLES ? historyCount : snapshotCount;
+                const payload = await fetchFuturesCandles(asset.symbol, selectedTimeframe, requestCount, {
+                  signal: batchControllers[index].signal
+                });
+
+                return {
+                  symbol: asset.symbol,
+                  candles: Array.isArray(payload.candles) ? payload.candles : []
+                };
+              })
             );
 
-            return {
-              symbol: asset.symbol,
-              candles: Array.isArray(payload.candles) ? payload.candles : []
-            };
-          })
-        );
+            if (cancelled) {
+              return;
+            }
 
-        if (cancelled || controller.signal.aborted) {
-          return;
+            results.forEach((result) => {
+              if (result.status === "fulfilled" && result.value.candles.length > 0) {
+                nextResults.set(result.value.symbol, result.value.candles);
+              }
+            });
+          } finally {
+            batchControllers.forEach((controller) => activeControllers.delete(controller));
+          }
         }
 
         setWatchlistSeriesMap((prev) => {
           const next = { ...prev };
 
-          results.forEach((result, index) => {
-            const asset = futuresAssets[index];
-            const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+          nextResults.forEach((candles, symbol) => {
+            const key = symbolTimeframeKey(symbol, selectedTimeframe);
+            const existing = prev[key] ?? [];
+            const merged =
+              existing.length === 0 || candles.length >= historyCount
+                ? candles
+                : mergeCandles(existing, candles).slice(-historyCount);
 
-            if (result.status === "fulfilled" && result.value.candles.length > 0) {
-              next[key] = result.value.candles;
-            }
+            next[key] = merged;
           });
+
+          watchlistSeriesMapRef.current = next;
 
           return next;
         });
       } finally {
-        activeControllers.delete(controller);
         refreshInFlight = false;
       }
     };
@@ -1084,6 +1226,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
 
+  const marketCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
+    const next: Record<string, Candle[]> = {};
+
+    for (const asset of futuresAssets) {
+      const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
+      const chartCandles = seriesMap[key] ?? [];
+      const backgroundCandles = watchlistSeriesMap[key] ?? [];
+      next[asset.symbol] = mergeCandles(chartCandles, backgroundCandles);
+    }
+
+    return next;
+  }, [selectedTimeframe, seriesMap, watchlistSeriesMap]);
+
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
@@ -1116,9 +1271,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
-      const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-      const liveWatchlistCandles = watchlistSeriesMap[key] ?? [];
-      const list = liveWatchlistCandles.length > 0 ? liveWatchlistCandles : seriesMap[key] ?? [];
+      const list = marketCandlesBySymbol[asset.symbol] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
       const change =
@@ -1130,24 +1283,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         change
       };
     });
-  }, [
-    selectedTimeframe,
-    seriesMap,
-    watchlistSeriesMap
-  ]);
-
-  const tradeBlueprints = useMemo(() => {
-    if (!chartSimulationEnabled) {
-      return [];
-    }
-
-    return generateTradeBlueprintsFromCandles(
-      selectedModel,
-      selectedSymbol,
-      selectedCandles,
-      showcaseMode ? 42 : 54
-    );
-  }, [chartSimulationEnabled, selectedCandles, selectedModel, selectedSymbol, showcaseMode]);
+  }, [marketCandlesBySymbol]);
 
   const historyRows = useMemo(() => {
     if (!chartSimulationEnabled) {
@@ -1155,99 +1291,22 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     const rows: HistoryItem[] = [];
-    const list = selectedCandles;
 
-    if (list.length < 16) {
-      return rows;
-    }
+    for (const asset of futuresAssets) {
+      const list = marketCandlesBySymbol[asset.symbol] ?? [];
 
-    for (const blueprint of tradeBlueprints) {
-      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
-
-      if (entryIndex < 0 || rawExitIndex < 0) {
+      if (list.length < 16) {
         continue;
       }
 
-      const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
-
-      if (exitIndex <= entryIndex) {
-        continue;
-      }
-
-      const entryPrice = list[entryIndex].close;
-      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
-      let atr = 0;
-      let atrCount = 0;
-
-      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-        atr += list[i].high - list[i].low;
-        atrCount += 1;
-      }
-
-      atr /= Math.max(1, atrCount);
-
-      const riskPerUnit = Math.max(
-        entryPrice * blueprint.riskPct,
-        atr * (0.6 + rand() * 0.6),
-        entryPrice * 0.0009
-      );
-      const stopPrice =
-        blueprint.side === "Long"
-          ? Math.max(0.000001, entryPrice - riskPerUnit)
-          : entryPrice + riskPerUnit;
-      const targetPrice =
-        blueprint.side === "Long"
-          ? entryPrice + riskPerUnit * blueprint.rr
-          : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
-      const path = evaluateTpSlPath(
+      const tradeBlueprints = generateTradeBlueprintsFromCandles(
+        selectedModel,
+        asset.symbol,
         list,
-        blueprint.side,
-        entryIndex,
-        targetPrice,
-        stopPrice,
-        exitIndex
+        showcaseMode ? 42 : 54
       );
 
-      const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
-      const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
-      const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-      const result: TradeResult = path.hit
-        ? (path.result ?? "Loss")
-        : blueprint.side === "Long"
-          ? outcomePrice >= entryPrice
-            ? "Win"
-            : "Loss"
-          : outcomePrice <= entryPrice
-            ? "Win"
-            : "Loss";
-      const pnlPct =
-        blueprint.side === "Long"
-          ? ((outcomePrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - outcomePrice) / entryPrice) * 100;
-      const pnlUsd =
-        blueprint.side === "Long"
-          ? (outcomePrice - entryPrice) * blueprint.units
-          : (entryPrice - outcomePrice) * blueprint.units;
-
-      rows.push({
-        id: blueprint.id,
-        symbol: blueprint.symbol,
-        side: blueprint.side,
-        result,
-        pnlPct,
-        pnlUsd,
-        entryTime: toUtcTimestamp(list[entryIndex].time),
-        exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
-        entryPrice,
-        targetPrice,
-        stopPrice,
-        outcomePrice,
-        units: blueprint.units,
-        entryAt: formatDateTime(list[entryIndex].time),
-        exitAt: formatDateTime(list[resolvedExitIndex].time),
-        time: formatDateTime(list[resolvedExitIndex].time)
-      });
+      rows.push(...buildHistoryRowsFromCandles(list, tradeBlueprints));
     }
 
     const byRecent = rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 90);
@@ -1284,7 +1343,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [chartSimulationEnabled, selectedCandles, showcaseMode, tradeBlueprints]);
+  }, [chartSimulationEnabled, marketCandlesBySymbol, selectedModel, showcaseMode]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -2774,7 +2833,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   return (
     <main className="terminal">
       <div className="surface-strip">
-        <span className="site-tag surface-brand">Roman Capital</span>
+        <span className="site-brand surface-brand">
+          <Image
+            src="/icon.svg"
+            alt=""
+            className="site-brand-mark"
+            width={18}
+            height={18}
+            aria-hidden="true"
+          />
+          <span className="site-tag">Roman Capital</span>
+        </span>
         <div className="top-utility surface-actions">
           <div className="account-switcher">
             <span className={`account-badge account-${currentAccountLabel.toLowerCase()}`}>
