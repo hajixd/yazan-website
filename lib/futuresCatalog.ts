@@ -6,6 +6,7 @@ export type FutureAsset = {
   category: string;
   contract: string;
   basePrice: number;
+  tickSize: number;
 };
 
 export const futuresAssets: FutureAsset[] = [
@@ -16,7 +17,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 6398.0
+    basePrice: 6398.0,
+    tickSize: 0.25
   },
   {
     symbol: "NQ",
@@ -25,7 +27,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 23254.25
+    basePrice: 23254.25,
+    tickSize: 0.25
   },
   {
     symbol: "RTY",
@@ -34,7 +37,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 2456.0
+    basePrice: 2456.0,
+    tickSize: 0.1
   },
   {
     symbol: "YM",
@@ -43,7 +47,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CBOT",
     category: "Equity Index",
     contract: "Front month continuous",
-    basePrice: 45310.0
+    basePrice: 45310.0,
+    tickSize: 1
   },
   {
     symbol: "CL",
@@ -52,7 +57,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "NYMEX",
     category: "Energy",
     contract: "Front month continuous",
-    basePrice: 101.18
+    basePrice: 101.18,
+    tickSize: 0.01
   },
   {
     symbol: "NG",
@@ -61,7 +67,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "NYMEX",
     category: "Energy",
     contract: "Front month continuous",
-    basePrice: 3.081
+    basePrice: 3.081,
+    tickSize: 0.001
   },
   {
     symbol: "MGC",
@@ -70,7 +77,18 @@ export const futuresAssets: FutureAsset[] = [
     venue: "COMEX",
     category: "Metals",
     contract: "Front month continuous",
-    basePrice: 4488.9
+    basePrice: 4488.9,
+    tickSize: 0.1
+  },
+  {
+    symbol: "SI",
+    databentoSymbol: "SI.c.0",
+    name: "Silver",
+    venue: "COMEX",
+    category: "Metals",
+    contract: "Front month continuous",
+    basePrice: 34.725,
+    tickSize: 0.005
   },
   {
     symbol: "HG",
@@ -79,7 +97,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "COMEX",
     category: "Metals",
     contract: "Front month continuous",
-    basePrice: 5.454
+    basePrice: 5.454,
+    tickSize: 0.0005
   },
   {
     symbol: "ZN",
@@ -88,7 +107,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CBOT",
     category: "Rates",
     contract: "Front month continuous",
-    basePrice: 110.1875
+    basePrice: 110.1875,
+    tickSize: 0.015625
   },
   {
     symbol: "6E",
@@ -97,7 +117,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 1.1521
+    basePrice: 1.1521,
+    tickSize: 0.00005
   },
   {
     symbol: "6J",
@@ -106,7 +127,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 0.0062485
+    basePrice: 0.0062485,
+    tickSize: 0.0000005
   },
   {
     symbol: "6A",
@@ -115,7 +137,8 @@ export const futuresAssets: FutureAsset[] = [
     venue: "CME",
     category: "FX",
     contract: "Front month continuous",
-    basePrice: 0.6865
+    basePrice: 0.6865,
+    tickSize: 0.00005
   }
 ];
 

@@ -1,7 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  DragEvent as ReactDragEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent
+} from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type CandlestickData,
@@ -157,16 +161,56 @@ type MarketFeedResponse = {
   error?: string;
 };
 
+type SyncProvider = "tradovate" | "tradesyncer";
+type SyncEnvironment = "live" | "demo";
+type TradovateAccessMode = "api_key" | "api_key_password";
+type TradesyncApplication = "mt4" | "mt5";
+type TradesyncAccountType = "readonly" | "full";
+type WebhookAuthMode = "none" | "basic_auth" | "bearer_token" | "api_keys";
+
 type AccountSyncDraft = {
+  provider: SyncProvider;
+  connectionLabel: string;
+  environment: SyncEnvironment;
   accountLabel: string;
-  broker: string;
-  platform: string;
   accountNumber: string;
+  username: string;
+  accessMode: TradovateAccessMode;
+  apiKey: string;
+  apiSecret: string;
+  appId: string;
+  appVersion: string;
+  deviceId: string;
+  application: TradesyncApplication;
+  accountType: TradesyncAccountType;
+  brokerServerId: string;
+  accountPassword: string;
+  webhookUrl: string;
+  webhookAuthMode: WebhookAuthMode;
 };
 
 type AccountMenuPosition = {
   x: number;
   y: number;
+};
+
+type OrderBookLevel = {
+  bidPrice: number;
+  askPrice: number;
+  bidSize: number;
+  askSize: number;
+  bidFillPct: number;
+  askFillPct: number;
+};
+
+type OrderBookSnapshot = {
+  levels: OrderBookLevel[];
+  bestBid: number;
+  bestAsk: number;
+  spread: number;
+  bidTotal: number;
+  askTotal: number;
+  imbalance: number;
 };
 
 type CandleRequestOptions = {
@@ -175,12 +219,24 @@ type CandleRequestOptions = {
 };
 
 const ACCOUNT_GATE_STORAGE_KEY = "yazan-active-account";
+const ASSET_ORDER_STORAGE_KEY = "roman-asset-order";
 const ADMIN_ACCESS_CODE = "12345";
 const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
+const TRADOVATE_API_ACCESS_URL =
+  "https://tradovate.zendesk.com/hc/en-us/articles/4403105829523-How-Do-I-Get-Access-to-the-Tradovate-API";
+const TRADOVATE_AUTH_OPTIONS_URL =
+  "https://tradovate.zendesk.com/hc/en-us/articles/4403105862035-Should-I-Use-OAuth-an-API-Key-or-an-API-Key-with-a-Dedicated-Password";
+const TRADOVATE_PERMISSIONS_URL =
+  "https://tradovate.zendesk.com/hc/en-us/categories/18535338266515-Web-Desktop-Trading-Platform";
+const TRADOVATE_MARKET_DATA_URL =
+  "https://tradovate.zendesk.com/hc/en-us/articles/4403100181651-Do-I-Need-a-Market-Data-Subscription-Through-Tradovate-to-Perform-Trades";
+const TRADESYNC_AUTH_URL = "https://www.tradesync.com/developers/authentication/";
+const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/intro-broker/";
+const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
 
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
@@ -193,6 +249,74 @@ const createPseudoAccountNumber = (seedText: string): string => {
 };
 
 const timeframes: Timeframe[] = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
+const defaultAssetOrder = futuresAssets.map((asset) => asset.symbol);
+
+const createDefaultSyncDraft = (provider: SyncProvider = "tradovate"): AccountSyncDraft => {
+  if (provider === "tradesyncer") {
+    return {
+      provider,
+      connectionLabel: "Yazan Trade Syncer",
+      environment: "live",
+      accountLabel: "Roman Copier Account",
+      accountNumber: "",
+      username: "",
+      accessMode: "api_key_password",
+      apiKey: "",
+      apiSecret: "",
+      appId: "",
+      appVersion: "",
+      deviceId: "",
+      application: "mt5",
+      accountType: "readonly",
+      brokerServerId: "",
+      accountPassword: "",
+      webhookUrl: "",
+      webhookAuthMode: "bearer_token"
+    };
+  }
+
+  return {
+    provider,
+    connectionLabel: "Yazan Tradovate",
+    environment: "live",
+    accountLabel: "Roman Capital Primary",
+    accountNumber: "YZ-884201",
+    username: "",
+    accessMode: "api_key_password",
+    apiKey: "",
+    apiSecret: "",
+    appId: "roman-capital-terminal",
+    appVersion: "1.0.0",
+    deviceId: "",
+    application: "mt5",
+    accountType: "readonly",
+    brokerServerId: "",
+    accountPassword: "",
+    webhookUrl: "",
+    webhookAuthMode: "bearer_token"
+  };
+};
+
+const normalizeAssetOrder = (order: string[]): string[] => {
+  const validSymbols = new Set(defaultAssetOrder);
+  const next: string[] = [];
+
+  for (const symbol of order) {
+    if (!validSymbols.has(symbol) || next.includes(symbol)) {
+      continue;
+    }
+
+    next.push(symbol);
+  }
+
+  for (const symbol of defaultAssetOrder) {
+    if (!next.includes(symbol)) {
+      next.push(symbol);
+    }
+  }
+
+  return next;
+};
 
 const timeframeMinutes: Record<Timeframe, number> = {
   "1m": 1,
@@ -276,11 +400,10 @@ const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
-  accountLabel: "Roman Capital Primary",
-  broker: "TradeLocker",
-  platform: "Rithmic",
-  accountNumber: "YZ-884201"
+  ...createDefaultSyncDraft("tradovate")
 };
+const YAZAN_ACCOUNT_MENU_WIDTH = 188;
+const YAZAN_ACCOUNT_MENU_HEIGHT = 118;
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1m": 4,
@@ -427,6 +550,50 @@ const formatClock = (timestampMs: number): string => {
     hour12: false,
     timeZone: "UTC"
   });
+};
+
+const getTickPrecision = (tickSize: number): number => {
+  if (!Number.isFinite(tickSize) || tickSize <= 0) {
+    return 2;
+  }
+
+  const normalized = tickSize.toString();
+
+  if (normalized.includes("e-")) {
+    const [, exponent = "0"] = normalized.split("e-");
+    return Number(exponent);
+  }
+
+  const decimals = normalized.split(".")[1];
+
+  return decimals ? decimals.length : 0;
+};
+
+const roundToTick = (value: number, tickSize: number): number => {
+  if (!Number.isFinite(tickSize) || tickSize <= 0) {
+    return value;
+  }
+
+  return Math.round(value / tickSize) * tickSize;
+};
+
+const formatPriceByTick = (value: number, tickSize: number): string => {
+  const precision = getTickPrecision(tickSize);
+
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision
+  });
+};
+
+const formatDepthSize = (value: number): string => {
+  return value.toLocaleString("en-US", {
+    maximumFractionDigits: 0
+  });
+};
+
+const getSyncProviderLabel = (provider: SyncProvider): string => {
+  return provider === "tradovate" ? "Tradovate" : "Trade Syncer";
 };
 
 const formatMobileDate = (timestampMs: number): string => {
@@ -1030,6 +1197,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [adminCodeInput, setAdminCodeInput] = useState("");
   const [accountAccessError, setAccountAccessError] = useState("");
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
+  const [assetOrder, setAssetOrder] = useState<string[]>(defaultAssetOrder);
+  const [draggedAssetSymbol, setDraggedAssetSymbol] = useState<string | null>(null);
+  const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -1055,6 +1225,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
   const [yazanSyncDraft, setYazanSyncDraft] = useState<AccountSyncDraft>(DEFAULT_YAZAN_SYNC_DRAFT);
+  const [yazanSyncDraftMode, setYazanSyncDraftMode] = useState<"add" | "edit">("edit");
   const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
   const [yazanAccountMenuPosition, setYazanAccountMenuPosition] = useState<AccountMenuPosition>({
     x: 0,
@@ -1157,12 +1328,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }, []);
 
+  useEffect(() => {
+    try {
+      const storedOrder = window.localStorage.getItem(ASSET_ORDER_STORAGE_KEY);
+
+      if (!storedOrder) {
+        return;
+      }
+
+      const parsed = JSON.parse(storedOrder);
+
+      if (!Array.isArray(parsed)) {
+        return;
+      }
+
+      setAssetOrder(normalizeAssetOrder(parsed.filter((value): value is string => typeof value === "string")));
+    } catch {
+      setAssetOrder(defaultAssetOrder);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(ASSET_ORDER_STORAGE_KEY, JSON.stringify(normalizeAssetOrder(assetOrder)));
+  }, [assetOrder]);
+
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
   const selectedModel = useMemo(() => {
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0];
   }, [selectedModelId]);
+  const orderedAssets = useMemo(() => {
+    const assetMap = new Map(futuresAssets.map((asset) => [asset.symbol, asset]));
+    const ordered: typeof futuresAssets = [];
+
+    for (const symbol of normalizeAssetOrder(assetOrder)) {
+      const asset = assetMap.get(symbol);
+
+      if (asset) {
+        ordered.push(asset);
+      }
+    }
+
+    return ordered;
+  }, [assetOrder]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -1625,8 +1834,74 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : null;
 
+  const orderBookSnapshot = useMemo<OrderBookSnapshot>(() => {
+    const referencePrice = latestCandle?.close ?? selectedAsset.basePrice;
+    const tickSize = selectedAsset.tickSize;
+    const midPrice = roundToTick(referencePrice, tickSize);
+    const seed = hashString(
+      `${selectedAsset.symbol}-${selectedTimeframe}-${latestCandle?.time ?? referenceNowMs}-${midPrice}`
+    );
+    const rand = createSeededRng(seed);
+    const levelCount = 6;
+    const spreadTicks = Math.max(
+      1,
+      quoteChange !== null && Math.abs(quoteChange) > 0.3 ? 2 : 1
+    );
+    const bestBid = roundToTick(midPrice - spreadTicks * tickSize, tickSize);
+    const bestAsk = roundToTick(midPrice + spreadTicks * tickSize, tickSize);
+    const sizeBaseline = Math.max(
+      18,
+      Math.round((Math.log10(Math.max(referencePrice, 1)) + 1) * 34)
+    );
+    const rawLevels = Array.from({ length: levelCount }, (_, index) => {
+      const distanceWeight = 1 - index / (levelCount * 1.3);
+      const bidSize = Math.max(
+        1,
+        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
+      );
+      const askSize = Math.max(
+        1,
+        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
+      );
+
+      return {
+        bidPrice: roundToTick(bestBid - index * tickSize, tickSize),
+        askPrice: roundToTick(bestAsk + index * tickSize, tickSize),
+        bidSize,
+        askSize
+      };
+    });
+    const maxBidSize = Math.max(...rawLevels.map((level) => level.bidSize), 1);
+    const maxAskSize = Math.max(...rawLevels.map((level) => level.askSize), 1);
+    const bidTotal = rawLevels.reduce((sum, level) => sum + level.bidSize, 0);
+    const askTotal = rawLevels.reduce((sum, level) => sum + level.askSize, 0);
+
+    return {
+      levels: rawLevels.map((level) => ({
+        ...level,
+        bidFillPct: (level.bidSize / maxBidSize) * 100,
+        askFillPct: (level.askSize / maxAskSize) * 100
+      })),
+      bestBid,
+      bestAsk,
+      spread: Math.max(tickSize, bestAsk - bestBid),
+      bidTotal,
+      askTotal,
+      imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
+    };
+  }, [
+    latestCandle?.close,
+    latestCandle?.time,
+    quoteChange,
+    referenceNowMs,
+    selectedAsset.basePrice,
+    selectedAsset.symbol,
+    selectedAsset.tickSize,
+    selectedTimeframe
+  ]);
+
   const watchlistRows = useMemo(() => {
-    return futuresAssets.map((asset) => {
+    return orderedAssets.map((asset) => {
       const list = marketCandlesBySymbol[asset.symbol] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
@@ -1639,7 +1914,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         change
       };
     });
-  }, [marketCandlesBySymbol]);
+  }, [marketCandlesBySymbol, orderedAssets]);
 
   const historyRows = useMemo(() => {
     if (!chartSimulationEnabled) {
@@ -3129,7 +3404,21 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
   const yazanAccountSummary = yazanAccount
-    ? [yazanAccount.accountLabel, yazanAccount.accountNumber].filter(Boolean).join(" #")
+    ? yazanAccount.provider === "tradovate"
+      ? [
+          getSyncProviderLabel(yazanAccount.provider),
+          yazanAccount.environment === "demo" ? "Demo" : "Live",
+          yazanAccount.accountLabel || yazanAccount.connectionLabel || yazanAccount.username
+        ]
+          .filter(Boolean)
+          .join(" • ")
+      : [
+          getSyncProviderLabel(yazanAccount.provider),
+          yazanAccount.application.toUpperCase(),
+          yazanAccount.accountNumber ? `#${yazanAccount.accountNumber}` : yazanAccount.accountLabel
+        ]
+          .filter(Boolean)
+          .join(" • ")
     : null;
 
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
@@ -3139,31 +3428,121 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }));
   };
 
-  const openYazanSyncDraft = () => {
+  const updateYazanSyncProvider = (provider: SyncProvider) => {
+    setYazanSyncDraft((current) => {
+      if (current.provider === provider) {
+        return current;
+      }
+
+      const next = createDefaultSyncDraft(provider);
+
+      return {
+        ...next,
+        connectionLabel: current.connectionLabel || next.connectionLabel,
+        environment: current.environment,
+        accountLabel: current.accountLabel || next.accountLabel,
+        accountNumber: current.accountNumber,
+        username: current.username
+      };
+    });
+  };
+
+  const openYazanSyncDraft = (
+    mode: "add" | "edit" = "edit",
+    provider: SyncProvider = yazanAccount?.provider ?? "tradovate"
+  ) => {
     if (!isAdmin) {
       return;
     }
 
     setSelectedModelId("yazan");
     setShowYazanAccountMenu(false);
-    setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
+    setYazanSyncDraftMode(mode);
+    setYazanSyncDraft(
+      mode === "add" ? createDefaultSyncDraft(provider) : yazanAccount ?? createDefaultSyncDraft(provider)
+    );
     setShowYazanSyncDraft(true);
+  };
+
+  const openYazanAccountMenu = (clientX: number, clientY: number) => {
+    if (!isAdmin) {
+      return;
+    }
+
+    setSelectedModelId("yazan");
+    setShowYazanSyncDraft(false);
+    setYazanAccountMenuPosition({
+      x: Math.max(12, Math.min(clientX + 6, window.innerWidth - YAZAN_ACCOUNT_MENU_WIDTH)),
+      y: Math.max(18, Math.min(clientY - 12, window.innerHeight - YAZAN_ACCOUNT_MENU_HEIGHT))
+    });
+    setShowYazanAccountMenu(true);
+  };
+
+  const handleYazanAccountContextMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    isYazan: boolean
+  ) => {
+    if (!isAdmin || !isYazan) {
+      return;
+    }
+
+    event.preventDefault();
+    openYazanAccountMenu(event.clientX, event.clientY);
+  };
+
+  const handleYazanAccountMouseDown = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    isYazan: boolean
+  ) => {
+    if (!isAdmin || !isYazan || event.button !== 2) {
+      return;
+    }
+
+    event.preventDefault();
+    openYazanAccountMenu(event.clientX, event.clientY);
   };
 
   const closeYazanSyncDraft = () => {
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
-    setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
+    setYazanSyncDraft(yazanAccount ?? createDefaultSyncDraft());
   };
 
   const saveYazanSyncDraft = () => {
     const normalized: AccountSyncDraft = {
+      provider: yazanSyncDraft.provider,
+      connectionLabel: yazanSyncDraft.connectionLabel.trim(),
+      environment: yazanSyncDraft.environment,
       accountLabel: yazanSyncDraft.accountLabel.trim(),
-      broker: yazanSyncDraft.broker.trim(),
-      platform: yazanSyncDraft.platform.trim(),
-      accountNumber: yazanSyncDraft.accountNumber.trim()
+      accountNumber: yazanSyncDraft.accountNumber.trim(),
+      username: yazanSyncDraft.username.trim(),
+      accessMode: yazanSyncDraft.accessMode,
+      apiKey: yazanSyncDraft.apiKey.trim(),
+      apiSecret: yazanSyncDraft.apiSecret.trim(),
+      appId: yazanSyncDraft.appId.trim(),
+      appVersion: yazanSyncDraft.appVersion.trim(),
+      deviceId: yazanSyncDraft.deviceId.trim(),
+      application: yazanSyncDraft.application,
+      accountType: yazanSyncDraft.accountType,
+      brokerServerId: yazanSyncDraft.brokerServerId.trim(),
+      accountPassword: yazanSyncDraft.accountPassword.trim(),
+      webhookUrl: yazanSyncDraft.webhookUrl.trim(),
+      webhookAuthMode: yazanSyncDraft.webhookAuthMode
     };
-    const hasContent = Object.values(normalized).some((value) => value.length > 0);
+    const hasContent = [
+      normalized.connectionLabel,
+      normalized.accountLabel,
+      normalized.accountNumber,
+      normalized.username,
+      normalized.apiKey,
+      normalized.apiSecret,
+      normalized.appId,
+      normalized.appVersion,
+      normalized.deviceId,
+      normalized.brokerServerId,
+      normalized.accountPassword,
+      normalized.webhookUrl
+    ].some((value) => value.length > 0);
 
     setYazanAccount(hasContent ? normalized : null);
     setShowYazanSyncDraft(false);
@@ -3172,9 +3551,68 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const removeYazanAccount = () => {
     setYazanAccount(null);
-    setYazanSyncDraft(DEFAULT_YAZAN_SYNC_DRAFT);
+    setYazanSyncDraftMode("add");
+    setYazanSyncDraft(createDefaultSyncDraft());
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
+  };
+
+  const moveAssetSymbol = (sourceSymbol: string, targetSymbol: string) => {
+    if (sourceSymbol === targetSymbol) {
+      return;
+    }
+
+    setAssetOrder((current) => {
+      const normalized = normalizeAssetOrder(current);
+      const sourceIndex = normalized.indexOf(sourceSymbol);
+      const targetIndex = normalized.indexOf(targetSymbol);
+
+      if (sourceIndex < 0 || targetIndex < 0) {
+        return normalized;
+      }
+
+      const next = [...normalized];
+      const [movedSymbol] = next.splice(sourceIndex, 1);
+
+      next.splice(targetIndex, 0, movedSymbol);
+
+      return next;
+    });
+  };
+
+  const handleAssetDragStart = (event: ReactDragEvent<HTMLButtonElement>, symbol: string) => {
+    setDraggedAssetSymbol(symbol);
+    setAssetDropTarget(symbol);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", symbol);
+  };
+
+  const handleAssetDragOver = (event: ReactDragEvent<HTMLLIElement>, symbol: string) => {
+    if (!draggedAssetSymbol || draggedAssetSymbol === symbol) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setAssetDropTarget(symbol);
+  };
+
+  const handleAssetDrop = (event: ReactDragEvent<HTMLLIElement>, symbol: string) => {
+    event.preventDefault();
+    const sourceSymbol = draggedAssetSymbol ?? event.dataTransfer.getData("text/plain");
+
+    if (!sourceSymbol) {
+      return;
+    }
+
+    moveAssetSymbol(sourceSymbol, symbol);
+    setDraggedAssetSymbol(null);
+    setAssetDropTarget(null);
+  };
+
+  const handleAssetDragEnd = () => {
+    setDraggedAssetSymbol(null);
+    setAssetDropTarget(null);
   };
 
   useEffect(() => {
@@ -3236,7 +3674,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       if (event.key === "Escape") {
         setShowYazanSyncDraft(false);
         setShowYazanAccountMenu(false);
-        setYazanSyncDraft(yazanAccount ?? DEFAULT_YAZAN_SYNC_DRAFT);
+        setYazanSyncDraft(yazanAccount ?? createDefaultSyncDraft());
       }
     };
 
@@ -3789,8 +4227,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             top: `${yazanAccountMenuPosition.y}px`
           }}
         >
-          <button type="button" className="sync-account-menu-btn" onClick={openYazanSyncDraft}>
-            Edit Account
+          <button
+            type="button"
+            className="sync-account-menu-btn"
+            onClick={() => openYazanSyncDraft(yazanAccount ? "edit" : "add")}
+          >
+            {yazanAccount ? "Edit Connection" : "Add Connection"}
           </button>
           <button
             type="button"
@@ -3798,7 +4240,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             onClick={removeYazanAccount}
             disabled={!yazanAccount}
           >
-            Remove Account
+            Remove Connection
           </button>
         </div>
       ) : null}
@@ -3901,6 +4343,81 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           <div className="chart-stage">
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
             <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
+            <div className="chart-overlay-stack">
+              <div className="quote-overlay-card">
+                <div className="quote-overlay-head">
+                  <strong>Quote</strong>
+                  <span>{showcaseMode ? "Showcase" : "Derived from last trade"}</span>
+                </div>
+                <div className="quote-overlay-grid">
+                  <div className="quote-overlay-item">
+                    <span>Bid</span>
+                    <strong className="up">
+                      {formatPriceByTick(orderBookSnapshot.bestBid, selectedAsset.tickSize)}
+                    </strong>
+                  </div>
+                  <div className="quote-overlay-item">
+                    <span>Ask</span>
+                    <strong className="down">
+                      {formatPriceByTick(orderBookSnapshot.bestAsk, selectedAsset.tickSize)}
+                    </strong>
+                  </div>
+                  <div className="quote-overlay-item">
+                    <span>Spread</span>
+                    <strong className="neutral">
+                      {formatPriceByTick(orderBookSnapshot.spread, selectedAsset.tickSize)}
+                    </strong>
+                  </div>
+                  <div className="quote-overlay-item">
+                    <span>Bid Depth</span>
+                    <strong className="up">{formatDepthSize(orderBookSnapshot.bidTotal)}</strong>
+                  </div>
+                  <div className="quote-overlay-item">
+                    <span>Ask Depth</span>
+                    <strong className="down">{formatDepthSize(orderBookSnapshot.askTotal)}</strong>
+                  </div>
+                  <div className="quote-overlay-item">
+                    <span>Imbalance</span>
+                    <strong className={orderBookSnapshot.imbalance >= 0 ? "up" : "down"}>
+                      {orderBookSnapshot.imbalance >= 0 ? "+" : ""}
+                      {orderBookSnapshot.imbalance.toFixed(1)}%
+                    </strong>
+                  </div>
+                </div>
+              </div>
+              <div className="order-book-card">
+                <div className="order-book-head">
+                  <strong>Order Book</strong>
+                  <span>{showcaseMode ? "Simulation" : "Depth proxy"}</span>
+                </div>
+                <div className="order-book-labels">
+                  <span>Bid Size</span>
+                  <span>Bid</span>
+                  <span>Ask</span>
+                  <span>Ask Size</span>
+                </div>
+                <div className="order-book-rows">
+                  {orderBookSnapshot.levels.map((level) => (
+                    <div key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`} className="order-book-row">
+                      <span className="order-book-depth-cell bid">
+                        <span className="order-book-depth-fill bid" style={{ width: `${level.bidFillPct}%` }} />
+                        <span className="order-book-depth-value">{formatDepthSize(level.bidSize)}</span>
+                      </span>
+                      <span className="order-book-price bid">
+                        {formatPriceByTick(level.bidPrice, selectedAsset.tickSize)}
+                      </span>
+                      <span className="order-book-price ask">
+                        {formatPriceByTick(level.askPrice, selectedAsset.tickSize)}
+                      </span>
+                      <span className="order-book-depth-cell ask">
+                        <span className="order-book-depth-fill ask" style={{ width: `${level.askFillPct}%` }} />
+                        <span className="order-book-depth-value">{formatDepthSize(level.askSize)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
             {selectedCandles.length === 0 ? (
               <div
                 className={`chart-empty-state${marketStatus === "loading" ? " loading" : ""}`}
@@ -4090,6 +4607,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="watchlist-head">
                     <div>
                       <h2>Assets</h2>
+                      <p>Drag rows to rearrange your symbols.</p>
                     </div>
                   </div>
 
@@ -4100,21 +4618,44 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <span>Chg%</span>
                     </li>
                     {watchlistRows.map((row) => (
-                      <li key={row.symbol}>
+                      <li
+                        key={row.symbol}
+                        className={`watchlist-item${assetDropTarget === row.symbol ? " drag-target" : ""}${
+                          draggedAssetSymbol === row.symbol ? " dragging" : ""
+                        }`}
+                        onDragOver={(event) => handleAssetDragOver(event, row.symbol)}
+                        onDrop={(event) => handleAssetDrop(event, row.symbol)}
+                      >
                         <button
                           type="button"
                           className={`watchlist-row ${
                             row.symbol === selectedSymbol ? "selected" : ""
                           }`}
+                          draggable={!isMobileWorkspace}
                           onClick={() => {
                             setSelectedSymbol(row.symbol);
                             setSelectedHistoryId(null);
                             setShowAllTradesOnChart(false);
                             focusTradeIdRef.current = null;
                           }}
+                          onDragStart={(event) => handleAssetDragStart(event, row.symbol)}
+                          onDragEnd={handleAssetDragEnd}
                         >
                           <span className="symbol-col">
-                            <span>{row.symbol}</span>
+                            <span className="symbol-line">
+                              <span className="watchlist-grip" aria-hidden>
+                                <svg viewBox="0 0 16 16">
+                                  <path
+                                    d="M5 3.2h.01M11 3.2h.01M5 8h.01M11 8h.01M5 12.8h.01M11 12.8h.01"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.8"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </span>
+                              <span>{row.symbol}</span>
+                            </span>
                             <small>
                               {row.name} - {row.category}
                             </small>
@@ -4145,7 +4686,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <>
                       <div className="watchlist-head with-action">
                         <div>
-                          <h2>Edit Account</h2>
+                          <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
+                          <p>Choose a Tradovate or Trade Syncer setup for Yazan.</p>
                         </div>
                         <button type="button" className="panel-action-btn" onClick={closeYazanSyncDraft}>
                           Back
@@ -4158,6 +4700,41 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           saveYazanSyncDraft();
                         }}
                       >
+                        <div className="sync-provider-switch" role="tablist" aria-label="Sync provider">
+                          <button
+                            type="button"
+                            className={`sync-provider-btn ${
+                              yazanSyncDraft.provider === "tradovate" ? "active" : ""
+                            }`}
+                            onClick={() => updateYazanSyncProvider("tradovate")}
+                          >
+                            Tradovate
+                          </button>
+                          <button
+                            type="button"
+                            className={`sync-provider-btn ${
+                              yazanSyncDraft.provider === "tradesyncer" ? "active" : ""
+                            }`}
+                            onClick={() => updateYazanSyncProvider("tradesyncer")}
+                          >
+                            Trade Syncer
+                          </button>
+                        </div>
+                        <label className="account-editor-row">
+                          <span>Connection Label</span>
+                          <input
+                            className="account-input"
+                            value={yazanSyncDraft.connectionLabel}
+                            onChange={(event) => {
+                              updateYazanSyncDraft("connectionLabel", event.target.value);
+                            }}
+                            placeholder={
+                              yazanSyncDraft.provider === "tradovate"
+                                ? "Yazan Tradovate"
+                                : "Yazan Trade Syncer"
+                            }
+                          />
+                        </label>
                         <label className="account-editor-row">
                           <span>Account Name</span>
                           <input
@@ -4169,52 +4746,406 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             placeholder="Roman Capital Primary"
                           />
                         </label>
-                        <label className="account-editor-row">
-                          <span>Broker</span>
-                          <input
-                            className="account-input"
-                            value={yazanSyncDraft.broker}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("broker", event.target.value);
-                            }}
-                            placeholder="TradeLocker"
-                          />
-                        </label>
-                        <label className="account-editor-row">
-                          <span>Platform</span>
-                          <input
-                            className="account-input"
-                            value={yazanSyncDraft.platform}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("platform", event.target.value);
-                            }}
-                            placeholder="Rithmic"
-                          />
-                        </label>
-                        <label className="account-editor-row">
-                          <span>Account Number</span>
-                          <input
-                            className="account-input"
-                            value={yazanSyncDraft.accountNumber}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("accountNumber", event.target.value);
-                            }}
-                            placeholder="YZ-884201"
-                          />
-                        </label>
+                        {yazanSyncDraft.provider === "tradovate" ? (
+                          <>
+                            <div className="account-editor-row">
+                              <span>Environment</span>
+                              <div className="sync-mode-row">
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.environment === "live" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, environment: "live" }));
+                                  }}
+                                >
+                                  Live
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.environment === "demo" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, environment: "demo" }));
+                                  }}
+                                >
+                                  Demo
+                                </button>
+                              </div>
+                              <small className="sync-field-hint">
+                                Tradovate API access is configured separately for live and simulation accounts.
+                              </small>
+                            </div>
+                            <div className="account-editor-row">
+                              <span>Access Mode</span>
+                              <div className="sync-mode-row">
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.accessMode === "api_key" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, accessMode: "api_key" }));
+                                  }}
+                                >
+                                  API Key
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.accessMode === "api_key_password" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({
+                                      ...prev,
+                                      accessMode: "api_key_password"
+                                    }));
+                                  }}
+                                >
+                                  API Key + Dedicated Password
+                                </button>
+                              </div>
+                              <small className="sync-field-hint">
+                                Dedicated-password mode is the safer fit when the key is used outside Tradovate.
+                              </small>
+                            </div>
+                            <label className="account-editor-row">
+                              <span>Username</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.username}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("username", event.target.value);
+                                }}
+                                placeholder="yourname@tradovate"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>API Key</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.apiKey}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("apiKey", event.target.value);
+                                }}
+                                placeholder="Tradovate API key"
+                              />
+                            </label>
+                            {yazanSyncDraft.accessMode === "api_key_password" ? (
+                              <label className="account-editor-row">
+                                <span>Dedicated Password</span>
+                                <input
+                                  className="account-input"
+                                  value={yazanSyncDraft.apiSecret}
+                                  onChange={(event) => {
+                                    updateYazanSyncDraft("apiSecret", event.target.value);
+                                  }}
+                                  placeholder="Dedicated API password"
+                                />
+                              </label>
+                            ) : null}
+                            <label className="account-editor-row">
+                              <span>App ID</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.appId}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("appId", event.target.value);
+                                }}
+                                placeholder="roman-capital-terminal"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>App Version</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.appVersion}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("appVersion", event.target.value);
+                                }}
+                                placeholder="1.0.0"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Device ID</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.deviceId}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("deviceId", event.target.value);
+                                }}
+                                placeholder="optional-device-id"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Account Number</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.accountNumber}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("accountNumber", event.target.value);
+                                }}
+                                placeholder="YZ-884201"
+                              />
+                            </label>
+                            <div className="sync-note-card">
+                              <strong>Tradovate setup notes</strong>
+                              <p>
+                                Official Tradovate docs require API Access to be enabled in Application Settings and
+                                the key permissions set for the actions you need.
+                              </p>
+                              <ul className="sync-note-list">
+                                <li>Live API usage requires Tradovate&apos;s API add-on and account prerequisites.</li>
+                                <li>Market-data permission is separate from order placement and modification.</li>
+                                <li>OAuth exists for public apps, but this local flow stages API-key setups.</li>
+                              </ul>
+                              <div className="sync-doc-links">
+                                <a href={TRADOVATE_API_ACCESS_URL} target="_blank" rel="noreferrer">
+                                  API Access
+                                </a>
+                                <a href={TRADOVATE_AUTH_OPTIONS_URL} target="_blank" rel="noreferrer">
+                                  Auth Options
+                                </a>
+                                <a href={TRADOVATE_MARKET_DATA_URL} target="_blank" rel="noreferrer">
+                                  Market Data
+                                </a>
+                                <a href={TRADOVATE_PERMISSIONS_URL} target="_blank" rel="noreferrer">
+                                  Permissions
+                                </a>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <label className="account-editor-row">
+                              <span>Account Number</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.accountNumber}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("accountNumber", event.target.value);
+                                }}
+                                placeholder="MT4 / MT5 account number"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Account Password</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.accountPassword}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("accountPassword", event.target.value);
+                                }}
+                                placeholder="MetaTrader account password"
+                              />
+                            </label>
+                            <div className="account-editor-row">
+                              <span>Application</span>
+                              <div className="sync-mode-row">
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.application === "mt4" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, application: "mt4" }));
+                                  }}
+                                >
+                                  MT4
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.application === "mt5" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, application: "mt5" }));
+                                  }}
+                                >
+                                  MT5
+                                </button>
+                              </div>
+                            </div>
+                            <label className="account-editor-row">
+                              <span>Broker Server ID</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.brokerServerId}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("brokerServerId", event.target.value);
+                                }}
+                                placeholder="Tradesync broker_server_id"
+                              />
+                            </label>
+                            <div className="account-editor-row">
+                              <span>Account Type</span>
+                              <div className="sync-mode-row">
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.accountType === "readonly" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, accountType: "readonly" }));
+                                  }}
+                                >
+                                  Read-only
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.accountType === "full" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, accountType: "full" }));
+                                  }}
+                                >
+                                  Full
+                                </button>
+                              </div>
+                            </div>
+                            <label className="account-editor-row">
+                              <span>API Key</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.apiKey}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("apiKey", event.target.value);
+                                }}
+                                placeholder="Trade Syncer API key"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>API Secret</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.apiSecret}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("apiSecret", event.target.value);
+                                }}
+                                placeholder="Trade Syncer API secret"
+                              />
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Webhook URL</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.webhookUrl}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("webhookUrl", event.target.value);
+                                }}
+                                placeholder="https://yourapp.com/api/tradesync"
+                              />
+                            </label>
+                            <div className="account-editor-row">
+                              <span>Webhook Auth</span>
+                              <div className="sync-mode-row compact">
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.webhookAuthMode === "none" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "none" }));
+                                  }}
+                                >
+                                  None
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.webhookAuthMode === "basic_auth" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({
+                                      ...prev,
+                                      webhookAuthMode: "basic_auth"
+                                    }));
+                                  }}
+                                >
+                                  Basic
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.webhookAuthMode === "bearer_token" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({
+                                      ...prev,
+                                      webhookAuthMode: "bearer_token"
+                                    }));
+                                  }}
+                                >
+                                  Bearer
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sync-mode-btn ${
+                                    yazanSyncDraft.webhookAuthMode === "api_keys" ? "active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "api_keys" }));
+                                  }}
+                                >
+                                  API Key
+                                </button>
+                              </div>
+                            </div>
+                            <div className="sync-note-card">
+                              <strong>Trade Syncer setup notes</strong>
+                              <p>
+                                The official Tradesync developer docs are focused on MT4 and MT5 account onboarding,
+                                broker server IDs, and API key/secret authentication.
+                              </p>
+                              <ul className="sync-note-list">
+                                <li>API requests use Basic auth with your API key and secret.</li>
+                                <li>Create-account requests require MT4 or MT5, account number, password, and broker server ID.</li>
+                                <li>Webhook authorization can be none, basic, bearer, or API-key based.</li>
+                              </ul>
+                              <div className="sync-doc-links">
+                                <a href={TRADESYNC_AUTH_URL} target="_blank" rel="noreferrer">
+                                  Authentication
+                                </a>
+                                <a href={TRADESYNC_INTRO_BROKER_URL} target="_blank" rel="noreferrer">
+                                  Brokers
+                                </a>
+                                <a href={TRADESYNC_CREATE_ACCOUNT_URL} target="_blank" rel="noreferrer">
+                                  Create Account
+                                </a>
+                              </div>
+                            </div>
+                          </>
+                        )}
                         <div className="account-editor-actions">
                           <button type="submit" className="account-submit-btn account-editor-submit">
-                            Save
+                            Save Connection
                           </button>
                         </div>
                       </form>
                     </>
                   ) : (
                     <>
-                      <div className="watchlist-head">
+                      <div className={`watchlist-head ${isAdmin ? "with-action" : ""}`}>
                         <div>
                           <h2>Models / People</h2>
+                          <p>
+                            {isAdmin
+                              ? "Add a Tradovate or Trade Syncer setup for Yazan."
+                              : "Profiles in the current workspace."}
+                          </p>
                         </div>
+                        {isAdmin ? (
+                          <button
+                            type="button"
+                            className="panel-action-btn"
+                            onClick={() => openYazanSyncDraft("add")}
+                          >
+                            Add
+                          </button>
+                        ) : null}
                       </div>
                       <ul className="model-list">
                         {modelProfiles.map((model) => {
@@ -4234,23 +5165,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                     setShowYazanSyncDraft(false);
                                   }
                                 }}
-                                onContextMenu={(event) => {
-                                  if (!isAdmin || !isYazan) {
-                                    return;
-                                  }
-
-                                  event.preventDefault();
-                                  setSelectedModelId("yazan");
-                                  setShowYazanSyncDraft(false);
-                                  setYazanAccountMenuPosition({
-                                    x: Math.max(12, Math.min(event.clientX + 6, window.innerWidth - 188)),
-                                    y: Math.max(18, event.clientY - 108)
-                                  });
-                                  setShowYazanAccountMenu(true);
-                                }}
+                                onMouseDown={(event) => handleYazanAccountMouseDown(event, isYazan)}
+                                onContextMenu={(event) => handleYazanAccountContextMenu(event, isYazan)}
                                 title={
                                   isAdmin && isYazan
-                                    ? "Right-click for account options"
+                                    ? "Right-click for connection options"
                                     : model.name
                                 }
                               >
@@ -4260,6 +5179,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 </span>
                                 {isYazan && yazanAccountSummary ? (
                                   <span className="model-account">{yazanAccountSummary}</span>
+                                ) : isYazan ? (
+                                  <span className="model-account muted">No broker sync connected</span>
                                 ) : model.accountNumber ? (
                                   <span className="model-account">
                                     Yazan Account #{model.accountNumber}
