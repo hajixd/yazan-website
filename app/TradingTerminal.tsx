@@ -161,6 +161,20 @@ type MarketFeedResponse = {
   error?: string;
 };
 
+type LiveTradeResponse = {
+  symbol: string;
+  price: number;
+  time: number;
+  meta?: {
+    provider: string;
+    dataset: string;
+    schema: string;
+    databentoSymbol: string;
+    updatedAt: string;
+  };
+  error?: string;
+};
+
 type SyncProvider = "tradovate" | "tradesyncer";
 type SyncEnvironment = "live" | "demo";
 type TradovateAccessMode = "api_key" | "api_key_password";
@@ -395,6 +409,7 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
+const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_500;
 const WATCHLIST_FETCH_BATCH_SIZE = 3;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
@@ -721,6 +736,26 @@ const fetchFuturesCandles = async (
 
   if (!response.ok) {
     throw new Error(payload.error || "Failed to load market candles.");
+  }
+
+  return payload;
+};
+
+const fetchLatestFuturesTrade = async (
+  symbol: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<LiveTradeResponse> => {
+  const params = new URLSearchParams({
+    symbol
+  });
+  const response = await fetch(`/api/futures/last?${params.toString()}`, {
+    cache: "no-store",
+    signal: options.signal
+  });
+  const payload = (await response.json()) as LiveTradeResponse;
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load the latest futures trade.");
   }
 
   return payload;
@@ -1773,6 +1808,108 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
+
+  useEffect(() => {
+    if (showcaseMode || marketStatus !== "ready" || selectedCandles.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+    let activeController: AbortController | null = null;
+
+    const refreshLatestTrade = async () => {
+      if (cancelled || refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+
+      try {
+        const payload = await fetchLatestFuturesTrade(selectedSymbol, {
+          signal: controller.signal
+        });
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        const tradeBucketTime = floorToTimeframe(payload.time, selectedTimeframe);
+
+        setSeriesMap((prev) => {
+          const activeSeries = prev[selectedKey];
+
+          if (!activeSeries || activeSeries.length === 0) {
+            return prev;
+          }
+
+          const latestSeriesCandle = activeSeries[activeSeries.length - 1];
+
+          if (!latestSeriesCandle || latestSeriesCandle.time > tradeBucketTime) {
+            return prev;
+          }
+
+          const nextLiveCandle =
+            latestSeriesCandle.time === tradeBucketTime
+              ? {
+                  ...latestSeriesCandle,
+                  high: Math.max(latestSeriesCandle.high, payload.price),
+                  low: Math.min(latestSeriesCandle.low, payload.price),
+                  close: payload.price
+                }
+              : {
+                  time: tradeBucketTime,
+                  open: latestSeriesCandle.close,
+                  high: Math.max(latestSeriesCandle.close, payload.price),
+                  low: Math.min(latestSeriesCandle.close, payload.price),
+                  close: payload.price
+                };
+
+          if (
+            latestSeriesCandle.time === nextLiveCandle.time &&
+            latestSeriesCandle.open === nextLiveCandle.open &&
+            latestSeriesCandle.high === nextLiveCandle.high &&
+            latestSeriesCandle.low === nextLiveCandle.low &&
+            latestSeriesCandle.close === nextLiveCandle.close
+          ) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [selectedKey]: mergeCandles(activeSeries, [nextLiveCandle]).slice(-MAX_CHART_CANDLE_COUNT)
+          };
+        });
+
+        if (payload.meta?.updatedAt) {
+          setMarketFeedMeta((prev) =>
+            prev ? { ...prev, updatedAt: payload.meta?.updatedAt ?? prev.updatedAt } : prev
+          );
+        }
+      } catch {
+        // Keep the last known candle if a live patch misses.
+      } finally {
+        if (activeController === controller) {
+          activeController = null;
+        }
+
+        refreshInFlight = false;
+      }
+    };
+
+    void refreshLatestTrade();
+    const intervalId = window.setInterval(() => {
+      void refreshLatestTrade();
+    }, LIVE_PRICE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      activeController?.abort();
+    };
+  }, [marketStatus, selectedCandles.length, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
 
   const marketCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
     const next: Record<string, Candle[]> = {};
