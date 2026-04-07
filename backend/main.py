@@ -197,6 +197,7 @@ def build_status_event(
     message: str,
     databento_symbol: str,
     resolved_symbol: str | None,
+    schema: str = "trades",
 ) -> dict[str, Any]:
     return {
         "type": "status",
@@ -204,7 +205,7 @@ def build_status_event(
         "state": state,
         "message": message,
         "time": now_ms(),
-        "meta": build_meta("trades", databento_symbol, resolved_symbol),
+        "meta": build_meta(schema, databento_symbol, resolved_symbol),
     }
 
 
@@ -215,6 +216,7 @@ def build_error_event(
     event_time_ms: int,
     databento_symbol: str,
     resolved_symbol: str | None,
+    schema: str = "trades",
 ) -> dict[str, Any]:
     return {
         "type": "error",
@@ -222,66 +224,37 @@ def build_error_event(
         "message": message,
         "retrying": retrying,
         "time": event_time_ms,
-        "meta": build_meta("trades", databento_symbol, resolved_symbol),
+        "meta": build_meta(schema, databento_symbol, resolved_symbol),
     }
 
 
-def stream_databento_worker(
+def is_depth_not_authorized(message: str) -> bool:
+    lowered = message.lower()
+    return "mbp-10" in lowered and any(
+        phrase in lowered
+        for phrase in ("not authorized", "not entitled", "permission", "license", "subscription")
+    )
+
+
+def stream_trades_client(
     symbol: str,
     databento_symbol: str,
-    output_queue: queue.Queue[bytes | dict[str, Any] | None],
+    api_key: str,
+    enqueue: Any,
     stop_event: threading.Event,
-    client_ref: dict[str, db.Live | None],
+    client_refs: dict[str, db.Live | None],
 ) -> None:
-    api_key = os.environ.get("DATABENTO_API_KEY") or os.environ.get("DATABENTO_KEY")
     resolved_symbol: str | None = None
     connected = False
     client: db.Live | None = None
 
-    def enqueue(payload: bytes | dict[str, Any] | None) -> None:
-        if stop_event.is_set():
-            return
-
-        try:
-            output_queue.put(payload, timeout=QUEUE_POLL_TIMEOUT_S)
-        except queue.Full:
-            if payload is None:
-                try:
-                    output_queue.put_nowait(payload)
-                except queue.Full:
-                    pass
-
-    if not api_key:
-        enqueue(
-            build_error_event(
-                symbol,
-                "Missing DATABENTO_API_KEY. Add it before starting the live stream.",
-                False,
-                now_ms(),
-                databento_symbol,
-                resolved_symbol,
-            )
-        )
-        enqueue(None)
-        return
-
     try:
-        enqueue(
-            build_status_event(
-                symbol,
-                "connecting",
-                "Connecting to Databento live stream...",
-                databento_symbol,
-                resolved_symbol,
-            )
-        )
-
         client = db.Live(
             key=api_key,
             reconnect_policy=db.ReconnectPolicy.RECONNECT,
             heartbeat_interval_s=10,
         )
-        client_ref["client"] = client
+        client_refs["trades"] = client
 
         client.subscribe(
             dataset=DATABENTO_DATASET,
@@ -289,6 +262,123 @@ def stream_databento_worker(
             symbols=[databento_symbol],
             stype_in="continuous",
         )
+
+        for record in client:
+            if stop_event.is_set():
+                break
+
+            if isinstance(record, SymbolMappingMsg):
+                resolved = str(record.stype_out_symbol).strip()
+                resolved_symbol = resolved or None
+                enqueue(
+                    build_status_event(
+                        symbol,
+                        "connected",
+                        f"{databento_symbol} mapped to {resolved_symbol}.",
+                        databento_symbol,
+                        resolved_symbol,
+                    )
+                )
+                continue
+
+            if isinstance(record, SystemMsg):
+                enqueue(encode_sse_comment())
+
+                if not bool(getattr(record, "is_heartbeat", False)) and not connected:
+                    connected = True
+                    enqueue(
+                        build_status_event(
+                            symbol,
+                            "connected",
+                            "Databento live trade stream connected.",
+                            databento_symbol,
+                            resolved_symbol,
+                        )
+                    )
+
+                continue
+
+            if isinstance(record, ErrorMsg):
+                message = str(getattr(record, "err", "")) or "Databento sent an error message."
+                retrying = not classify_terminal(message)
+                enqueue(
+                    build_error_event(
+                        symbol,
+                        message,
+                        retrying,
+                        ns_to_ms(getattr(record, "ts_event", None)),
+                        databento_symbol,
+                        resolved_symbol,
+                    )
+                )
+
+                if not retrying:
+                    break
+
+                continue
+
+            if not connected:
+                connected = True
+                enqueue(
+                    build_status_event(
+                        symbol,
+                        "connected",
+                        "Databento live trade stream connected.",
+                        databento_symbol,
+                        resolved_symbol,
+                    )
+                )
+
+            if isinstance(record, TradeMsg):
+                enqueue(
+                    {
+                        "type": "trade",
+                        "symbol": symbol,
+                        "price": normalise_price(
+                            getattr(record, "pretty_price", None), getattr(record, "price", None)
+                        ),
+                        "size": coerce_int(getattr(record, "size", 0)),
+                        "time": ns_to_ms(getattr(record, "ts_event", None)),
+                        "meta": build_meta("trades", databento_symbol, resolved_symbol),
+                    }
+                )
+    except Exception as error:
+        message = str(error) or "Databento live trade stream failed."
+        enqueue(
+            build_error_event(
+                symbol,
+                message,
+                not classify_terminal(message),
+                now_ms(),
+                databento_symbol,
+                resolved_symbol,
+            )
+        )
+    finally:
+        client_refs["trades"] = None
+        stop_live_client(client)
+
+
+def stream_depth_client(
+    symbol: str,
+    databento_symbol: str,
+    api_key: str,
+    enqueue: Any,
+    stop_event: threading.Event,
+    client_refs: dict[str, db.Live | None],
+) -> None:
+    resolved_symbol: str | None = None
+    connected = False
+    client: db.Live | None = None
+
+    try:
+        client = db.Live(
+            key=api_key,
+            reconnect_policy=db.ReconnectPolicy.RECONNECT,
+            heartbeat_interval_s=10,
+        )
+        client_refs["depth"] = client
+
         client.subscribe(
             dataset=DATABENTO_DATASET,
             schema="mbp-10",
@@ -333,6 +423,20 @@ def stream_databento_worker(
 
             if isinstance(record, ErrorMsg):
                 message = str(getattr(record, "err", "")) or "Databento sent an error message."
+
+                if is_depth_not_authorized(message):
+                    enqueue(
+                        build_status_event(
+                            symbol,
+                            "stopped",
+                            "Live order book requires Databento mbp-10 entitlement.",
+                            databento_symbol,
+                            resolved_symbol,
+                            schema="mbp-10",
+                        )
+                    )
+                    break
+
                 retrying = not classify_terminal(message)
                 enqueue(
                     build_error_event(
@@ -342,6 +446,7 @@ def stream_databento_worker(
                         ns_to_ms(getattr(record, "ts_event", None)),
                         databento_symbol,
                         resolved_symbol,
+                        schema="mbp-10",
                     )
                 )
 
@@ -356,26 +461,12 @@ def stream_databento_worker(
                     build_status_event(
                         symbol,
                         "connected",
-                        "Databento live stream connected.",
+                        "Databento live depth stream connected.",
                         databento_symbol,
                         resolved_symbol,
+                        schema="mbp-10",
                     )
                 )
-
-            if isinstance(record, TradeMsg):
-                enqueue(
-                    {
-                        "type": "trade",
-                        "symbol": symbol,
-                        "price": normalise_price(
-                            getattr(record, "pretty_price", None), getattr(record, "price", None)
-                        ),
-                        "size": coerce_int(getattr(record, "size", 0)),
-                        "time": ns_to_ms(getattr(record, "ts_event", None)),
-                        "meta": build_meta("trades", databento_symbol, resolved_symbol),
-                    }
-                )
-                continue
 
             if isinstance(record, MBP10Msg):
                 enqueue(
@@ -388,7 +479,21 @@ def stream_databento_worker(
                     }
                 )
     except Exception as error:
-        message = str(error) or "Databento live stream failed."
+        message = str(error) or "Databento live depth stream failed."
+
+        if is_depth_not_authorized(message):
+            enqueue(
+                build_status_event(
+                    symbol,
+                    "stopped",
+                    "Live order book requires Databento mbp-10 entitlement.",
+                    databento_symbol,
+                    resolved_symbol,
+                    schema="mbp-10",
+                )
+            )
+            return
+
         enqueue(
             build_error_event(
                 symbol,
@@ -397,12 +502,77 @@ def stream_databento_worker(
                 now_ms(),
                 databento_symbol,
                 resolved_symbol,
+                schema="mbp-10",
             )
         )
     finally:
-        client_ref["client"] = None
+        client_refs["depth"] = None
         stop_live_client(client)
+
+
+def stream_databento_worker(
+    symbol: str,
+    databento_symbol: str,
+    output_queue: queue.Queue[bytes | dict[str, Any] | None],
+    stop_event: threading.Event,
+    client_refs: dict[str, db.Live | None],
+) -> None:
+    api_key = os.environ.get("DATABENTO_API_KEY") or os.environ.get("DATABENTO_KEY")
+
+    def enqueue(payload: bytes | dict[str, Any] | None) -> None:
+        if stop_event.is_set():
+            return
+
+        try:
+            output_queue.put(payload, timeout=QUEUE_POLL_TIMEOUT_S)
+        except queue.Full:
+            if payload is None:
+                try:
+                    output_queue.put_nowait(payload)
+                except queue.Full:
+                    pass
+
+    if not api_key:
+        enqueue(
+            build_error_event(
+                symbol,
+                "Missing DATABENTO_API_KEY. Add it before starting the live stream.",
+                False,
+                now_ms(),
+                databento_symbol,
+                None,
+            )
+        )
         enqueue(None)
+        return
+
+    enqueue(
+        build_status_event(
+            symbol,
+            "connecting",
+            "Connecting to Databento live stream...",
+            databento_symbol,
+            None,
+        )
+    )
+
+    trades_thread = threading.Thread(
+        target=stream_trades_client,
+        args=(symbol, databento_symbol, api_key, enqueue, stop_event, client_refs),
+        daemon=True,
+    )
+    depth_thread = threading.Thread(
+        target=stream_depth_client,
+        args=(symbol, databento_symbol, api_key, enqueue, stop_event, client_refs),
+        daemon=True,
+    )
+
+    trades_thread.start()
+    depth_thread.start()
+    trades_thread.join()
+    depth_thread.join()
+
+    enqueue(None)
 
 
 @app.get("/health")
@@ -423,10 +593,10 @@ async def futures_live(
 
     output_queue: queue.Queue[bytes | dict[str, Any] | None] = queue.Queue(maxsize=512)
     stop_event = threading.Event()
-    client_ref: dict[str, db.Live | None] = {"client": None}
+    client_refs: dict[str, db.Live | None] = {"trades": None, "depth": None}
     worker = threading.Thread(
         target=stream_databento_worker,
-        args=(normalized_symbol, databento_symbol, output_queue, stop_event, client_ref),
+        args=(normalized_symbol, databento_symbol, output_queue, stop_event, client_refs),
         daemon=True,
     )
     worker.start()
@@ -455,7 +625,8 @@ async def futures_live(
                 yield encode_sse_event(item)
         finally:
             stop_event.set()
-            stop_live_client(client_ref.get("client"))
+            stop_live_client(client_refs.get("trades"))
+            stop_live_client(client_refs.get("depth"))
             worker.join(timeout=1.5)
 
     return StreamingResponse(

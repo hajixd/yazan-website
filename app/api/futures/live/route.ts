@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 const encoder = new TextEncoder();
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+const BACKEND_STREAM_PROXY_TIMEOUT_MS = 2_500;
 
 const encodeSseEvent = (payload: DatabentoLiveEvent) => {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
@@ -14,6 +15,49 @@ const encodeSseEvent = (payload: DatabentoLiveEvent) => {
 
 const encodeSseHeartbeat = () => {
   return encoder.encode(`: ping\n\n`);
+};
+
+const proxyHostedLiveStream = async (request: Request, symbol: string) => {
+  const configuredBackendBase = (process.env.NEXT_PUBLIC_BACKEND_URL ?? process.env.BACKEND_URL ?? "").replace(
+    /\/+$/,
+    ""
+  );
+  const backendStreamUrl = configuredBackendBase
+    ? new URL(`${configuredBackendBase}/futures/live`)
+    : new URL("/api/backend/futures/live", request.url);
+
+  backendStreamUrl.searchParams.set("symbol", symbol);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), BACKEND_STREAM_PROXY_TIMEOUT_MS);
+
+  try {
+    const upstream = await fetch(backendStreamUrl, {
+      headers: {
+        Accept: "text/event-stream"
+      },
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      return null;
+    }
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Accel-Buffering": "no"
+      }
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 export async function GET(request: Request) {
@@ -24,10 +68,16 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unsupported futures symbol." }, { status: 400 });
   }
 
+  const hostedStream = await proxyHostedLiveStream(request, symbol);
+
+  if (hostedStream) {
+    return hostedStream;
+  }
+
   if (process.env.VERCEL) {
     return Response.json(
       {
-        error: "Databento live bridge is unavailable in the Vercel runtime. Use trade polling fallback."
+        error: "Databento live stream backend is unavailable. Use trade polling fallback."
       },
       {
         status: 503,

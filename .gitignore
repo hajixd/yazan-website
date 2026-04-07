@@ -19,6 +19,14 @@ yarn-error.log*
 pnpm-debug.log*
 .next-dev*.log
 .playwright-*.png
+.tmp-*.log
+playwright-*.png
+.vercel/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
 # local render temp
 .render/
