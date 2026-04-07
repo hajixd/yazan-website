@@ -53,6 +53,18 @@ def emit(payload: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def log_terminal_api_key_error(symbol: str, message: str) -> None:
+    if not classify_terminal(message):
+        return
+
+    sys.stderr.write(
+        f"[databento-live:{symbol}] Databento API key was rejected. "
+        "Check DATABENTO_API_KEY / DATABENTO_KEY.\n"
+    )
+    sys.stderr.write(f"[databento-live:{symbol}] {message.strip()}\n")
+    sys.stderr.flush()
+
+
 def classify_terminal(message: str) -> bool:
     lowered = message.lower()
     return any(pattern in lowered for pattern in TERMINAL_ERROR_PATTERNS)
@@ -261,6 +273,7 @@ def main() -> int:
 
             if isinstance(record, ErrorMsg):
                 message = str(getattr(record, "err", "")) or "Databento sent an error message."
+                log_terminal_api_key_error(args.symbol, message)
                 emit(
                     {
                         "type": "error",
@@ -301,6 +314,7 @@ def main() -> int:
 
     except Exception as error:
         message = str(error) or "Databento live bridge failed."
+        log_terminal_api_key_error(args.symbol, message)
         emit(
             {
                 "type": "error",

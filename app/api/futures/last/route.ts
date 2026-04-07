@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { futuresAssets, getAssetBySymbol } from "../../../../lib/futuresCatalog";
+import {
+  futuresAssets,
+  getAssetBySymbol,
+  type FutureAsset
+} from "../../../../lib/futuresCatalog";
+import { logDatabentoApiKeyFailure } from "../../../../lib/server/databentoAuth";
 import { buildSimulatedLatestTrade } from "../../../../lib/simulatedFutures";
 
 type DatabentoTradeRecord = {
@@ -9,9 +14,45 @@ type DatabentoTradeRecord = {
   price?: string | number;
 };
 
+type LatestTradeMeta = {
+  provider: string;
+  dataset: string;
+  schema: string;
+  databentoSymbol: string;
+  updatedAt: string;
+  fallback?: "cache" | "simulation";
+  reason?: string;
+};
+
+type LatestTradeResponseBody = {
+  symbol: string;
+  price: number;
+  time: number;
+  meta: LatestTradeMeta;
+  warning?: string;
+};
+
+type LatestTradeCacheEntry = {
+  payload: LatestTradeResponseBody;
+  cachedAt: number;
+};
+
 const DATABENTO_HISTORICAL_URL = "https://hist.databento.com/v0/timeseries.get_range";
 const DATABENTO_DATASET = "GLBX.MDP3";
 const RECENT_TRADE_WINDOW_MS = 10 * 60_000;
+const DATABENTO_RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+const globalForDatabentoTradeCache = globalThis as typeof globalThis & {
+  __romanDatabentoLatestTradeCache?: Map<string, LatestTradeCacheEntry>;
+};
+
+const databentoLatestTradeCache =
+  globalForDatabentoTradeCache.__romanDatabentoLatestTradeCache ??
+  new Map<string, LatestTradeCacheEntry>();
+
+if (!globalForDatabentoTradeCache.__romanDatabentoLatestTradeCache) {
+  globalForDatabentoTradeCache.__romanDatabentoLatestTradeCache = databentoLatestTradeCache;
+}
 
 const normalizeNumber = (value: string | number | undefined): number => {
   const next = typeof value === "number" ? value : Number(value);
@@ -65,6 +106,105 @@ const parseLatestTrade = (payload: string) => {
   return latestTrade;
 };
 
+const buildDatabentoMeta = (
+  databentoSymbol: string,
+  updatedAt = new Date().toISOString()
+): LatestTradeMeta => {
+  return {
+    provider: "Databento",
+    dataset: DATABENTO_DATASET,
+    schema: "trades",
+    databentoSymbol,
+    updatedAt
+  };
+};
+
+const buildSimulationTradePayload = (
+  asset: FutureAsset,
+  reason?: string
+): LatestTradeResponseBody => {
+  const latestTrade = buildSimulatedLatestTrade(asset, "15m");
+
+  return {
+    symbol: asset.symbol,
+    price: latestTrade.price,
+    time: latestTrade.time,
+    meta: {
+      provider: "Simulation",
+      dataset: "local",
+      schema: "simulated-trades",
+      databentoSymbol: asset.symbol,
+      updatedAt: new Date().toISOString(),
+      fallback: "simulation",
+      reason
+    },
+    warning: reason
+  };
+};
+
+const storeLatestTradeCache = (asset: FutureAsset, payload: LatestTradeResponseBody) => {
+  databentoLatestTradeCache.set(asset.symbol, {
+    payload,
+    cachedAt: Date.now()
+  });
+};
+
+const buildCachedTradePayload = (
+  asset: FutureAsset,
+  reason?: string
+): LatestTradeResponseBody | null => {
+  const entry = databentoLatestTradeCache.get(asset.symbol);
+
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    ...entry.payload,
+    meta: {
+      ...buildDatabentoMeta(asset.databentoSymbol, new Date(entry.cachedAt).toISOString()),
+      provider: "Databento Cache",
+      fallback: "cache",
+      reason
+    },
+    warning: reason
+  };
+};
+
+const fetchDatabentoText = async (
+  url: URL,
+  authHeaders: { Authorization: string; Accept: string },
+  attempts = 2
+) => {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: authHeaders,
+        cache: "no-store"
+      });
+      const payload = await response.text();
+
+      if (
+        response.ok ||
+        !DATABENTO_RETRYABLE_STATUSES.has(response.status) ||
+        attempt >= attempts - 1
+      ) {
+        return { response, payload };
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (attempt >= attempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw (lastError instanceof Error ? lastError : new Error("Databento request failed."));
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbol = String(searchParams.get("symbol") || futuresAssets[0].symbol).toUpperCase();
@@ -75,79 +215,68 @@ export async function GET(request: Request) {
   }
 
   const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
+  const headers = {
+    "Cache-Control": "no-store"
+  };
 
   if (!apiKey) {
-    const latestTrade = buildSimulatedLatestTrade(asset, "15m");
-
-    return NextResponse.json(
-      {
-        symbol: asset.symbol,
-        price: latestTrade.price,
-        time: latestTrade.time,
-        meta: {
-          provider: "Simulation",
-          dataset: "local",
-          schema: "simulated-trades",
-          databentoSymbol: asset.symbol,
-          updatedAt: new Date().toISOString()
-        }
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store"
-        }
-      }
-    );
+    return NextResponse.json(buildSimulationTradePayload(asset), { headers });
   }
 
   const endMs = Date.now();
   const startMs = endMs - RECENT_TRADE_WINDOW_MS;
-  const response = await fetch(buildDatabentoUrl(asset.databentoSymbol, startMs, endMs), {
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
-      Accept: "application/json"
-    },
-    cache: "no-store"
-  });
-  const payload = await response.text();
 
-  if (!response.ok) {
-    return NextResponse.json(
+  try {
+    const { response, payload } = await fetchDatabentoText(
+      buildDatabentoUrl(asset.databentoSymbol, startMs, endMs),
       {
-        error: payload.slice(0, 240) || `Databento trade request failed with ${response.status}`
-      },
-      { status: 502 }
+        Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+        Accept: "application/json"
+      }
     );
-  }
 
-  const latestTrade = parseLatestTrade(payload);
+    if (!response.ok) {
+      logDatabentoApiKeyFailure("databento:last", {
+        symbol: asset.databentoSymbol,
+        status: response.status,
+        message: payload
+      });
 
-  if (!latestTrade) {
-    return NextResponse.json(
-      {
-        error: "Databento returned no recent trades for this symbol."
-      },
-      { status: 404 }
-    );
-  }
+      throw new Error(payload.slice(0, 240) || `Databento trade request failed with ${response.status}`);
+    }
 
-  return NextResponse.json(
-    {
+    const latestTrade = parseLatestTrade(payload);
+
+    if (!latestTrade) {
+      throw new Error("Databento returned no recent trades for this symbol.");
+    }
+
+    const responsePayload: LatestTradeResponseBody = {
       symbol: asset.symbol,
       price: latestTrade.price,
       time: latestTrade.time,
-      meta: {
-        provider: "Databento",
-        dataset: DATABENTO_DATASET,
-        schema: "trades",
-        databentoSymbol: asset.databentoSymbol,
-        updatedAt: new Date().toISOString()
-      }
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store"
-      }
+      meta: buildDatabentoMeta(asset.databentoSymbol)
+    };
+
+    storeLatestTradeCache(asset, responsePayload);
+
+    return NextResponse.json(responsePayload, { headers });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to fetch the latest Databento trade.";
+    const cachedPayload = buildCachedTradePayload(asset, errorMessage);
+
+    if (cachedPayload) {
+      console.warn(
+        `[databento:last] Serving cached trade for ${asset.symbol} after upstream failure: ${errorMessage}`
+      );
+      return NextResponse.json(cachedPayload, { headers });
     }
-  );
+
+    console.warn(
+      `[databento:last] Serving simulated trade for ${asset.symbol} after upstream failure: ${errorMessage}`
+    );
+
+    return NextResponse.json(buildSimulationTradePayload(asset, errorMessage), { headers });
+  }
 }

@@ -153,6 +153,9 @@ export const buildSimulatedLatestTrade = (
   };
   const seed = hashString(`${asset.symbol}-${timeframe}-trade-${Math.floor(referenceNowMs / 1000)}`);
   const rand = createSeededRng(seed);
+  const secondIndex = Math.floor(referenceNowMs / 1000);
+  const stepCycle = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 3, 1, -1, -3];
+  const stepOffsetTicks = stepCycle[secondIndex % stepCycle.length] ?? 1;
   const microMove = Math.max(
     asset.tickSize * 2,
     latest.close * timeframeVolatility[timeframe] * 0.04
@@ -160,7 +163,11 @@ export const buildSimulatedLatestTrade = (
   const wave = Math.sin(referenceNowMs / 2_500 + seed * 0.0001) * microMove;
   const noise = (rand() - 0.5) * microMove * 1.5;
   const price = roundToTick(
-    clamp(latest.close + wave + noise, asset.basePrice * 0.72, asset.basePrice * 1.34),
+    clamp(
+      latest.close + stepOffsetTicks * asset.tickSize + wave * 0.35 + noise * 0.45,
+      asset.basePrice * 0.72,
+      asset.basePrice * 1.34
+    ),
     asset.tickSize
   );
 

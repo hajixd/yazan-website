@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { futuresAssets, getAssetBySymbol } from "../../../../lib/futuresCatalog";
+import {
+  futuresAssets,
+  getAssetBySymbol,
+  type FutureAsset
+} from "../../../../lib/futuresCatalog";
+import { logDatabentoApiKeyFailure } from "../../../../lib/server/databentoAuth";
 import {
   generateSimulatedFuturesCandles,
   getSimulatedTimeframeMs,
@@ -26,9 +31,35 @@ type DatabentoRecord = {
   close?: string | number;
 };
 
+type MarketFeedMeta = {
+  provider: string;
+  dataset: string;
+  sourceTimeframe: string;
+  databentoSymbol: string;
+  updatedAt: string;
+  fallback?: "cache" | "simulation";
+  reason?: string;
+};
+
+type CandlesResponseBody = {
+  symbol: string;
+  timeframe: Timeframe;
+  candles: Candle[];
+  meta: MarketFeedMeta;
+  warning?: string;
+};
+
+type CandlesCacheEntry = {
+  candles: Candle[];
+  meta: MarketFeedMeta;
+  cachedAt: number;
+};
+
 const DATABENTO_HISTORICAL_URL = "https://hist.databento.com/v0/timeseries.get_range";
 const DATABENTO_DATASET = "GLBX.MDP3";
 const MAX_TARGET_COUNT = 2000;
+const CANDLES_CACHE_LIMIT = 5000;
+const DATABENTO_RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const TIMEFRAME_SET = new Set<Timeframe>(["1m", "5m", "15m", "1H", "4H", "1D", "1W"]);
 
 const targetSourceMap: Record<
@@ -53,6 +84,17 @@ const timeframeStepMs: Record<"1m" | "1H" | "1D", number> = {
   "1H": 60 * 60_000,
   "1D": 24 * 60 * 60_000
 };
+
+const globalForDatabentoCandlesCache = globalThis as typeof globalThis & {
+  __romanDatabentoCandlesCache?: Map<string, CandlesCacheEntry>;
+};
+
+const databentoCandlesCache =
+  globalForDatabentoCandlesCache.__romanDatabentoCandlesCache ?? new Map<string, CandlesCacheEntry>();
+
+if (!globalForDatabentoCandlesCache.__romanDatabentoCandlesCache) {
+  globalForDatabentoCandlesCache.__romanDatabentoCandlesCache = databentoCandlesCache;
+}
 
 const parsePositiveInt = (value: string | null, fallback: number): number => {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -148,6 +190,43 @@ const aggregateCandles = (candles: Candle[], timeframe: Timeframe): Candle[] => 
   return aggregated;
 };
 
+const mergeCandles = (olderCandles: Candle[], newerCandles: Candle[]) => {
+  const merged: Candle[] = [];
+  let olderIndex = 0;
+  let newerIndex = 0;
+
+  while (olderIndex < olderCandles.length || newerIndex < newerCandles.length) {
+    const nextOlder = olderCandles[olderIndex];
+    const nextNewer = newerCandles[newerIndex];
+    let nextCandle: Candle | undefined;
+
+    if (nextOlder && (!nextNewer || nextOlder.time < nextNewer.time)) {
+      nextCandle = nextOlder;
+      olderIndex += 1;
+    } else if (nextNewer) {
+      nextCandle = nextNewer;
+      newerIndex += 1;
+
+      if (nextOlder && nextOlder.time === nextNewer.time) {
+        olderIndex += 1;
+      }
+    }
+
+    if (!nextCandle) {
+      continue;
+    }
+
+    if (merged[merged.length - 1]?.time === nextCandle.time) {
+      merged[merged.length - 1] = nextCandle;
+      continue;
+    }
+
+    merged.push(nextCandle);
+  }
+
+  return merged;
+};
+
 const parseDatabentoCandles = (payload: string): Candle[] => {
   const candles: Candle[] = [];
   const lines = payload.split("\n");
@@ -213,6 +292,154 @@ const buildDatabentoUrl = (
   return url;
 };
 
+const buildDatabentoMeta = (
+  timeframe: Timeframe,
+  databentoSymbol: string,
+  updatedAt = new Date().toISOString()
+): MarketFeedMeta => {
+  return {
+    provider: "Databento",
+    dataset: DATABENTO_DATASET,
+    sourceTimeframe: targetSourceMap[timeframe].sourceTimeframe,
+    databentoSymbol,
+    updatedAt
+  };
+};
+
+const buildSimulationCandlesPayload = (
+  asset: FutureAsset,
+  timeframe: Timeframe,
+  targetCount: number,
+  beforeMs?: number,
+  reason?: string
+): CandlesResponseBody => {
+  const referenceNowMs =
+    typeof beforeMs === "number" && Number.isFinite(beforeMs)
+      ? Math.max(getSimulatedTimeframeMs(timeframe as SimulatedTimeframe), beforeMs - 1)
+      : Date.now();
+
+  return {
+    symbol: asset.symbol,
+    timeframe,
+    candles: generateSimulatedFuturesCandles(
+      asset,
+      timeframe as SimulatedTimeframe,
+      targetCount,
+      referenceNowMs
+    ),
+    meta: {
+      provider: "Simulation",
+      dataset: "local",
+      sourceTimeframe: timeframe,
+      databentoSymbol: asset.symbol,
+      updatedAt: new Date().toISOString(),
+      fallback: "simulation",
+      reason
+    },
+    warning: reason
+  };
+};
+
+const candlesCacheKey = (symbol: string, timeframe: Timeframe) => {
+  return `${symbol}:${timeframe}`;
+};
+
+const selectCandlesFromCache = (
+  candles: Candle[],
+  targetCount: number,
+  beforeMs?: number
+) => {
+  const filtered =
+    typeof beforeMs === "number" && Number.isFinite(beforeMs)
+      ? candles.filter((candle) => candle.time < beforeMs)
+      : candles;
+
+  return filtered.slice(-targetCount);
+};
+
+const storeCandlesCache = (asset: FutureAsset, timeframe: Timeframe, candles: Candle[]) => {
+  const key = candlesCacheKey(asset.symbol, timeframe);
+  const existing = databentoCandlesCache.get(key);
+  const merged = existing ? mergeCandles(existing.candles, candles) : candles;
+
+  databentoCandlesCache.set(key, {
+    candles: merged.slice(-CANDLES_CACHE_LIMIT),
+    meta: buildDatabentoMeta(timeframe, asset.databentoSymbol),
+    cachedAt: Date.now()
+  });
+};
+
+const buildCachedCandlesPayload = (
+  asset: FutureAsset,
+  timeframe: Timeframe,
+  targetCount: number,
+  beforeMs?: number,
+  reason?: string
+): CandlesResponseBody | null => {
+  const entry = databentoCandlesCache.get(candlesCacheKey(asset.symbol, timeframe));
+
+  if (!entry) {
+    return null;
+  }
+
+  const candles = selectCandlesFromCache(entry.candles, targetCount, beforeMs);
+
+  if (candles.length === 0) {
+    return null;
+  }
+
+  return {
+    symbol: asset.symbol,
+    timeframe,
+    candles,
+    meta: {
+      ...buildDatabentoMeta(
+        timeframe,
+        entry.meta.databentoSymbol,
+        new Date(entry.cachedAt).toISOString()
+      ),
+      provider: "Databento Cache",
+      fallback: "cache",
+      reason
+    },
+    warning: reason
+  };
+};
+
+const fetchDatabentoText = async (
+  url: URL,
+  authHeaders: { Authorization: string; Accept: string },
+  attempts = 2
+) => {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: authHeaders,
+        cache: "no-store"
+      });
+      const payload = await response.text();
+
+      if (
+        response.ok ||
+        !DATABENTO_RETRYABLE_STATUSES.has(response.status) ||
+        attempt >= attempts - 1
+      ) {
+        return { response, payload };
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (attempt >= attempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw (lastError instanceof Error ? lastError : new Error("Databento request failed."));
+};
+
 const fetchDatabentoCandles = async (
   databentoSymbol: string,
   timeframe: Timeframe,
@@ -228,14 +455,15 @@ const fetchDatabentoCandles = async (
     Accept: "application/json"
   };
   const requestedEndMs =
-    typeof beforeMs === "number" && Number.isFinite(beforeMs) ? Math.max(stepMs, beforeMs - 1) : Date.now();
+    typeof beforeMs === "number" && Number.isFinite(beforeMs)
+      ? Math.max(stepMs, beforeMs - 1)
+      : Date.now();
   let endMs = requestedEndMs;
   let startMs = endMs - rawBars * stepMs;
-  let response = await fetch(buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs), {
-    headers: authHeaders,
-    cache: "no-store"
-  });
-  let payload = await response.text();
+  let { response, payload } = await fetchDatabentoText(
+    buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs),
+    authHeaders
+  );
 
   if (!response.ok) {
     const availableEndMatch = payload.match(/available up to '([^']+)'/i);
@@ -244,15 +472,20 @@ const fetchDatabentoCandles = async (
     if (Number.isFinite(availableEndMs) && endMs > availableEndMs) {
       endMs = availableEndMs;
       startMs = endMs - rawBars * stepMs;
-      response = await fetch(buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs), {
-        headers: authHeaders,
-        cache: "no-store"
-      });
-      payload = await response.text();
+      ({ response, payload } = await fetchDatabentoText(
+        buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs),
+        authHeaders
+      ));
     }
   }
 
   if (!response.ok) {
+    logDatabentoApiKeyFailure("databento:candles", {
+      symbol: databentoSymbol,
+      status: response.status,
+      message: payload
+    });
+
     throw new Error(payload.slice(0, 240) || `Databento request failed with ${response.status}`);
   }
 
@@ -277,33 +510,14 @@ export async function GET(request: Request) {
   }
 
   const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
+  const headers = {
+    "Cache-Control": "no-store"
+  };
 
   if (!apiKey) {
     return NextResponse.json(
-      {
-        symbol: asset.symbol,
-        timeframe,
-        candles: generateSimulatedFuturesCandles(
-          asset,
-          timeframe as SimulatedTimeframe,
-          targetCount,
-          typeof beforeMs === "number" && Number.isFinite(beforeMs)
-            ? Math.max(getSimulatedTimeframeMs(timeframe as SimulatedTimeframe), beforeMs - 1)
-            : Date.now()
-        ),
-        meta: {
-          provider: "Simulation",
-          dataset: "local",
-          sourceTimeframe: timeframe,
-          databentoSymbol: asset.symbol,
-          updatedAt: new Date().toISOString()
-        }
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store"
-        }
-      }
+      buildSimulationCandlesPayload(asset, timeframe, targetCount, beforeMs ?? undefined),
+      { headers }
     );
   }
 
@@ -315,32 +529,47 @@ export async function GET(request: Request) {
       apiKey,
       beforeMs ?? undefined
     );
+    const payload: CandlesResponseBody = {
+      symbol: asset.symbol,
+      timeframe,
+      candles,
+      meta: buildDatabentoMeta(timeframe, asset.databentoSymbol)
+    };
+
+    storeCandlesCache(asset, timeframe, candles);
+
+    return NextResponse.json(payload, { headers });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to fetch Databento candles.";
+    const cachedPayload = buildCachedCandlesPayload(
+      asset,
+      timeframe,
+      targetCount,
+      beforeMs ?? undefined,
+      errorMessage
+    );
+
+    if (cachedPayload) {
+      console.warn(
+        `[databento:candles] Serving cached candles for ${asset.symbol} (${timeframe}) after upstream failure: ${errorMessage}`
+      );
+      return NextResponse.json(cachedPayload, { headers });
+    }
+
+    console.warn(
+      `[databento:candles] Serving simulated candles for ${asset.symbol} (${timeframe}) after upstream failure: ${errorMessage}`
+    );
 
     return NextResponse.json(
-      {
-        symbol: asset.symbol,
+      buildSimulationCandlesPayload(
+        asset,
         timeframe,
-        candles,
-        meta: {
-          provider: "Databento",
-          dataset: DATABENTO_DATASET,
-          sourceTimeframe: targetSourceMap[timeframe].sourceTimeframe,
-          databentoSymbol: asset.databentoSymbol,
-          updatedAt: new Date().toISOString()
-        }
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store"
-        }
-      }
-    );
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Failed to fetch Databento candles."
-      },
-      { status: 502 }
+        targetCount,
+        beforeMs ?? undefined,
+        errorMessage
+      ),
+      { headers }
     );
   }
 }
