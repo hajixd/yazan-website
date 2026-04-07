@@ -24,6 +24,20 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unsupported futures symbol." }, { status: 400 });
   }
 
+  if (process.env.VERCEL) {
+    return Response.json(
+      {
+        error: "Databento live bridge is unavailable in the Vercel runtime. Use trade polling fallback."
+      },
+      {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  }
+
   const asset = getAssetBySymbol(symbol);
   let cleanup = () => {};
 

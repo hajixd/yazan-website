@@ -387,6 +387,7 @@ const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
 const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 250;
+const LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 4_000;
 const SIMULATION_TICK_INTERVAL_MS = 1_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 2;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 1;
@@ -1946,6 +1947,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     let fallbackIntervalId: number | null = null;
     let eventSource: EventSource | null = null;
     let streamOpened = false;
+    let streamHasDeliveredData = false;
+    let streamBootstrapTimeoutId: number | null = null;
+    let streamDisabled = false;
     let terminalStreamFailure = false;
     let tradeFlushTimeoutId: number | null = null;
     let pendingTrade: LiveTradeResponse | null = null;
@@ -2053,6 +2057,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       fallbackRefreshInFlight = false;
     };
 
+    const clearStreamBootstrapTimeout = () => {
+      if (streamBootstrapTimeoutId !== null) {
+        window.clearTimeout(streamBootstrapTimeoutId);
+        streamBootstrapTimeoutId = null;
+      }
+    };
+
+    const disableStreamAndUsePolling = (message?: string) => {
+      if (streamDisabled || cancelled) {
+        return;
+      }
+
+      streamDisabled = true;
+      clearStreamBootstrapTimeout();
+      eventSource?.close();
+      eventSource = null;
+
+      if (message) {
+        setMarketError(message);
+      }
+
+      startFallbackPolling();
+    };
+
     const refreshLatestTrade = async () => {
       if (cancelled || fallbackRefreshInFlight) {
         return;
@@ -2072,6 +2100,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         }
 
         applyLiveTrade(payload);
+        setMarketError(null);
       } catch {
         // Keep the last known candle if a fallback patch misses.
       } finally {
@@ -2094,8 +2123,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }, LIVE_PRICE_REFRESH_INTERVAL_MS);
     };
 
+    const markStreamAsLive = () => {
+      streamHasDeliveredData = true;
+      clearStreamBootstrapTimeout();
+      stopFallbackPolling();
+      setMarketError(null);
+    };
+
+    const armStreamBootstrapTimeout = () => {
+      clearStreamBootstrapTimeout();
+      streamBootstrapTimeoutId = window.setTimeout(() => {
+        if (cancelled || streamDisabled || streamHasDeliveredData) {
+          return;
+        }
+
+        disableStreamAndUsePolling("Live stream unavailable. Using Databento trade polling.");
+      }, LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS);
+    };
+
     setLiveOrderBookSnapshot(null);
 
+    armStreamBootstrapTimeout();
     eventSource = new EventSource(`/api/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`);
     eventSource.onopen = () => {
       if (cancelled) {
@@ -2103,7 +2151,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       streamOpened = true;
-      stopFallbackPolling();
     };
 
     eventSource.onmessage = (messageEvent) => {
@@ -2120,9 +2167,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       if (payload.type === "trade") {
-        if (payload.meta.provider !== "Simulation") {
-          setMarketError(null);
-        }
+        markStreamAsLive();
         queueTrade({
           symbol: payload.symbol,
           price: payload.price,
@@ -2133,9 +2178,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       if (payload.type === "book") {
-        if (payload.meta.provider !== "Simulation") {
-          setMarketError(null);
-        }
+        markStreamAsLive();
         queueOrderBook(payload.snapshot);
         syncMarketFeedMeta(payload.meta);
         return;
@@ -2153,21 +2196,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       if (!payload.retrying) {
         terminalStreamFailure = true;
-        eventSource?.close();
-        startFallbackPolling();
+        disableStreamAndUsePolling(payload.message);
       }
     };
 
     eventSource.onerror = () => {
-      if (cancelled || terminalStreamFailure || streamOpened) {
+      if (cancelled) {
         return;
       }
 
-      startFallbackPolling();
+      disableStreamAndUsePolling(
+        terminalStreamFailure
+          ? "Live stream stopped. Using Databento trade polling."
+          : streamOpened
+            ? "Live stream disconnected. Using Databento trade polling."
+            : "Live stream unavailable. Using Databento trade polling."
+      );
     };
 
     return () => {
       cancelled = true;
+      clearStreamBootstrapTimeout();
 
       if (tradeFlushTimeoutId !== null) {
         window.clearTimeout(tradeFlushTimeoutId);
