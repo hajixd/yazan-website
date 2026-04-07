@@ -385,8 +385,9 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
-const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_500;
+const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 250;
+const SIMULATION_TICK_INTERVAL_MS = 1_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 3;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
@@ -736,6 +737,45 @@ const fetchLatestFuturesTrade = async (
   }
 
   return payload;
+};
+
+const createSimulationMarketMeta = (
+  symbol: string,
+  timeframe: Timeframe,
+  timestampMs = Date.now()
+): MarketFeedMeta => ({
+  provider: "Simulation",
+  dataset: "local",
+  sourceTimeframe: timeframe,
+  databentoSymbol: symbol,
+  updatedAt: new Date(timestampMs).toISOString()
+});
+
+const buildSimulationTradePrice = ({
+  currentPrice,
+  symbol,
+  timeframe,
+  tickSize,
+  basePrice,
+  timestampMs
+}: {
+  currentPrice: number;
+  symbol: string;
+  timeframe: Timeframe;
+  tickSize: number;
+  basePrice: number;
+  timestampMs: number;
+}) => {
+  const seed = hashString(`${symbol}-${timeframe}-${Math.floor(timestampMs / 1000)}`);
+  const rand = createSeededRng(seed);
+  const priceRangeMin = basePrice * 0.72;
+  const priceRangeMax = basePrice * 1.34;
+  const microMove = Math.max(tickSize, currentPrice * timeframeVolatility[timeframe] * 0.015);
+  const wave = Math.sin(timestampMs / 19_000 + seed * 0.0001) * microMove * 0.6;
+  const noise = (rand() - 0.5) * microMove * 1.9;
+  const nextPrice = clamp(currentPrice + wave + noise, priceRangeMin, priceRangeMax);
+
+  return roundToTick(nextPrice, tickSize);
 };
 
 const applyLiveTradeToCandles = (
@@ -1279,6 +1319,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [simulationFallback, setSimulationFallback] = useState(false);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
   const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
@@ -1450,7 +1491,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedKey]);
 
   useEffect(() => {
-    if (showcaseMode) {
+    if (showcaseMode || simulationFallback) {
+      const simulationNowMs = showcaseMode ? referenceNowMs : Date.now();
       chartBackfillInFlightRef.current[selectedKey] = false;
       chartBackfillExhaustedRef.current[selectedKey] = false;
       setSeriesMap((prev) => ({
@@ -1460,18 +1502,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           selectedSymbol,
           selectedTimeframe,
           candleHistoryCountByTimeframe[selectedTimeframe],
-          referenceNowMs
+          simulationNowMs
         )
       }));
-      setMarketFeedMeta({
-        provider: "Simulation",
-        dataset: "local",
-        sourceTimeframe: selectedTimeframe,
-        databentoSymbol: selectedSymbol,
-        updatedAt: new Date(referenceNowMs).toISOString()
-      });
+      setMarketFeedMeta(createSimulationMarketMeta(selectedSymbol, selectedTimeframe, simulationNowMs));
       setMarketStatus("ready");
-      setMarketError(null);
+      setMarketError(
+        showcaseMode ? null : "Databento feed unavailable. Running local simulated ticks instead."
+      );
       return;
     }
 
@@ -1506,16 +1544,22 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         }));
         chartBackfillExhaustedRef.current[selectedKey] =
           nextCandles.length >= MAX_CHART_CANDLE_COUNT;
+        setSimulationFallback(false);
         setMarketFeedMeta(payload.meta ?? null);
         setMarketStatus("ready");
+        setMarketError(null);
       })
       .catch((error) => {
         if (cancelled || controller.signal.aborted) {
           return;
         }
 
-        setMarketStatus("error");
-        setMarketError(error instanceof Error ? error.message : "Failed to load market candles.");
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to load market candles.";
+
+        setSimulationFallback(true);
+        setMarketStatus("ready");
+        setMarketError(errorMessage);
       });
 
     return () => {
@@ -1528,6 +1572,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedKey,
     selectedSymbol,
     selectedTimeframe,
+    simulationFallback,
     showcaseMode
   ]);
 
@@ -1536,7 +1581,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [watchlistSeriesMap]);
 
   useEffect(() => {
-    if (showcaseMode) {
+    if (showcaseMode || simulationFallback) {
+      const simulationNowMs = showcaseMode ? referenceNowMs : Date.now();
       const next: Record<string, Candle[]> = {};
 
       for (const asset of futuresAssets) {
@@ -1546,7 +1592,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           asset.symbol,
           selectedTimeframe,
           multiAssetHistoryCountByTimeframe[selectedTimeframe],
-          referenceNowMs
+          simulationNowMs
         );
       }
 
@@ -1763,10 +1809,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       activeControllers.forEach((controller) => controller.abort());
       activeControllers.clear();
     };
-  }, [referenceNowMs, selectedTimeframe, showcaseMode]);
+  }, [referenceNowMs, selectedTimeframe, simulationFallback, showcaseMode]);
 
   useEffect(() => {
-    if (showcaseMode) {
+    if (showcaseMode || simulationFallback) {
+      const simulationNowMs = showcaseMode ? referenceNowMs : Date.now();
       setTimeframePreviewMap(() => {
         const next: Record<string, Candle[]> = {};
 
@@ -1777,7 +1824,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             selectedSymbol,
             timeframe,
             watchlistSnapshotCountByTimeframe[timeframe],
-            referenceNowMs
+            simulationNowMs
           );
         }
 
@@ -1828,7 +1875,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       cancelled = true;
       controller.abort();
     };
-  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, showcaseMode]);
+  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, simulationFallback, showcaseMode]);
 
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
@@ -1840,6 +1887,57 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     if (showcaseMode || marketStatus !== "ready" || selectedCandles.length === 0) {
       return;
+    }
+
+    if (simulationFallback) {
+      const runSimulationTick = () => {
+        const tickTimestampMs = Date.now();
+
+        setSeriesMap((prev) => {
+          const activeSeries = prev[selectedKey];
+
+          if (!activeSeries || activeSeries.length === 0) {
+            return prev;
+          }
+
+          const latestSeriesCandle = activeSeries[activeSeries.length - 1];
+          const nextPrice = buildSimulationTradePrice({
+            currentPrice: latestSeriesCandle.close,
+            symbol: selectedSymbol,
+            timeframe: selectedTimeframe,
+            tickSize: selectedAsset.tickSize,
+            basePrice: selectedAsset.basePrice,
+            timestampMs: tickTimestampMs
+          });
+          const nextSeries = applyLiveTradeToCandles(
+            activeSeries,
+            nextPrice,
+            tickTimestampMs,
+            selectedTimeframe
+          );
+
+          if (!nextSeries) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [selectedKey]: nextSeries
+          };
+        });
+
+        setLiveOrderBookSnapshot(null);
+        setMarketFeedMeta(createSimulationMarketMeta(selectedSymbol, selectedTimeframe, tickTimestampMs));
+      };
+
+      runSimulationTick();
+      const simulationIntervalId = window.setInterval(() => {
+        runSimulationTick();
+      }, SIMULATION_TICK_INTERVAL_MS);
+
+      return () => {
+        window.clearInterval(simulationIntervalId);
+      };
     }
 
     let cancelled = false;
@@ -2022,6 +2120,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       if (payload.type === "trade") {
+        if (payload.meta.provider !== "Simulation") {
+          setMarketError(null);
+        }
         queueTrade({
           symbol: payload.symbol,
           price: payload.price,
@@ -2032,15 +2133,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       if (payload.type === "book") {
+        if (payload.meta.provider !== "Simulation") {
+          setMarketError(null);
+        }
         queueOrderBook(payload.snapshot);
         syncMarketFeedMeta(payload.meta);
         return;
       }
 
       if (payload.type === "status") {
+        if (payload.state === "connected") {
+          setMarketError(null);
+        }
         syncMarketFeedMeta(payload.meta);
         return;
       }
+
+      setMarketError(payload.message);
 
       if (!payload.retrying) {
         terminalStreamFailure = true;
@@ -2073,7 +2182,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       eventSource?.close();
       stopFallbackPolling();
     };
-  }, [marketStatus, selectedCandles.length, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
+  }, [
+    marketStatus,
+    selectedAsset.basePrice,
+    selectedAsset.tickSize,
+    selectedCandles.length,
+    selectedKey,
+    selectedSymbol,
+    selectedTimeframe,
+    showcaseMode,
+    simulationFallback
+  ]);
 
   const marketCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
     const next: Record<string, Candle[]> = {};
@@ -3129,13 +3248,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       const candleEndMs = latestCandle.time + candleMs;
-      const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
-      const h = Math.floor(remaining / 3600);
-      const m = Math.floor((remaining % 3600) / 60);
-      const s = remaining % 60;
+      const nowMs = Date.now();
+      const isStale = nowMs >= candleEndMs + candleMs;
+      const remaining = isStale ? null : Math.max(0, Math.floor((candleEndMs - nowMs) / 1000));
+      const h = remaining === null ? 0 : Math.floor(remaining / 3600);
+      const m = remaining === null ? 0 : Math.floor((remaining % 3600) / 60);
+      const s = remaining === null ? 0 : remaining % 60;
       const pad = (n: number) => String(n).padStart(2, "0");
-      const timer = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-      const price = formatPrice(latestCandle.close);
+      const timer =
+        remaining === null
+          ? "--:--"
+          : h > 0
+            ? `${pad(h)}:${pad(m)}:${pad(s)}`
+            : `${pad(m)}:${pad(s)}`;
+      const price = formatPriceByTick(latestCandle.close, selectedAsset.tickSize);
       const text = `${price}\n${timer}`;
 
       if (text !== lastText) {
@@ -3145,6 +3271,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       const isUp = latestCandle.close >= latestCandle.open;
       overlay.style.background = isUp ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
+      overlay.style.opacity = remaining === null ? "0.68" : "1";
 
       const y = candleSeries.priceToCoordinate(latestCandle.close);
 
@@ -3161,7 +3288,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     raf = window.requestAnimationFrame(update);
 
     return () => window.cancelAnimationFrame(raf);
-  }, [latestCandle, selectedTimeframe, selectedCandles]);
+  }, [latestCandle, selectedAsset.tickSize, selectedTimeframe, selectedCandles]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3704,8 +3831,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const feedStatusLabel =
     marketStatus === "loading"
       ? "Loading Databento"
-      : marketStatus === "error"
-        ? "Databento unavailable"
+      : simulationFallback
+        ? `Simulation - ${selectedTimeframe}`
+        : marketStatus === "error"
+          ? "Databento unavailable"
+          : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
+  const marketStatusDetails = marketError
+    ? simulationFallback
+      ? `Simulation fallback: ${marketError}`
+      : marketError
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
@@ -5662,7 +5796,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>{selectedTimeframe}</span>
         <span>Model: {selectedModel.name}</span>
         <span>Feed: {feedStatusLabel}</span>
-        <span>{marketError ? "Feed unavailable" : `Contract: ${selectedAsset.contract}`}</span>
+        <span>{marketError ? marketStatusDetails : `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>
       </footer>
     </main>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { futuresAssets, getAssetBySymbol } from "../../../../lib/futuresCatalog";
+import { buildSimulatedLatestTrade } from "../../../../lib/simulatedFutures";
 
 type DatabentoTradeRecord = {
   hd?: {
@@ -76,11 +77,26 @@ export async function GET(request: Request) {
   const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
 
   if (!apiKey) {
+    const latestTrade = buildSimulatedLatestTrade(asset, "15m");
+
     return NextResponse.json(
       {
-        error: "Missing DATABENTO_API_KEY. Add it in Vercel or your local .env.local file."
+        symbol: asset.symbol,
+        price: latestTrade.price,
+        time: latestTrade.time,
+        meta: {
+          provider: "Simulation",
+          dataset: "local",
+          schema: "simulated-trades",
+          databentoSymbol: asset.symbol,
+          updatedAt: new Date().toISOString()
+        }
       },
-      { status: 500 }
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
     );
   }
 

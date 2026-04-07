@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { futuresAssets, getAssetBySymbol } from "../../../../lib/futuresCatalog";
+import {
+  generateSimulatedFuturesCandles,
+  getSimulatedTimeframeMs,
+  type SimulatedTimeframe
+} from "../../../../lib/simulatedFutures";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -276,9 +281,29 @@ export async function GET(request: Request) {
   if (!apiKey) {
     return NextResponse.json(
       {
-        error: "Missing DATABENTO_API_KEY. Add it in Vercel or your local .env.local file."
+        symbol: asset.symbol,
+        timeframe,
+        candles: generateSimulatedFuturesCandles(
+          asset,
+          timeframe as SimulatedTimeframe,
+          targetCount,
+          typeof beforeMs === "number" && Number.isFinite(beforeMs)
+            ? Math.max(getSimulatedTimeframeMs(timeframe as SimulatedTimeframe), beforeMs - 1)
+            : Date.now()
+        ),
+        meta: {
+          provider: "Simulation",
+          dataset: "local",
+          sourceTimeframe: timeframe,
+          databentoSymbol: asset.symbol,
+          updatedAt: new Date().toISOString()
+        }
       },
-      { status: 500 }
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
     );
   }
 
