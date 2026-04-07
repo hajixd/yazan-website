@@ -35,6 +35,27 @@ import {
   syncRomanNotificationDevice,
   upsertRomanNotificationEvents
 } from "../lib/romanNotificationCenter";
+import {
+  type AccountSyncDraft,
+  type BrokerSyncVerifyResponse,
+  type SavedAccountSync,
+  type SyncProvider,
+  type WebhookAuthMode,
+  TRADESYNC_AUTH_URL,
+  TRADESYNC_CREATE_ACCOUNT_URL,
+  TRADESYNC_INTRO_BROKER_URL,
+  TRADESYNC_WEBHOOKS_URL,
+  TRADOVATE_API_ACCESS_URL,
+  TRADOVATE_AUTH_OPTIONS_URL,
+  TRADOVATE_MARKET_DATA_URL,
+  TRADOVATE_PERMISSIONS_URL,
+  YAZAN_SYNC_STORAGE_KEY,
+  buildDefaultTradesyncWebhookUrl,
+  createDefaultSyncDraft,
+  getSyncProviderLabel,
+  normalizeSavedAccountSync,
+  sanitizeAccountSyncDraft
+} from "../lib/brokerSync";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions";
@@ -170,37 +191,35 @@ type MarketFeedResponse = {
 
 type LiveTradeResponse = DatabentoLatestTradeResponse;
 
-type SyncProvider = "tradovate" | "tradesyncer";
-type SyncEnvironment = "live" | "demo";
-type TradovateAccessMode = "api_key" | "api_key_password";
-type TradesyncApplication = "mt4" | "mt5";
-type TradesyncAccountType = "readonly" | "full";
-type WebhookAuthMode = "none" | "basic_auth" | "bearer_token" | "api_keys";
-
-type AccountSyncDraft = {
-  provider: SyncProvider;
-  connectionLabel: string;
-  environment: SyncEnvironment;
-  accountLabel: string;
-  accountNumber: string;
-  username: string;
-  accessMode: TradovateAccessMode;
-  apiKey: string;
-  apiSecret: string;
-  appId: string;
-  appVersion: string;
-  deviceId: string;
-  application: TradesyncApplication;
-  accountType: TradesyncAccountType;
-  brokerServerId: string;
-  accountPassword: string;
-  webhookUrl: string;
-  webhookAuthMode: WebhookAuthMode;
-};
-
 type AccountMenuPosition = {
   x: number;
   y: number;
+};
+
+type DrawingTool = "cursor" | "trendline" | "ray" | "horizontal" | "vertical" | "rectangle";
+
+type DrawingPoint = {
+  time: number;
+  price: number;
+};
+
+type ChartDrawing = {
+  id: string;
+  tool: Exclude<DrawingTool, "cursor">;
+  points: DrawingPoint[];
+  color: string;
+  createdAt: number;
+};
+
+type DrawingDraft = {
+  tool: Extract<DrawingTool, "trendline" | "ray" | "rectangle">;
+  start: DrawingPoint;
+  current: DrawingPoint;
+};
+
+type ChartViewportSize = {
+  width: number;
+  height: number;
 };
 
 type OrderBookSnapshot = DatabentoOrderBookSnapshot;
@@ -218,18 +237,6 @@ const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
-const TRADOVATE_API_ACCESS_URL =
-  "https://tradovate.zendesk.com/hc/en-us/articles/4403105829523-How-Do-I-Get-Access-to-the-Tradovate-API";
-const TRADOVATE_AUTH_OPTIONS_URL =
-  "https://tradovate.zendesk.com/hc/en-us/articles/4403105862035-Should-I-Use-OAuth-an-API-Key-or-an-API-Key-with-a-Dedicated-Password";
-const TRADOVATE_PERMISSIONS_URL =
-  "https://tradovate.zendesk.com/hc/en-us/categories/18535338266515-Web-Desktop-Trading-Platform";
-const TRADOVATE_MARKET_DATA_URL =
-  "https://tradovate.zendesk.com/hc/en-us/articles/4403100181651-Do-I-Need-a-Market-Data-Subscription-Through-Tradovate-to-Perform-Trades";
-const TRADESYNC_AUTH_URL = "https://www.tradesync.com/developers/authentication/";
-const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/intro-broker/";
-const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
-
 const createPseudoAccountNumber = (seedText: string): string => {
   let seed = 0;
 
@@ -276,52 +283,6 @@ const isLikelyLocalHostname = (hostname: string) => {
 
 const timeframes: Timeframe[] = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
 const defaultAssetOrder = futuresAssets.map((asset) => asset.symbol);
-
-const createDefaultSyncDraft = (provider: SyncProvider = "tradovate"): AccountSyncDraft => {
-  if (provider === "tradesyncer") {
-    return {
-      provider,
-      connectionLabel: "Yazan Trade Syncer",
-      environment: "live",
-      accountLabel: "Roman Copier Account",
-      accountNumber: "",
-      username: "",
-      accessMode: "api_key_password",
-      apiKey: "",
-      apiSecret: "",
-      appId: "",
-      appVersion: "",
-      deviceId: "",
-      application: "mt5",
-      accountType: "readonly",
-      brokerServerId: "",
-      accountPassword: "",
-      webhookUrl: "",
-      webhookAuthMode: "bearer_token"
-    };
-  }
-
-  return {
-    provider,
-    connectionLabel: "Yazan Tradovate",
-    environment: "live",
-    accountLabel: "Roman Capital Primary",
-    accountNumber: "YZ-884201",
-    username: "",
-    accessMode: "api_key_password",
-    apiKey: "",
-    apiSecret: "",
-    appId: "roman-capital-terminal",
-    appVersion: "1.0.0",
-    deviceId: "",
-    application: "mt5",
-    accountType: "readonly",
-    brokerServerId: "",
-    accountPassword: "",
-    webhookUrl: "",
-    webhookAuthMode: "bearer_token"
-  };
-};
 
 const normalizeAssetOrder = (order: string[]): string[] => {
   const validSymbols = new Set(defaultAssetOrder);
@@ -431,11 +392,11 @@ const WATCHLIST_FETCH_BATCH_SIZE = 2;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 1;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
-const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
-  ...createDefaultSyncDraft("tradovate")
-};
+const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = createDefaultSyncDraft("tradovate");
 const YAZAN_ACCOUNT_MENU_WIDTH = 188;
 const YAZAN_ACCOUNT_MENU_HEIGHT = 118;
+const CHART_DRAWINGS_STORAGE_KEY = "roman-chart-drawings-v1";
+const CHART_DRAWING_COLOR = "#9ec9ff";
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1m": 4,
@@ -624,8 +585,204 @@ const formatDepthSize = (value: number): string => {
   });
 };
 
-const getSyncProviderLabel = (provider: SyncProvider): string => {
-  return provider === "tradovate" ? "Tradovate" : "Trade Syncer";
+const createDrawingId = (): string => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `drawing-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const normalizeDrawingPoint = (
+  point: DrawingPoint,
+  timeframe: Timeframe,
+  tickSize: number
+): DrawingPoint => {
+  const timeframeMs = getTimeframeMs(timeframe);
+
+  return {
+    time: Math.round(point.time / timeframeMs) * timeframeMs,
+    price: roundToTick(point.price, tickSize)
+  };
+};
+
+const shiftDrawingPoint = (
+  point: DrawingPoint,
+  deltaTimeMs: number,
+  deltaPrice: number,
+  timeframe: Timeframe,
+  tickSize: number
+): DrawingPoint => {
+  return normalizeDrawingPoint(
+    {
+      time: point.time + deltaTimeMs,
+      price: point.price + deltaPrice
+    },
+    timeframe,
+    tickSize
+  );
+};
+
+const shiftChartDrawing = (
+  drawing: ChartDrawing,
+  deltaTimeMs: number,
+  deltaPrice: number,
+  timeframe: Timeframe,
+  tickSize: number
+): ChartDrawing => {
+  return {
+    ...drawing,
+    points: drawing.points.map((point) =>
+      shiftDrawingPoint(point, deltaTimeMs, deltaPrice, timeframe, tickSize)
+    )
+  };
+};
+
+const chartDrawingTools: Array<{
+  tool: DrawingTool;
+  label: string;
+  shortcut: string;
+  detail: string;
+}> = [
+  {
+    tool: "cursor",
+    label: "Cursor",
+    shortcut: "Esc",
+    detail: "Select drawings and pan the chart."
+  },
+  {
+    tool: "trendline",
+    label: "Trend Line",
+    shortcut: "T",
+    detail: "Click once to anchor and once to finish."
+  },
+  {
+    tool: "ray",
+    label: "Ray",
+    shortcut: "A",
+    detail: "Click twice to project a price path to the edge."
+  },
+  {
+    tool: "horizontal",
+    label: "Horizontal Line",
+    shortcut: "H",
+    detail: "Click a price level to mark it."
+  },
+  {
+    tool: "vertical",
+    label: "Vertical Line",
+    shortcut: "V",
+    detail: "Click a candle time to mark the moment."
+  },
+  {
+    tool: "rectangle",
+    label: "Range Box",
+    shortcut: "R",
+    detail: "Click two corners to frame a zone."
+  }
+];
+
+const renderDrawingToolIcon = (tool: DrawingTool) => {
+  switch (tool) {
+    case "cursor":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path
+            d="M4.5 3.5v13l3.2-4.2 3.1 2 1.4-2.3-3.2-2 4.6-1.4z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "trendline":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="5" cy="14.5" r="1.6" fill="currentColor" />
+          <circle cx="14.5" cy="5.5" r="1.6" fill="currentColor" />
+          <path d="M5.9 13.6 13.6 5.9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        </svg>
+      );
+    case "ray":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="5" cy="14.5" r="1.6" fill="currentColor" />
+          <path
+            d="M5.9 13.6 15 4.5m0 0v4.2m0-4.2H10.8"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "horizontal":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3.5 10h13" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="6" cy="10" r="1.4" fill="currentColor" />
+          <circle cx="14" cy="10" r="1.4" fill="currentColor" />
+        </svg>
+      );
+    case "vertical":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M10 3.5v13" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="10" cy="6" r="1.4" fill="currentColor" />
+          <circle cx="10" cy="14" r="1.4" fill="currentColor" />
+        </svg>
+      );
+    case "rectangle":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <rect
+            x="4.2"
+            y="5.2"
+            width="11.6"
+            height="9.6"
+            rx="1.2"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+          />
+        </svg>
+      );
+    default:
+      return null;
+  }
+};
+
+const renderToolbarActionIcon = (action: "delete" | "clear") => {
+  if (action === "delete") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path
+          d="M6 6.5h8m-6.6 0 .3 8h3.6l.3-8m-4.7 0 .7-1.8h3l.7 1.8M7.4 6.5l.2 8m4.8-8-.2 8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="M5 6.5h10m-8.4 0 .4 8h6l.4-8m-7.1 0 .8-1.8h4.2l.8 1.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M4.5 10.5h11" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2.2 2.2" />
+    </svg>
+  );
 };
 
 const formatMobileDate = (timestampMs: number): string => {
@@ -1363,10 +1520,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [liveDepthMessage, setLiveDepthMessage] = useState<string | null>(null);
   const [liveDepthSchema, setLiveDepthSchema] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
-  const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
+  const [chartViewportVersion, setChartViewportVersion] = useState(0);
+  const [chartViewportSize, setChartViewportSize] = useState<ChartViewportSize>({
+    width: 0,
+    height: 0
+  });
+  const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("cursor");
+  const [chartDrawingsByKey, setChartDrawingsByKey] = useState<Record<string, ChartDrawing[]>>({});
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
+  const [yazanAccount, setYazanAccount] = useState<SavedAccountSync | null>(null);
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
   const [yazanSyncDraft, setYazanSyncDraft] = useState<AccountSyncDraft>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [yazanSyncDraftMode, setYazanSyncDraftMode] = useState<"add" | "edit">("edit");
+  const [yazanSyncSaving, setYazanSyncSaving] = useState(false);
+  const [yazanSyncError, setYazanSyncError] = useState<string | null>(null);
+  const [yazanSyncSuccess, setYazanSyncSuccess] = useState<string | null>(null);
+  const [yazanSyncFieldErrors, setYazanSyncFieldErrors] = useState<
+    Partial<Record<keyof AccountSyncDraft | "form", string>>
+  >({});
   const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
   const [yazanAccountMenuPosition, setYazanAccountMenuPosition] = useState<AccountMenuPosition>({
     x: 0,
@@ -1374,6 +1546,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   });
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const chartDrawingOverlayRef = useRef<SVGSVGElement | null>(null);
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -1393,6 +1566,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const watchlistFetchMetaRef = useRef<Record<string, WatchlistFetchMeta>>({});
   const deliveredNotificationIdsRef = useRef<Set<string>>(new Set());
   const notificationSessionStartedAtRef = useRef(Date.now());
+  const drawingDragStateRef = useRef<{
+    drawingId: string;
+    pointerStart: DrawingPoint;
+    originalDrawing: ChartDrawing;
+  } | null>(null);
   const mobileTradeChartRef = useRef<HTMLDivElement | null>(null);
   const mobileTradeChartPointerIdRef = useRef<number | null>(null);
   const currentSelectedKeyRef = useRef<string>("");
@@ -1415,6 +1593,48 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       setAccountGateReady(true);
     }
   }, [showcaseMode]);
+
+  useEffect(() => {
+    if (showcaseMode || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedConnection = window.localStorage.getItem(YAZAN_SYNC_STORAGE_KEY);
+
+      if (!storedConnection) {
+        return;
+      }
+
+      const parsedConnection = normalizeSavedAccountSync(JSON.parse(storedConnection));
+
+      if (!parsedConnection) {
+        return;
+      }
+
+      setYazanAccount(parsedConnection);
+      setYazanSyncDraft(parsedConnection);
+    } catch (error) {
+      console.error("[Broker sync] Failed to restore the saved Yazan connection.", error);
+    }
+  }, [showcaseMode]);
+
+  useEffect(() => {
+    if (showcaseMode || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      if (!yazanAccount) {
+        window.localStorage.removeItem(YAZAN_SYNC_STORAGE_KEY);
+        return;
+      }
+
+      window.localStorage.setItem(YAZAN_SYNC_STORAGE_KEY, JSON.stringify(yazanAccount));
+    } catch (error) {
+      console.error("[Broker sync] Failed to persist the Yazan connection.", error);
+    }
+  }, [showcaseMode, yazanAccount]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1553,10 +1773,58 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [assetOrder]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
+  const currentChartDrawings = useMemo(() => {
+    return chartDrawingsByKey[selectedKey] ?? [];
+  }, [chartDrawingsByKey, selectedKey]);
+  const activeDrawingDraft = drawingDraft;
+
+  useEffect(() => {
+    if (showcaseMode || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedDrawings = window.localStorage.getItem(CHART_DRAWINGS_STORAGE_KEY);
+
+      if (!storedDrawings) {
+        return;
+      }
+
+      const parsed = JSON.parse(storedDrawings) as Record<string, ChartDrawing[]>;
+
+      if (!parsed || typeof parsed !== "object") {
+        return;
+      }
+
+      setChartDrawingsByKey(parsed);
+    } catch (error) {
+      console.error("[Chart drawings] Failed to restore saved drawings.", error);
+    }
+  }, [showcaseMode]);
+
+  useEffect(() => {
+    if (showcaseMode || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(CHART_DRAWINGS_STORAGE_KEY, JSON.stringify(chartDrawingsByKey));
+    } catch (error) {
+      console.error("[Chart drawings] Failed to persist drawings.", error);
+    }
+  }, [chartDrawingsByKey, showcaseMode]);
 
   useEffect(() => {
     setHoveredTime(null);
+    setSelectedDrawingId(null);
+    setDrawingDraft(null);
   }, [selectedKey]);
+
+  useEffect(() => {
+    if (selectedDrawingId && !currentChartDrawings.some((drawing) => drawing.id === selectedDrawingId)) {
+      setSelectedDrawingId(null);
+    }
+  }, [currentChartDrawings, selectedDrawingId]);
 
   useEffect(() => {
     setMobileTradeChartScrubIndex(null);
@@ -2014,6 +2282,323 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     simulationFallback,
     projectedMarketNowMs
   ]);
+  const activeDrawingToolConfig = useMemo(() => {
+    return chartDrawingTools.find((tool) => tool.tool === activeDrawingTool) ?? chartDrawingTools[0];
+  }, [activeDrawingTool]);
+  const canDrawOnChart = renderedSelectedCandles.length > 0;
+  const selectedDrawing = useMemo(() => {
+    return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
+  }, [currentChartDrawings, selectedDrawingId]);
+
+  const updateChartDrawings = useCallback(
+    (updater: (current: ChartDrawing[]) => ChartDrawing[]) => {
+      setChartDrawingsByKey((prev) => {
+        const current = prev[selectedKey] ?? [];
+        const nextForKey = updater(current);
+
+        if (nextForKey.length === 0) {
+          const { [selectedKey]: _removed, ...rest } = prev;
+          return rest;
+        }
+
+        return {
+          ...prev,
+          [selectedKey]: nextForKey
+        };
+      });
+    },
+    [selectedKey]
+  );
+
+  const deleteSelectedDrawing = useCallback(() => {
+    if (!selectedDrawingId) {
+      return;
+    }
+
+    updateChartDrawings((current) => current.filter((drawing) => drawing.id !== selectedDrawingId));
+    setSelectedDrawingId(null);
+  }, [selectedDrawingId, updateChartDrawings]);
+
+  const clearCurrentDrawings = useCallback(() => {
+    if (currentChartDrawings.length === 0) {
+      return;
+    }
+
+    updateChartDrawings(() => []);
+    setSelectedDrawingId(null);
+  }, [currentChartDrawings.length, updateChartDrawings]);
+
+  const getDrawingPointFromClientPosition = useCallback(
+    (clientX: number, clientY: number): DrawingPoint | null => {
+      const chart = chartRef.current;
+      const candleSeries = candleSeriesRef.current;
+      const container = chartContainerRef.current;
+
+      if (!chart || !candleSeries || !container || renderedSelectedCandles.length === 0) {
+        return null;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const relativeX = clamp(clientX - rect.left, 0, rect.width);
+      const relativeY = clamp(clientY - rect.top, 0, rect.height);
+      const rawTime = chart.timeScale().coordinateToTime(relativeX);
+      const parsedTime = rawTime ? parseTimeFromCrosshair(rawTime) : null;
+      const rawPrice = candleSeries.coordinateToPrice(relativeY);
+
+      if (parsedTime === null || rawPrice === null || !Number.isFinite(rawPrice)) {
+        return null;
+      }
+
+      let snappedTimeMs = parsedTime * 1000;
+
+      if (renderedSelectedCandles.length > 0) {
+        let nearestTime = renderedSelectedCandles[0].time;
+        let nearestDistance = Math.abs(nearestTime - snappedTimeMs);
+
+        for (let index = 1; index < renderedSelectedCandles.length; index += 1) {
+          const candidateTime = renderedSelectedCandles[index].time;
+          const distance = Math.abs(candidateTime - snappedTimeMs);
+
+          if (distance < nearestDistance) {
+            nearestTime = candidateTime;
+            nearestDistance = distance;
+          }
+        }
+
+        snappedTimeMs = nearestTime;
+      }
+
+      return normalizeDrawingPoint(
+        {
+          time: snappedTimeMs,
+          price: rawPrice
+        },
+        selectedTimeframe,
+        selectedAsset.tickSize
+      );
+    },
+    [renderedSelectedCandles, selectedAsset.tickSize, selectedTimeframe]
+  );
+
+  const getScreenPointForDrawing = useCallback(
+    (point: DrawingPoint) => {
+      const chart = chartRef.current;
+      const candleSeries = candleSeriesRef.current;
+
+      if (!chart || !candleSeries) {
+        return null;
+      }
+
+      const x = chart.timeScale().timeToCoordinate(toUtcTimestamp(point.time));
+      const y = candleSeries.priceToCoordinate(point.price);
+
+      if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)) {
+        return null;
+      }
+
+      return {
+        x,
+        y
+      };
+    },
+    []
+  );
+
+  const startDrawingDrag = useCallback(
+    (drawing: ChartDrawing, event: ReactPointerEvent<SVGGElement>) => {
+      if (activeDrawingTool !== "cursor") {
+        return;
+      }
+
+      const point = getDrawingPointFromClientPosition(event.clientX, event.clientY);
+
+      if (!point) {
+        return;
+      }
+
+      drawingDragStateRef.current = {
+        drawingId: drawing.id,
+        pointerStart: point,
+        originalDrawing: drawing
+      };
+      setSelectedDrawingId(drawing.id);
+    },
+    [activeDrawingTool, getDrawingPointFromClientPosition]
+  );
+
+  const handleChartDrawingPointerDown = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>) => {
+      if (!canDrawOnChart) {
+        return;
+      }
+
+      const point = getDrawingPointFromClientPosition(event.clientX, event.clientY);
+
+      if (!point) {
+        return;
+      }
+
+      if (activeDrawingTool === "cursor") {
+        setSelectedDrawingId(null);
+        return;
+      }
+
+      if (activeDrawingTool === "horizontal") {
+        const drawing: ChartDrawing = {
+          id: createDrawingId(),
+          tool: "horizontal",
+          points: [point],
+          color: CHART_DRAWING_COLOR,
+          createdAt: Date.now()
+        };
+
+        updateChartDrawings((current) => [...current, drawing]);
+        setSelectedDrawingId(drawing.id);
+        return;
+      }
+
+      if (activeDrawingTool === "vertical") {
+        const drawing: ChartDrawing = {
+          id: createDrawingId(),
+          tool: "vertical",
+          points: [point],
+          color: CHART_DRAWING_COLOR,
+          createdAt: Date.now()
+        };
+
+        updateChartDrawings((current) => [...current, drawing]);
+        setSelectedDrawingId(drawing.id);
+        return;
+      }
+
+      if (!activeDrawingDraft || activeDrawingDraft.tool !== activeDrawingTool) {
+        setDrawingDraft({
+          tool: activeDrawingTool,
+          start: point,
+          current: point
+        });
+        setSelectedDrawingId(null);
+        return;
+      }
+
+      const drawing: ChartDrawing = {
+        id: createDrawingId(),
+        tool: activeDrawingDraft.tool,
+        points: [activeDrawingDraft.start, point],
+        color: CHART_DRAWING_COLOR,
+        createdAt: Date.now()
+      };
+
+      updateChartDrawings((current) => [...current, drawing]);
+      setDrawingDraft(null);
+      setSelectedDrawingId(drawing.id);
+    },
+    [
+      activeDrawingDraft,
+      activeDrawingTool,
+      canDrawOnChart,
+      getDrawingPointFromClientPosition,
+      updateChartDrawings
+    ]
+  );
+
+  const handleChartDrawingPointerMove = useCallback(
+    (event: ReactPointerEvent<SVGSVGElement>) => {
+      if (!canDrawOnChart) {
+        return;
+      }
+
+      const point = getDrawingPointFromClientPosition(event.clientX, event.clientY);
+
+      if (!point) {
+        return;
+      }
+
+      if (drawingDragStateRef.current) {
+        const { drawingId, pointerStart, originalDrawing } = drawingDragStateRef.current;
+        const deltaTimeMs = point.time - pointerStart.time;
+        const deltaPrice = point.price - pointerStart.price;
+
+        updateChartDrawings((current) =>
+          current.map((drawing) =>
+            drawing.id === drawingId
+              ? shiftChartDrawing(
+                  originalDrawing,
+                  deltaTimeMs,
+                  deltaPrice,
+                  selectedTimeframe,
+                  selectedAsset.tickSize
+                )
+              : drawing
+          )
+        );
+        return;
+      }
+
+      if (activeDrawingDraft) {
+        setDrawingDraft((current) => (current ? { ...current, current: point } : current));
+      }
+    },
+    [
+      activeDrawingDraft,
+      canDrawOnChart,
+      getDrawingPointFromClientPosition,
+      selectedAsset.tickSize,
+      selectedTimeframe,
+      updateChartDrawings
+    ]
+  );
+
+  const stopChartDrawingDrag = useCallback(() => {
+    drawingDragStateRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (canDrawOnChart) {
+      return;
+    }
+
+    setDrawingDraft(null);
+    setSelectedDrawingId(null);
+  }, [canDrawOnChart]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!drawingDragStateRef.current) {
+        return;
+      }
+
+      const point = getDrawingPointFromClientPosition(event.clientX, event.clientY);
+
+      if (!point) {
+        return;
+      }
+
+      const { drawingId, pointerStart, originalDrawing } = drawingDragStateRef.current;
+      const deltaTimeMs = point.time - pointerStart.time;
+      const deltaPrice = point.price - pointerStart.price;
+
+      updateChartDrawings((current) =>
+        current.map((drawing) =>
+          drawing.id === drawingId
+            ? shiftChartDrawing(
+                originalDrawing,
+                deltaTimeMs,
+                deltaPrice,
+                selectedTimeframe,
+                selectedAsset.tickSize
+              )
+            : drawing
+        )
+      );
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+    };
+  }, [getDrawingPointFromClientPosition, selectedAsset.tickSize, selectedTimeframe, updateChartDrawings]);
 
   useEffect(() => {
     setLiveOrderBookSnapshot(null);
@@ -3364,6 +3949,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       };
 
       chart.subscribeCrosshairMove(onCrosshairMove);
+      const onVisibleRangeChange = () => {
+        setChartViewportVersion((version) => version + 1);
+      };
+      chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
 
       const resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
@@ -3379,6 +3968,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           width,
           height
         });
+        setChartViewportSize({ width, height });
+        setChartViewportVersion((version) => version + 1);
       });
 
       resizeObserver.observe(container);
@@ -3388,6 +3979,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           width: Math.max(1, Math.floor(container.clientWidth)),
           height: Math.max(1, Math.floor(container.clientHeight))
         });
+        setChartViewportSize({
+          width: Math.max(1, Math.floor(container.clientWidth)),
+          height: Math.max(1, Math.floor(container.clientHeight))
+        });
+        setChartViewportVersion((version) => version + 1);
       };
       const resizeFrameA = window.requestAnimationFrame(settleResize);
       const resizeFrameB = window.requestAnimationFrame(() => {
@@ -3409,6 +4005,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         window.cancelAnimationFrame(resizeFrameB);
         resizeObserver.disconnect();
         chart.unsubscribeCrosshairMove(onCrosshairMove);
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
         chart.remove();
         chartRef.current = null;
         candleSeriesRef.current = null;
@@ -3419,6 +4016,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         tradeStopLineRef.current = null;
         tradePathLineRef.current = null;
         multiTradeSeriesRef.current = [];
+        setChartViewportSize({ width: 0, height: 0 });
       };
     });
 
@@ -3678,6 +4276,81 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
+    const handlePointerUp = () => {
+      drawingDragStateRef.current = null;
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (drawingDraft) {
+          event.preventDefault();
+          setDrawingDraft(null);
+          return;
+        }
+
+        if (activeDrawingTool !== "cursor") {
+          event.preventDefault();
+          setActiveDrawingTool("cursor");
+        }
+
+        return;
+      }
+
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (selectedDrawingId) {
+          event.preventDefault();
+          deleteSelectedDrawing();
+        }
+
+        return;
+      }
+
+      const shortcut = event.key.toLowerCase();
+
+      if (shortcut === "t") {
+        event.preventDefault();
+        setActiveDrawingTool("trendline");
+        setDrawingDraft(null);
+      } else if (shortcut === "a") {
+        event.preventDefault();
+        setActiveDrawingTool("ray");
+        setDrawingDraft(null);
+      } else if (shortcut === "h") {
+        event.preventDefault();
+        setActiveDrawingTool("horizontal");
+        setDrawingDraft(null);
+      } else if (shortcut === "v") {
+        event.preventDefault();
+        setActiveDrawingTool("vertical");
+        setDrawingDraft(null);
+      } else if (shortcut === "r" && !event.altKey) {
+        event.preventDefault();
+        setActiveDrawingTool("rectangle");
+        setDrawingDraft(null);
+      }
+    };
+
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeDrawingTool, deleteSelectedDrawing, drawingDraft, selectedDrawingId]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.altKey || event.key.toLowerCase() !== "r") {
         return;
@@ -3750,10 +4423,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     const frame = window.requestAnimationFrame(() => {
+      const width = Math.max(1, Math.floor(container.clientWidth));
+      const height = Math.max(1, Math.floor(container.clientHeight));
+
       chart.applyOptions({
-        width: Math.floor(container.clientWidth),
-        height: Math.floor(container.clientHeight)
+        width,
+        height
       });
+      setChartViewportSize({ width, height });
+      setChartViewportVersion((version) => version + 1);
     });
 
     return () => {
@@ -4158,7 +4836,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
-  const yazanAccountSummary = yazanAccount
+  const legacyYazanAccountSummary = yazanAccount
     ? yazanAccount.provider === "tradovate"
       ? [
           getSyncProviderLabel(yazanAccount.provider),
@@ -4176,7 +4854,52 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           .join(" • ")
     : null;
 
+  const yazanAccountSummary = yazanAccount
+    ? yazanAccount.provider === "tradovate"
+      ? [
+          getSyncProviderLabel(yazanAccount.provider),
+          yazanAccount.environment === "demo" ? "Demo" : "Live",
+          yazanAccount.connectionState === "connected"
+            ? "Connected"
+            : yazanAccount.connectionState === "pending"
+              ? "Pending"
+              : "Needs Attention",
+          yazanAccount.providerAccountName ||
+            yazanAccount.accountLabel ||
+            yazanAccount.connectionLabel ||
+            yazanAccount.username
+        ]
+          .filter(Boolean)
+          .join(" • ")
+      : [
+          getSyncProviderLabel(yazanAccount.provider),
+          yazanAccount.application.toUpperCase(),
+          yazanAccount.connectionState === "connected"
+            ? "Connected"
+            : yazanAccount.connectionState === "pending"
+              ? "Pending"
+              : "Needs Attention",
+          yazanAccount.providerAccountNumber
+            ? `#${yazanAccount.providerAccountNumber}`
+            : yazanAccount.accountNumber || yazanAccount.accountLabel
+        ]
+          .filter(Boolean)
+          .join(" • ")
+    : null;
+
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors((prev) => {
+      if (!prev[field]) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [field]: undefined
+      };
+    });
     setYazanSyncDraft((prev) => ({
       ...prev,
       [field]: value
@@ -4184,12 +4907,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   };
 
   const updateYazanSyncProvider = (provider: SyncProvider) => {
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors({});
     setYazanSyncDraft((current) => {
       if (current.provider === provider) {
         return current;
       }
 
       const next = createDefaultSyncDraft(provider);
+      const builtInWebhookUrl =
+        provider === "tradesyncer" && typeof window !== "undefined"
+          ? buildDefaultTradesyncWebhookUrl(window.location.origin)
+          : "";
 
       return {
         ...next,
@@ -4197,7 +4927,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         environment: current.environment,
         accountLabel: current.accountLabel || next.accountLabel,
         accountNumber: current.accountNumber,
-        username: current.username
+        username: current.username,
+        webhookUrl:
+          provider === "tradesyncer"
+            ? current.webhookUrl || builtInWebhookUrl || next.webhookUrl
+            : ""
       };
     });
   };
@@ -4213,8 +4947,29 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setSelectedModelId("yazan");
     setShowYazanAccountMenu(false);
     setYazanSyncDraftMode(mode);
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors({});
     setYazanSyncDraft(
-      mode === "add" ? createDefaultSyncDraft(provider) : yazanAccount ?? createDefaultSyncDraft(provider)
+      (() => {
+        const nextDraft =
+          mode === "add"
+            ? createDefaultSyncDraft(provider)
+            : sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft(provider));
+
+        if (
+          nextDraft.provider === "tradesyncer" &&
+          !nextDraft.webhookUrl &&
+          typeof window !== "undefined"
+        ) {
+          return {
+            ...nextDraft,
+            webhookUrl: buildDefaultTradesyncWebhookUrl(window.location.origin)
+          };
+        }
+
+        return nextDraft;
+      })()
     );
     setShowYazanSyncDraft(true);
   };
@@ -4260,54 +5015,64 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const closeYazanSyncDraft = () => {
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
-    setYazanSyncDraft(yazanAccount ?? createDefaultSyncDraft());
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors({});
+    setYazanSyncDraft(sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft()));
   };
 
-  const saveYazanSyncDraft = () => {
-    const normalized: AccountSyncDraft = {
-      provider: yazanSyncDraft.provider,
-      connectionLabel: yazanSyncDraft.connectionLabel.trim(),
-      environment: yazanSyncDraft.environment,
-      accountLabel: yazanSyncDraft.accountLabel.trim(),
-      accountNumber: yazanSyncDraft.accountNumber.trim(),
-      username: yazanSyncDraft.username.trim(),
-      accessMode: yazanSyncDraft.accessMode,
-      apiKey: yazanSyncDraft.apiKey.trim(),
-      apiSecret: yazanSyncDraft.apiSecret.trim(),
-      appId: yazanSyncDraft.appId.trim(),
-      appVersion: yazanSyncDraft.appVersion.trim(),
-      deviceId: yazanSyncDraft.deviceId.trim(),
-      application: yazanSyncDraft.application,
-      accountType: yazanSyncDraft.accountType,
-      brokerServerId: yazanSyncDraft.brokerServerId.trim(),
-      accountPassword: yazanSyncDraft.accountPassword.trim(),
-      webhookUrl: yazanSyncDraft.webhookUrl.trim(),
-      webhookAuthMode: yazanSyncDraft.webhookAuthMode
-    };
-    const hasContent = [
-      normalized.connectionLabel,
-      normalized.accountLabel,
-      normalized.accountNumber,
-      normalized.username,
-      normalized.apiKey,
-      normalized.apiSecret,
-      normalized.appId,
-      normalized.appVersion,
-      normalized.deviceId,
-      normalized.brokerServerId,
-      normalized.accountPassword,
-      normalized.webhookUrl
-    ].some((value) => value.length > 0);
+  const saveYazanSyncDraft = async () => {
+    const normalized = sanitizeAccountSyncDraft(yazanSyncDraft);
 
-    setYazanAccount(hasContent ? normalized : null);
-    setShowYazanSyncDraft(false);
-    setShowYazanAccountMenu(false);
+    setYazanSyncSaving(true);
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors({});
+
+    try {
+      const response = await fetch("/api/broker-sync/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          draft: normalized,
+          origin: typeof window !== "undefined" ? window.location.origin : null
+        })
+      });
+      const result = (await response.json()) as BrokerSyncVerifyResponse;
+
+      if (!response.ok || !result.ok) {
+        const nextError = result.ok ? "The broker connection could not be verified." : result.error;
+
+        setYazanSyncError(nextError);
+        setYazanSyncFieldErrors(result.ok ? {} : result.fieldErrors ?? {});
+        return;
+      }
+
+      const nextConnection = normalizeSavedAccountSync(result.connection) ?? result.connection;
+
+      setYazanAccount(nextConnection);
+      setYazanSyncDraft(nextConnection);
+      setYazanSyncSuccess(nextConnection.connectionMessage || "Connection verified and saved.");
+      setShowYazanSyncDraft(false);
+      setShowYazanAccountMenu(false);
+    } catch (error) {
+      setYazanSyncError(
+        error instanceof Error ? error.message : "The broker connection could not be verified."
+      );
+    } finally {
+      setYazanSyncSaving(false);
+    }
   };
 
   const removeYazanAccount = () => {
     setYazanAccount(null);
     setYazanSyncDraftMode("add");
     setYazanSyncDraft(createDefaultSyncDraft());
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+    setYazanSyncFieldErrors({});
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
   };
@@ -4429,7 +5194,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       if (event.key === "Escape") {
         setShowYazanSyncDraft(false);
         setShowYazanAccountMenu(false);
-        setYazanSyncDraft(yazanAccount ?? createDefaultSyncDraft());
+        setYazanSyncError(null);
+        setYazanSyncSuccess(null);
+        setYazanSyncFieldErrors({});
+        setYazanSyncDraft(sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft()));
       }
     };
 
@@ -4882,6 +5650,233 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }
 
+  const chartDrawingToolbarHint = activeDrawingDraft
+    ? `${activeDrawingToolConfig.label}: click again to finish the shape.`
+    : selectedDrawing
+      ? `${activeDrawingToolConfig.label}: drag to move the selected drawing, or press Delete to remove it.`
+      : activeDrawingToolConfig.detail;
+  const chartDrawingsForRender = activeDrawingDraft
+    ? [
+        ...currentChartDrawings,
+        {
+          id: "draft-drawing",
+          tool: activeDrawingDraft.tool,
+          points: [activeDrawingDraft.start, activeDrawingDraft.current],
+          color: CHART_DRAWING_COLOR,
+          createdAt: Date.now()
+        } satisfies ChartDrawing
+      ]
+    : currentChartDrawings;
+  const chartDrawingLayerInteractive = canDrawOnChart && activeDrawingTool !== "cursor";
+
+  const getRayScreenEndpoint = (
+    start: { x: number; y: number },
+    end: { x: number; y: number }
+  ): { x: number; y: number } => {
+    const width = chartViewportSize.width;
+    const height = chartViewportSize.height;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001)) {
+      return end;
+    }
+
+    const candidates: number[] = [];
+
+    if (dx > 0) {
+      candidates.push((width - start.x) / dx);
+    } else if (dx < 0) {
+      candidates.push((0 - start.x) / dx);
+    }
+
+    if (dy > 0) {
+      candidates.push((height - start.y) / dy);
+    } else if (dy < 0) {
+      candidates.push((0 - start.y) / dy);
+    }
+
+    const positiveCandidates = candidates.filter((value) => Number.isFinite(value) && value > 0);
+    const factor = positiveCandidates.length > 0 ? Math.min(...positiveCandidates) : 1;
+
+    return {
+      x: start.x + dx * factor,
+      y: start.y + dy * factor
+    };
+  };
+
+  const renderDrawingHandles = (drawing: ChartDrawing, points: Array<{ x: number; y: number }>) => {
+    if (selectedDrawingId !== drawing.id || points.length === 0) {
+      return null;
+    }
+
+    return points.map((point, index) => (
+      <circle
+        key={`${drawing.id}-handle-${index}`}
+        cx={point.x}
+        cy={point.y}
+        r={3.8}
+        fill="#090d13"
+        stroke="#f6fbff"
+        strokeWidth={1.4}
+      />
+    ));
+  };
+
+  const renderChartDrawing = (drawing: ChartDrawing) => {
+    const isDraft = drawing.id === "draft-drawing";
+    const isSelected = selectedDrawingId === drawing.id;
+    const stroke = isSelected ? "#f6fbff" : drawing.color;
+    const opacity = isDraft ? 0.76 : 1;
+    const groupProps =
+      !isDraft && activeDrawingTool === "cursor"
+        ? {
+            onPointerDown: (event: ReactPointerEvent<SVGGElement>) => {
+              event.stopPropagation();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              startDrawingDrag(drawing, event);
+            }
+          }
+        : {};
+
+    if (drawing.tool === "horizontal") {
+      const point = getScreenPointForDrawing(drawing.points[0]);
+
+      if (!point) {
+        return null;
+      }
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <line
+            x1={0}
+            x2={chartViewportSize.width}
+            y1={point.y}
+            y2={point.y}
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.2 : 1.55}
+            strokeDasharray="6 4"
+            opacity={opacity}
+          />
+          {!isDraft ? (
+            <line
+              x1={0}
+              x2={chartViewportSize.width}
+              y1={point.y}
+              y2={point.y}
+              stroke="transparent"
+              strokeWidth={14}
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [point])}
+        </g>
+      );
+    }
+
+    if (drawing.tool === "vertical") {
+      const point = getScreenPointForDrawing(drawing.points[0]);
+
+      if (!point) {
+        return null;
+      }
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <line
+            x1={point.x}
+            x2={point.x}
+            y1={0}
+            y2={chartViewportSize.height}
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.2 : 1.55}
+            strokeDasharray="6 4"
+            opacity={opacity}
+          />
+          {!isDraft ? (
+            <line
+              x1={point.x}
+              x2={point.x}
+              y1={0}
+              y2={chartViewportSize.height}
+              stroke="transparent"
+              strokeWidth={14}
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [point])}
+        </g>
+      );
+    }
+
+    const start = getScreenPointForDrawing(drawing.points[0]);
+    const end = getScreenPointForDrawing(drawing.points[1]);
+
+    if (!start || !end) {
+      return null;
+    }
+
+    if (drawing.tool === "rectangle") {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const width = Math.abs(end.x - start.x);
+      const height = Math.abs(end.y - start.y);
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <rect
+            x={x}
+            y={y}
+            width={Math.max(1, width)}
+            height={Math.max(1, height)}
+            fill={isSelected ? "rgba(246, 251, 255, 0.14)" : "rgba(158, 201, 255, 0.14)"}
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.2 : 1.55}
+            rx={7}
+            opacity={opacity}
+          />
+          {!isDraft ? (
+            <rect
+              x={x}
+              y={y}
+              width={Math.max(14, width)}
+              height={Math.max(14, height)}
+              fill="transparent"
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [start, end])}
+        </g>
+      );
+    }
+
+    const lineEnd = drawing.tool === "ray" ? getRayScreenEndpoint(start, end) : end;
+
+    return (
+      <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+        <line
+          x1={start.x}
+          y1={start.y}
+          x2={lineEnd.x}
+          y2={lineEnd.y}
+          stroke={stroke}
+          strokeWidth={isSelected ? 2.3 : 1.7}
+          strokeLinecap="round"
+          opacity={opacity}
+        />
+        {!isDraft ? (
+          <line
+            x1={start.x}
+            y1={start.y}
+            x2={lineEnd.x}
+            y2={lineEnd.y}
+            stroke="transparent"
+            strokeWidth={14}
+            strokeLinecap="round"
+          />
+        ) : null}
+        {renderDrawingHandles(drawing, [start, end])}
+      </g>
+    );
+  };
+
   return (
     <main className="terminal">
       <div className="surface-strip">
@@ -5097,7 +6092,81 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             })()}
           </div>
           <div className="chart-stage">
+            <div className="chart-drawing-toolbar" aria-label="Chart drawing tools">
+              <div className="chart-drawing-toolbar-group">
+                {chartDrawingTools.map((tool) => (
+                  <button
+                    key={tool.tool}
+                    type="button"
+                    className={`chart-drawing-tool-btn ${
+                      activeDrawingTool === tool.tool ? "active" : ""
+                    }`}
+                    title={`${tool.label} (${tool.shortcut})`}
+                    aria-label={`${tool.label} (${tool.shortcut})`}
+                    aria-pressed={activeDrawingTool === tool.tool}
+                    disabled={!canDrawOnChart && tool.tool !== "cursor"}
+                    onClick={() => {
+                      setActiveDrawingTool(tool.tool);
+                      setDrawingDraft(null);
+
+                      if (tool.tool === "cursor") {
+                        drawingDragStateRef.current = null;
+                      }
+                    }}
+                  >
+                    {renderDrawingToolIcon(tool.tool)}
+                  </button>
+                ))}
+              </div>
+              <div className="chart-drawing-toolbar-divider" aria-hidden="true" />
+              <div className="chart-drawing-toolbar-group">
+                <button
+                  type="button"
+                  className="chart-drawing-tool-btn chart-drawing-tool-btn-danger"
+                  title="Delete selected drawing (Delete)"
+                  aria-label="Delete selected drawing"
+                  disabled={!selectedDrawingId}
+                  onClick={deleteSelectedDrawing}
+                >
+                  {renderToolbarActionIcon("delete")}
+                </button>
+                <button
+                  type="button"
+                  className="chart-drawing-tool-btn"
+                  title="Clear all drawings for this chart"
+                  aria-label="Clear all drawings"
+                  disabled={currentChartDrawings.length === 0}
+                  onClick={clearCurrentDrawings}
+                >
+                  {renderToolbarActionIcon("clear")}
+                </button>
+              </div>
+            </div>
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+            <svg
+              ref={chartDrawingOverlayRef}
+              className={`chart-drawing-overlay ${chartDrawingLayerInteractive ? "interactive" : ""}`}
+              width={chartViewportSize.width}
+              height={chartViewportSize.height}
+              viewBox={`0 0 ${Math.max(1, chartViewportSize.width)} ${Math.max(1, chartViewportSize.height)}`}
+              onPointerDown={chartDrawingLayerInteractive ? handleChartDrawingPointerDown : undefined}
+              onPointerMove={chartDrawingLayerInteractive ? handleChartDrawingPointerMove : undefined}
+              onPointerUp={stopChartDrawingDrag}
+              onPointerLeave={stopChartDrawingDrag}
+            >
+              {chartDrawingLayerInteractive ? (
+                <rect
+                  className="chart-drawing-overlay-hitarea"
+                  x={0}
+                  y={0}
+                  width={chartViewportSize.width}
+                  height={chartViewportSize.height}
+                />
+              ) : null}
+              {chartViewportSize.width > 0 && chartViewportSize.height > 0
+                ? chartDrawingsForRender.map((drawing) => renderChartDrawing(drawing))
+                : null}
+            </svg>
             <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
             <div className="chart-overlay-stack">
               <div className="quote-overlay-card">
@@ -5228,6 +6297,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               </div>
             ) : null}
             <div className="chart-stage-actions">
+              <div className="chart-drawing-status" aria-live="polite">
+                <strong>{activeDrawingToolConfig.label}</strong>
+                <span>{chartDrawingToolbarHint}</span>
+              </div>
               <button
                 type="button"
                 className="chart-reset-btn"
@@ -5482,7 +6555,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
                           <p>Choose a Tradovate or Trade Syncer setup for Yazan.</p>
                         </div>
-                        <button type="button" className="panel-action-btn" onClick={closeYazanSyncDraft}>
+                        <button
+                          type="button"
+                          className="panel-action-btn"
+                          onClick={closeYazanSyncDraft}
+                          disabled={yazanSyncSaving}
+                        >
                           Back
                         </button>
                       </div>
@@ -5490,7 +6568,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         className="account-editor-form"
                         onSubmit={(event) => {
                           event.preventDefault();
-                          saveYazanSyncDraft();
+                          void saveYazanSyncDraft();
                         }}
                       >
                         <div className="sync-provider-switch" role="tablist" aria-label="Sync provider">
@@ -5500,6 +6578,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               yazanSyncDraft.provider === "tradovate" ? "active" : ""
                             }`}
                             onClick={() => updateYazanSyncProvider("tradovate")}
+                            disabled={yazanSyncSaving}
                           >
                             Tradovate
                           </button>
@@ -5509,14 +6588,36 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               yazanSyncDraft.provider === "tradesyncer" ? "active" : ""
                             }`}
                             onClick={() => updateYazanSyncProvider("tradesyncer")}
+                            disabled={yazanSyncSaving}
                           >
                             Trade Syncer
                           </button>
                         </div>
+                        {yazanSyncError ? (
+                          <div className="sync-note-card sync-status-card sync-status-card-error">
+                            <strong>Connection failed</strong>
+                            <p>{yazanSyncError}</p>
+                          </div>
+                        ) : null}
+                        {yazanSyncSuccess ? (
+                          <div className="sync-note-card sync-status-card sync-status-card-success">
+                            <strong>Connection saved</strong>
+                            <p>{yazanSyncSuccess}</p>
+                          </div>
+                        ) : null}
+                        <div className="sync-note-card sync-storage-card">
+                          <strong>Storage</strong>
+                          <p>
+                            Verified broker connections are stored in this browser so the admin panel can
+                            reopen them after refresh.
+                          </p>
+                        </div>
                         <label className="account-editor-row">
                           <span>Connection Label</span>
                           <input
-                            className="account-input"
+                            className={`account-input ${
+                              yazanSyncFieldErrors.connectionLabel ? "input-error" : ""
+                            }`}
                             value={yazanSyncDraft.connectionLabel}
                             onChange={(event) => {
                               updateYazanSyncDraft("connectionLabel", event.target.value);
@@ -5526,7 +6627,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 ? "Yazan Tradovate"
                                 : "Yazan Trade Syncer"
                             }
+                            disabled={yazanSyncSaving}
                           />
+                          {yazanSyncFieldErrors.connectionLabel ? (
+                            <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
+                          ) : null}
                         </label>
                         <label className="account-editor-row">
                           <span>Account Name</span>
@@ -5537,6 +6642,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               updateYazanSyncDraft("accountLabel", event.target.value);
                             }}
                             placeholder="Roman Capital Primary"
+                            disabled={yazanSyncSaving}
                           />
                         </label>
                         {yazanSyncDraft.provider === "tradovate" ? (
@@ -5552,6 +6658,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, environment: "live" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Live
                                 </button>
@@ -5563,6 +6670,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, environment: "demo" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Demo
                                 </button>
@@ -5582,6 +6690,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, accessMode: "api_key" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   API Key
                                 </button>
@@ -5596,6 +6705,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                       accessMode: "api_key_password"
                                     }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   API Key + Dedicated Password
                                 </button>
@@ -5607,48 +6717,74 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <label className="account-editor-row">
                               <span>Username</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.username ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.username}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("username", event.target.value);
                                 }}
                                 placeholder="yourname@tradovate"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.username ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
+                              ) : null}
                             </label>
                             <label className="account-editor-row">
-                              <span>API Key</span>
+                              <span>API / Security Key</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.apiKey ? "input-error" : ""
+                                }`}
+                                type="password"
                                 value={yazanSyncDraft.apiKey}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("apiKey", event.target.value);
                                 }}
                                 placeholder="Tradovate API key"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.apiKey ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+                              ) : null}
                             </label>
                             {yazanSyncDraft.accessMode === "api_key_password" ? (
                               <label className="account-editor-row">
                                 <span>Dedicated Password</span>
                                 <input
-                                  className="account-input"
+                                  className={`account-input ${
+                                    yazanSyncFieldErrors.apiSecret ? "input-error" : ""
+                                  }`}
+                                  type="password"
                                   value={yazanSyncDraft.apiSecret}
                                   onChange={(event) => {
                                     updateYazanSyncDraft("apiSecret", event.target.value);
                                   }}
                                   placeholder="Dedicated API password"
+                                  disabled={yazanSyncSaving}
                                 />
+                                {yazanSyncFieldErrors.apiSecret ? (
+                                  <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
+                                ) : null}
                               </label>
                             ) : null}
                             <label className="account-editor-row">
                               <span>App ID</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.appId ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.appId}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("appId", event.target.value);
                                 }}
                                 placeholder="roman-capital-terminal"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.appId ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
+                              ) : null}
                             </label>
                             <label className="account-editor-row">
                               <span>App Version</span>
@@ -5659,6 +6795,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   updateYazanSyncDraft("appVersion", event.target.value);
                                 }}
                                 placeholder="1.0.0"
+                                disabled={yazanSyncSaving}
                               />
                             </label>
                             <label className="account-editor-row">
@@ -5670,18 +6807,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   updateYazanSyncDraft("deviceId", event.target.value);
                                 }}
                                 placeholder="optional-device-id"
+                                disabled={yazanSyncSaving}
                               />
                             </label>
                             <label className="account-editor-row">
                               <span>Account Number</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.accountNumber ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.accountNumber}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountNumber", event.target.value);
                                 }}
-                                placeholder="YZ-884201"
+                                placeholder="Optional: exact Tradovate account ID"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.accountNumber ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
+                              ) : null}
                             </label>
                             <div className="sync-note-card">
                               <strong>Tradovate setup notes</strong>
@@ -5715,24 +6859,37 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <label className="account-editor-row">
                               <span>Account Number</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.accountNumber ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.accountNumber}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountNumber", event.target.value);
                                 }}
                                 placeholder="MT4 / MT5 account number"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.accountNumber ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
+                              ) : null}
                             </label>
                             <label className="account-editor-row">
                               <span>Account Password</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.accountPassword ? "input-error" : ""
+                                }`}
+                                type="password"
                                 value={yazanSyncDraft.accountPassword}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountPassword", event.target.value);
                                 }}
                                 placeholder="MetaTrader account password"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.accountPassword ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.accountPassword}</small>
+                              ) : null}
                             </label>
                             <div className="account-editor-row">
                               <span>Application</span>
@@ -5745,6 +6902,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, application: "mt4" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   MT4
                                 </button>
@@ -5756,6 +6914,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, application: "mt5" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   MT5
                                 </button>
@@ -5764,13 +6923,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <label className="account-editor-row">
                               <span>Broker Server ID</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.brokerServerId ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.brokerServerId}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("brokerServerId", event.target.value);
                                 }}
                                 placeholder="Tradesync broker_server_id"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.brokerServerId ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.brokerServerId}</small>
+                              ) : null}
                             </label>
                             <div className="account-editor-row">
                               <span>Account Type</span>
@@ -5783,6 +6948,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, accountType: "readonly" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Read-only
                                 </button>
@@ -5794,6 +6960,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, accountType: "full" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Full
                                 </button>
@@ -5802,35 +6969,55 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <label className="account-editor-row">
                               <span>API Key</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.apiKey ? "input-error" : ""
+                                }`}
+                                type="password"
                                 value={yazanSyncDraft.apiKey}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("apiKey", event.target.value);
                                 }}
                                 placeholder="Trade Syncer API key"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.apiKey ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+                              ) : null}
                             </label>
                             <label className="account-editor-row">
                               <span>API Secret</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.apiSecret ? "input-error" : ""
+                                }`}
+                                type="password"
                                 value={yazanSyncDraft.apiSecret}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("apiSecret", event.target.value);
                                 }}
                                 placeholder="Trade Syncer API secret"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.apiSecret ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
+                              ) : null}
                             </label>
                             <label className="account-editor-row">
                               <span>Webhook URL</span>
                               <input
-                                className="account-input"
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.webhookUrl ? "input-error" : ""
+                                }`}
                                 value={yazanSyncDraft.webhookUrl}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("webhookUrl", event.target.value);
                                 }}
-                                placeholder="https://yourapp.com/api/tradesync"
+                                placeholder="Leave blank to use this app's built-in webhook"
+                                disabled={yazanSyncSaving}
                               />
+                              {yazanSyncFieldErrors.webhookUrl ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.webhookUrl}</small>
+                              ) : null}
                             </label>
                             <div className="account-editor-row">
                               <span>Webhook Auth</span>
@@ -5843,6 +7030,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onClick={() => {
                                     setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "none" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   None
                                 </button>
@@ -5857,6 +7045,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                       webhookAuthMode: "basic_auth"
                                     }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Basic
                                 </button>
@@ -5871,22 +7060,135 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                       webhookAuthMode: "bearer_token"
                                     }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   Bearer
                                 </button>
                                 <button
                                   type="button"
                                   className={`sync-mode-btn ${
-                                    yazanSyncDraft.webhookAuthMode === "api_keys" ? "active" : ""
+                                    yazanSyncDraft.webhookAuthMode === "api_key" ? "active" : ""
                                   }`}
                                   onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "api_keys" }));
+                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "api_key" }));
                                   }}
+                                  disabled={yazanSyncSaving}
                                 >
                                   API Key
                                 </button>
                               </div>
+                              {yazanSyncFieldErrors.webhookAuthMode ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.webhookAuthMode}</small>
+                              ) : null}
                             </div>
+                            {yazanSyncDraft.webhookAuthMode === "basic_auth" ? (
+                              <>
+                                <label className="account-editor-row">
+                                  <span>Webhook Username</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.webhookUsername ? "input-error" : ""
+                                    }`}
+                                    value={yazanSyncDraft.webhookUsername}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("webhookUsername", event.target.value);
+                                    }}
+                                    placeholder="Webhook username"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.webhookUsername ? (
+                                    <small className="sync-field-error">
+                                      {yazanSyncFieldErrors.webhookUsername}
+                                    </small>
+                                  ) : null}
+                                </label>
+                                <label className="account-editor-row">
+                                  <span>Webhook Password</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.webhookPassword ? "input-error" : ""
+                                    }`}
+                                    type="password"
+                                    value={yazanSyncDraft.webhookPassword}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("webhookPassword", event.target.value);
+                                    }}
+                                    placeholder="Webhook password"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.webhookPassword ? (
+                                    <small className="sync-field-error">
+                                      {yazanSyncFieldErrors.webhookPassword}
+                                    </small>
+                                  ) : null}
+                                </label>
+                              </>
+                            ) : null}
+                            {yazanSyncDraft.webhookAuthMode === "bearer_token" ? (
+                              <label className="account-editor-row">
+                                <span>Webhook Token</span>
+                                <input
+                                  className={`account-input ${
+                                    yazanSyncFieldErrors.webhookToken ? "input-error" : ""
+                                  }`}
+                                  type="password"
+                                  value={yazanSyncDraft.webhookToken}
+                                  onChange={(event) => {
+                                    updateYazanSyncDraft("webhookToken", event.target.value);
+                                  }}
+                                  placeholder="Webhook bearer token"
+                                  disabled={yazanSyncSaving}
+                                />
+                                {yazanSyncFieldErrors.webhookToken ? (
+                                  <small className="sync-field-error">
+                                    {yazanSyncFieldErrors.webhookToken}
+                                  </small>
+                                ) : null}
+                              </label>
+                            ) : null}
+                            {yazanSyncDraft.webhookAuthMode === "api_key" ? (
+                              <>
+                                <label className="account-editor-row">
+                                  <span>Webhook Header Key</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.webhookHeaderKey ? "input-error" : ""
+                                    }`}
+                                    value={yazanSyncDraft.webhookHeaderKey}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("webhookHeaderKey", event.target.value);
+                                    }}
+                                    placeholder="x-api-key"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.webhookHeaderKey ? (
+                                    <small className="sync-field-error">
+                                      {yazanSyncFieldErrors.webhookHeaderKey}
+                                    </small>
+                                  ) : null}
+                                </label>
+                                <label className="account-editor-row">
+                                  <span>Webhook Header Value</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.webhookHeaderValue ? "input-error" : ""
+                                    }`}
+                                    type="password"
+                                    value={yazanSyncDraft.webhookHeaderValue}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("webhookHeaderValue", event.target.value);
+                                    }}
+                                    placeholder="your-webhook-key"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.webhookHeaderValue ? (
+                                    <small className="sync-field-error">
+                                      {yazanSyncFieldErrors.webhookHeaderValue}
+                                    </small>
+                                  ) : null}
+                                </label>
+                              </>
+                            ) : null}
                             <div className="sync-note-card">
                               <strong>Trade Syncer setup notes</strong>
                               <p>
@@ -5908,13 +7210,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 <a href={TRADESYNC_CREATE_ACCOUNT_URL} target="_blank" rel="noreferrer">
                                   Create Account
                                 </a>
+                                <a href={TRADESYNC_WEBHOOKS_URL} target="_blank" rel="noreferrer">
+                                  Webhooks
+                                </a>
                               </div>
                             </div>
                           </>
                         )}
                         <div className="account-editor-actions">
-                          <button type="submit" className="account-submit-btn account-editor-submit">
-                            Save Connection
+                          <button
+                            type="submit"
+                            className="account-submit-btn account-editor-submit"
+                            disabled={yazanSyncSaving}
+                          >
+                            {yazanSyncSaving ? "Verifying..." : "Save Connection"}
                           </button>
                         </div>
                       </form>
@@ -5940,6 +7249,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           </button>
                         ) : null}
                       </div>
+                      {yazanSyncSuccess ? (
+                        <div className="sync-note-card sync-status-card sync-status-card-success">
+                          <strong>Broker connection saved</strong>
+                          <p>{yazanSyncSuccess}</p>
+                        </div>
+                      ) : null}
+                      {yazanAccount?.connectionMessage ? (
+                        <div className="sync-note-card sync-storage-card">
+                          <strong>{yazanAccount.connectionState === "connected" ? "Connection healthy" : "Connection status"}</strong>
+                          <p>{yazanAccount.connectionMessage}</p>
+                          {yazanAccount.lastVerifiedAt ? (
+                            <small className="sync-field-hint">
+                              Last checked {new Date(yazanAccount.lastVerifiedAt).toLocaleString("en-US")}
+                            </small>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <ul className="model-list">
                         {modelProfiles.map((model) => {
                           const selected = model.id === selectedModelId;

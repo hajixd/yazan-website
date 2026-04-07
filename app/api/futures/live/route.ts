@@ -41,6 +41,10 @@ const proxyHostedLiveStream = async (request: Request, symbol: string) => {
     });
 
     if (!upstream.ok || !upstream.body) {
+      if (upstream.status === 404 || upstream.status === 405) {
+        return null;
+      }
+
       return Response.json(
         {
           error: "Databento live stream backend is unavailable. Use trade polling fallback."

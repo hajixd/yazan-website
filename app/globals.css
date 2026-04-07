@@ -852,6 +852,79 @@ button {
   position: relative;
 }
 
+.chart-drawing-toolbar {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  z-index: 11;
+  display: grid;
+  gap: 10px;
+  padding: 10px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(6, 10, 16, 0.9);
+  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.chart-drawing-toolbar-group {
+  display: grid;
+  gap: 6px;
+}
+
+.chart-drawing-toolbar-divider {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+}
+
+.chart-drawing-tool-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(216, 226, 240, 0.8);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.chart-drawing-tool-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.chart-drawing-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f7ff;
+  transform: translateY(-1px);
+}
+
+.chart-drawing-tool-btn.active {
+  border-color: rgba(79, 142, 244, 0.42);
+  background: rgba(79, 142, 244, 0.16);
+  color: #f5f9ff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.chart-drawing-tool-btn.chart-drawing-tool-btn-danger {
+  color: rgba(255, 164, 174, 0.86);
+}
+
+.chart-drawing-tool-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .chart-empty-state {
   position: absolute;
   inset: 18px;
@@ -899,6 +972,28 @@ button {
   overflow: hidden;
 }
 
+.chart-drawing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.chart-drawing-overlay.interactive {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.chart-drawing-overlay-hitarea {
+  fill: transparent;
+  pointer-events: auto;
+}
+
+.chart-drawing-shape {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .candle-countdown-overlay {
   position: absolute;
   right: 0;
@@ -922,13 +1017,48 @@ button {
 .chart-stage-actions {
   position: absolute;
   bottom: 36px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  width: 100%;
   z-index: 10;
-  display: inline-flex;
+  display: flex;
+  justify-content: center;
   align-items: center;
   gap: 8px;
   pointer-events: all;
+}
+
+.chart-drawing-status {
+  position: absolute;
+  left: 72px;
+  bottom: 0;
+  max-width: min(300px, calc(100% - 168px));
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(10, 14, 21, 0.8);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.chart-drawing-status strong,
+.chart-drawing-status span {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.chart-drawing-status strong {
+  color: #e7eff9;
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chart-drawing-status span {
+  color: rgba(221, 232, 244, 0.68);
+  font-size: 0.62rem;
+  line-height: 1.45;
 }
 
 .chart-reset-btn {
@@ -1862,6 +1992,12 @@ button {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.sync-provider-btn:disabled,
+.sync-mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .account-editor-row {
   display: grid;
   gap: 0.42rem;
@@ -1889,6 +2025,13 @@ button {
   line-height: 1.5;
 }
 
+.sync-field-error {
+  margin: 0;
+  color: #ff9aa7;
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+
 .sync-note-card {
   display: grid;
   gap: 0.5rem;
@@ -1909,6 +2052,24 @@ button {
   color: rgba(222, 232, 244, 0.72);
   font-size: 0.66rem;
   line-height: 1.55;
+}
+
+.sync-status-card {
+  gap: 0.3rem;
+}
+
+.sync-status-card-error {
+  border-color: rgba(240, 69, 90, 0.3);
+  background: rgba(240, 69, 90, 0.08);
+}
+
+.sync-status-card-success {
+  border-color: rgba(43, 177, 115, 0.26);
+  background: rgba(43, 177, 115, 0.09);
+}
+
+.sync-storage-card {
+  gap: 0.3rem;
 }
 
 .sync-note-list {
@@ -1950,6 +2111,11 @@ button {
   font-size: 0.74rem;
 }
 
+.account-editor-form .account-input.input-error {
+  border-color: rgba(240, 69, 90, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(240, 69, 90, 0.15);
+}
+
 .account-editor-form .account-input::placeholder {
   font-size: 0.7rem;
 }
@@ -1965,6 +2131,12 @@ button {
   height: 38px;
   padding: 0 0.72rem;
   font-size: 0.58rem;
+}
+
+.account-editor-submit:disabled,
+.panel-action-btn:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
 }
 
 .history-list {
@@ -2157,6 +2329,17 @@ button {
   width: min(220px, calc(100% - 16px));
   top: 10px;
   left: 8px;
+}
+
+.chart-drawing-toolbar {
+  left: 8px;
+  transform: translateY(-50%) scale(0.92);
+  transform-origin: left center;
+}
+
+.chart-drawing-status {
+  left: 58px;
+  max-width: min(240px, calc(100% - 140px));
 }
 
 .mobile-phone-shell {
