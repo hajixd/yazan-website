@@ -20,6 +20,11 @@ import {
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
+import type {
+  DatabentoLatestTradeResponse,
+  DatabentoLiveEvent,
+  DatabentoOrderBookSnapshot
+} from "../lib/databentoLive";
 import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 import {
   listRomanSeenNotificationIds,
@@ -161,19 +166,7 @@ type MarketFeedResponse = {
   error?: string;
 };
 
-type LiveTradeResponse = {
-  symbol: string;
-  price: number;
-  time: number;
-  meta?: {
-    provider: string;
-    dataset: string;
-    schema: string;
-    databentoSymbol: string;
-    updatedAt: string;
-  };
-  error?: string;
-};
+type LiveTradeResponse = DatabentoLatestTradeResponse;
 
 type SyncProvider = "tradovate" | "tradesyncer";
 type SyncEnvironment = "live" | "demo";
@@ -208,24 +201,7 @@ type AccountMenuPosition = {
   y: number;
 };
 
-type OrderBookLevel = {
-  bidPrice: number;
-  askPrice: number;
-  bidSize: number;
-  askSize: number;
-  bidFillPct: number;
-  askFillPct: number;
-};
-
-type OrderBookSnapshot = {
-  levels: OrderBookLevel[];
-  bestBid: number;
-  bestAsk: number;
-  spread: number;
-  bidTotal: number;
-  askTotal: number;
-  imbalance: number;
-};
+type OrderBookSnapshot = DatabentoOrderBookSnapshot;
 
 type CandleRequestOptions = {
   signal?: AbortSignal;
@@ -410,6 +386,7 @@ const MAX_CHART_CANDLE_COUNT = 5000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 15_000;
 const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_500;
+const LIVE_STREAM_FLUSH_INTERVAL_MS = 250;
 const WATCHLIST_FETCH_BATCH_SIZE = 3;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 2;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
@@ -759,6 +736,52 @@ const fetchLatestFuturesTrade = async (
   }
 
   return payload;
+};
+
+const applyLiveTradeToCandles = (
+  activeSeries: Candle[],
+  tradePrice: number,
+  tradeTime: number,
+  timeframe: Timeframe
+): Candle[] | null => {
+  if (activeSeries.length === 0) {
+    return null;
+  }
+
+  const tradeBucketTime = floorToTimeframe(tradeTime, timeframe);
+  const latestSeriesCandle = activeSeries[activeSeries.length - 1];
+
+  if (!latestSeriesCandle || latestSeriesCandle.time > tradeBucketTime) {
+    return null;
+  }
+
+  const nextLiveCandle =
+    latestSeriesCandle.time === tradeBucketTime
+      ? {
+          ...latestSeriesCandle,
+          high: Math.max(latestSeriesCandle.high, tradePrice),
+          low: Math.min(latestSeriesCandle.low, tradePrice),
+          close: tradePrice
+        }
+      : {
+          time: tradeBucketTime,
+          open: latestSeriesCandle.close,
+          high: Math.max(latestSeriesCandle.close, tradePrice),
+          low: Math.min(latestSeriesCandle.close, tradePrice),
+          close: tradePrice
+        };
+
+  if (
+    latestSeriesCandle.time === nextLiveCandle.time &&
+    latestSeriesCandle.open === nextLiveCandle.open &&
+    latestSeriesCandle.high === nextLiveCandle.high &&
+    latestSeriesCandle.low === nextLiveCandle.low &&
+    latestSeriesCandle.close === nextLiveCandle.close
+  ) {
+    return null;
+  }
+
+  return mergeCandles(activeSeries, [nextLiveCandle]).slice(-MAX_CHART_CANDLE_COUNT);
 };
 
 const mergeCandles = (olderCandles: Candle[], newerCandles: Candle[]): Candle[] => {
@@ -1256,6 +1279,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
   const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
@@ -1810,22 +1834,135 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
 
   useEffect(() => {
+    setLiveOrderBookSnapshot(null);
+  }, [selectedSymbol]);
+
+  useEffect(() => {
     if (showcaseMode || marketStatus !== "ready" || selectedCandles.length === 0) {
       return;
     }
 
     let cancelled = false;
-    let refreshInFlight = false;
-    let activeController: AbortController | null = null;
+    let fallbackRefreshInFlight = false;
+    let fallbackController: AbortController | null = null;
+    let fallbackIntervalId: number | null = null;
+    let eventSource: EventSource | null = null;
+    let streamOpened = false;
+    let terminalStreamFailure = false;
+    let tradeFlushTimeoutId: number | null = null;
+    let pendingTrade: LiveTradeResponse | null = null;
+    let bookFlushTimeoutId: number | null = null;
+    let pendingBook: OrderBookSnapshot | null = null;
 
-    const refreshLatestTrade = async () => {
-      if (cancelled || refreshInFlight) {
+    const syncMarketFeedMeta = (meta?: LiveTradeResponse["meta"]) => {
+      if (!meta) {
         return;
       }
 
-      refreshInFlight = true;
+      setMarketFeedMeta((prev) => ({
+        provider: meta.provider,
+        dataset: meta.dataset,
+        sourceTimeframe: prev?.sourceTimeframe ?? selectedTimeframe,
+        databentoSymbol: meta.databentoSymbol,
+        updatedAt: meta.updatedAt
+      }));
+    };
+
+    const applyLiveTrade = (payload: LiveTradeResponse) => {
+      setSeriesMap((prev) => {
+        const activeSeries = prev[selectedKey];
+
+        if (!activeSeries || activeSeries.length === 0) {
+          return prev;
+        }
+
+        const nextSeries = applyLiveTradeToCandles(
+          activeSeries,
+          payload.price,
+          payload.time,
+          selectedTimeframe
+        );
+
+        if (!nextSeries) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [selectedKey]: nextSeries
+        };
+      });
+
+      syncMarketFeedMeta(payload.meta);
+    };
+
+    const flushPendingTrade = () => {
+      tradeFlushTimeoutId = null;
+
+      if (!pendingTrade || cancelled) {
+        return;
+      }
+
+      const nextTrade = pendingTrade;
+      pendingTrade = null;
+      applyLiveTrade(nextTrade);
+    };
+
+    const queueTrade = (payload: LiveTradeResponse) => {
+      pendingTrade = payload;
+
+      if (tradeFlushTimeoutId !== null) {
+        return;
+      }
+
+      tradeFlushTimeoutId = window.setTimeout(() => {
+        flushPendingTrade();
+      }, LIVE_STREAM_FLUSH_INTERVAL_MS);
+    };
+
+    const flushPendingBook = () => {
+      bookFlushTimeoutId = null;
+
+      if (!pendingBook || cancelled) {
+        return;
+      }
+
+      const nextBook = pendingBook;
+      pendingBook = null;
+      setLiveOrderBookSnapshot(nextBook);
+    };
+
+    const queueOrderBook = (snapshot: OrderBookSnapshot) => {
+      pendingBook = snapshot;
+
+      if (bookFlushTimeoutId !== null) {
+        return;
+      }
+
+      bookFlushTimeoutId = window.setTimeout(() => {
+        flushPendingBook();
+      }, LIVE_STREAM_FLUSH_INTERVAL_MS);
+    };
+
+    const stopFallbackPolling = () => {
+      if (fallbackIntervalId !== null) {
+        window.clearInterval(fallbackIntervalId);
+        fallbackIntervalId = null;
+      }
+
+      fallbackController?.abort();
+      fallbackController = null;
+      fallbackRefreshInFlight = false;
+    };
+
+    const refreshLatestTrade = async () => {
+      if (cancelled || fallbackRefreshInFlight) {
+        return;
+      }
+
+      fallbackRefreshInFlight = true;
       const controller = new AbortController();
-      activeController = controller;
+      fallbackController = controller;
 
       try {
         const payload = await fetchLatestFuturesTrade(selectedSymbol, {
@@ -1836,78 +1973,105 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           return;
         }
 
-        const tradeBucketTime = floorToTimeframe(payload.time, selectedTimeframe);
-
-        setSeriesMap((prev) => {
-          const activeSeries = prev[selectedKey];
-
-          if (!activeSeries || activeSeries.length === 0) {
-            return prev;
-          }
-
-          const latestSeriesCandle = activeSeries[activeSeries.length - 1];
-
-          if (!latestSeriesCandle || latestSeriesCandle.time > tradeBucketTime) {
-            return prev;
-          }
-
-          const nextLiveCandle =
-            latestSeriesCandle.time === tradeBucketTime
-              ? {
-                  ...latestSeriesCandle,
-                  high: Math.max(latestSeriesCandle.high, payload.price),
-                  low: Math.min(latestSeriesCandle.low, payload.price),
-                  close: payload.price
-                }
-              : {
-                  time: tradeBucketTime,
-                  open: latestSeriesCandle.close,
-                  high: Math.max(latestSeriesCandle.close, payload.price),
-                  low: Math.min(latestSeriesCandle.close, payload.price),
-                  close: payload.price
-                };
-
-          if (
-            latestSeriesCandle.time === nextLiveCandle.time &&
-            latestSeriesCandle.open === nextLiveCandle.open &&
-            latestSeriesCandle.high === nextLiveCandle.high &&
-            latestSeriesCandle.low === nextLiveCandle.low &&
-            latestSeriesCandle.close === nextLiveCandle.close
-          ) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            [selectedKey]: mergeCandles(activeSeries, [nextLiveCandle]).slice(-MAX_CHART_CANDLE_COUNT)
-          };
-        });
-
-        if (payload.meta?.updatedAt) {
-          setMarketFeedMeta((prev) =>
-            prev ? { ...prev, updatedAt: payload.meta?.updatedAt ?? prev.updatedAt } : prev
-          );
-        }
+        applyLiveTrade(payload);
       } catch {
-        // Keep the last known candle if a live patch misses.
+        // Keep the last known candle if a fallback patch misses.
       } finally {
-        if (activeController === controller) {
-          activeController = null;
+        if (fallbackController === controller) {
+          fallbackController = null;
         }
 
-        refreshInFlight = false;
+        fallbackRefreshInFlight = false;
       }
     };
 
-    void refreshLatestTrade();
-    const intervalId = window.setInterval(() => {
+    const startFallbackPolling = () => {
+      if (cancelled || fallbackIntervalId !== null) {
+        return;
+      }
+
       void refreshLatestTrade();
-    }, LIVE_PRICE_REFRESH_INTERVAL_MS);
+      fallbackIntervalId = window.setInterval(() => {
+        void refreshLatestTrade();
+      }, LIVE_PRICE_REFRESH_INTERVAL_MS);
+    };
+
+    setLiveOrderBookSnapshot(null);
+
+    eventSource = new EventSource(`/api/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`);
+    eventSource.onopen = () => {
+      if (cancelled) {
+        return;
+      }
+
+      streamOpened = true;
+      stopFallbackPolling();
+    };
+
+    eventSource.onmessage = (messageEvent) => {
+      if (cancelled) {
+        return;
+      }
+
+      let payload: DatabentoLiveEvent;
+
+      try {
+        payload = JSON.parse(messageEvent.data) as DatabentoLiveEvent;
+      } catch {
+        return;
+      }
+
+      if (payload.type === "trade") {
+        queueTrade({
+          symbol: payload.symbol,
+          price: payload.price,
+          time: payload.time,
+          meta: payload.meta
+        });
+        return;
+      }
+
+      if (payload.type === "book") {
+        queueOrderBook(payload.snapshot);
+        syncMarketFeedMeta(payload.meta);
+        return;
+      }
+
+      if (payload.type === "status") {
+        syncMarketFeedMeta(payload.meta);
+        return;
+      }
+
+      if (!payload.retrying) {
+        terminalStreamFailure = true;
+        eventSource?.close();
+        startFallbackPolling();
+      }
+    };
+
+    eventSource.onerror = () => {
+      if (cancelled || terminalStreamFailure || streamOpened) {
+        return;
+      }
+
+      startFallbackPolling();
+    };
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
-      activeController?.abort();
+
+      if (tradeFlushTimeoutId !== null) {
+        window.clearTimeout(tradeFlushTimeoutId);
+      }
+
+      if (bookFlushTimeoutId !== null) {
+        window.clearTimeout(bookFlushTimeoutId);
+      }
+
+      pendingTrade = null;
+      pendingBook = null;
+      eventSource?.close();
+      stopFallbackPolling();
     };
   }, [marketStatus, selectedCandles.length, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
 
@@ -1972,6 +2136,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       : null;
 
   const orderBookSnapshot = useMemo<OrderBookSnapshot>(() => {
+    if (liveOrderBookSnapshot) {
+      return liveOrderBookSnapshot;
+    }
+
     const referencePrice = latestCandle?.close ?? selectedAsset.basePrice;
     const tickSize = selectedAsset.tickSize;
     const midPrice = roundToTick(referencePrice, tickSize);
@@ -2027,6 +2195,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
     };
   }, [
+    liveOrderBookSnapshot,
     latestCandle?.close,
     latestCandle?.time,
     quoteChange,
