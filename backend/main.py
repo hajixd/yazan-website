@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import databento as db
-from databento_dbn import ErrorMsg, MBP10Msg, SymbolMappingMsg, SystemMsg, TradeMsg
+from databento_dbn import ErrorMsg, MBP1Msg, MBP10Msg, SymbolMappingMsg, SystemMsg, TradeMsg
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -22,6 +22,7 @@ STREAM_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+DEPTH_SCHEMAS = ("mbp-10", "mbp-1")
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
     "unauthorized",
@@ -128,7 +129,7 @@ def stop_live_client(client: db.Live | None) -> None:
         pass
 
 
-def build_order_book_snapshot(record: MBP10Msg) -> dict[str, Any]:
+def build_order_book_snapshot(record: MBP10Msg | MBP1Msg) -> dict[str, Any]:
     levels: list[dict[str, Any]] = []
 
     for level in record.levels:
@@ -230,10 +231,28 @@ def build_error_event(
 
 def is_depth_not_authorized(message: str) -> bool:
     lowered = message.lower()
-    return "mbp-10" in lowered and any(
+    return any(schema in lowered for schema in DEPTH_SCHEMAS) and any(
         phrase in lowered
         for phrase in ("not authorized", "not entitled", "permission", "license", "subscription")
     )
+
+
+def get_depth_schema_label(schema: str) -> str:
+    return "top-of-book" if schema == "mbp-1" else "full depth"
+
+
+def get_depth_connected_message(schema: str) -> str:
+    if schema == "mbp-1":
+        return "Databento live top-of-book quote connected."
+
+    return "Databento live depth stream connected."
+
+
+def get_depth_unavailable_message(schema: str) -> str:
+    if schema == "mbp-1":
+        return "Live top-of-book quote requires a Databento depth entitlement."
+
+    return "Live order book requires a Databento depth entitlement."
 
 
 def stream_trades_client(
@@ -368,146 +387,163 @@ def stream_depth_client(
     client_refs: dict[str, db.Live | None],
 ) -> None:
     resolved_symbol: str | None = None
-    connected = False
-    client: db.Live | None = None
+    for schema_index, depth_schema in enumerate(DEPTH_SCHEMAS):
+        connected = False
+        client: db.Live | None = None
+        unauthorized = False
 
-    try:
-        client = db.Live(
-            key=api_key,
-            reconnect_policy=db.ReconnectPolicy.RECONNECT,
-            heartbeat_interval_s=10,
-        )
-        client_refs["depth"] = client
+        try:
+            client = db.Live(
+                key=api_key,
+                reconnect_policy=db.ReconnectPolicy.RECONNECT,
+                heartbeat_interval_s=10,
+            )
+            client_refs["depth"] = client
 
-        client.subscribe(
-            dataset=DATABENTO_DATASET,
-            schema="mbp-10",
-            symbols=[databento_symbol],
-            stype_in="continuous",
-        )
+            client.subscribe(
+                dataset=DATABENTO_DATASET,
+                schema=depth_schema,
+                symbols=[databento_symbol],
+                stype_in="continuous",
+            )
 
-        for record in client:
-            if stop_event.is_set():
-                break
+            for record in client:
+                if stop_event.is_set():
+                    return
 
-            if isinstance(record, SymbolMappingMsg):
-                resolved = str(record.stype_out_symbol).strip()
-                resolved_symbol = resolved or None
-                enqueue(
-                    build_status_event(
-                        symbol,
-                        "connected",
-                        f"{databento_symbol} mapped to {resolved_symbol}.",
-                        databento_symbol,
-                        resolved_symbol,
+                if isinstance(record, SymbolMappingMsg):
+                    resolved = str(record.stype_out_symbol).strip()
+                    resolved_symbol = resolved or None
+                    enqueue(
+                        build_status_event(
+                            symbol,
+                            "connected",
+                            f"{databento_symbol} mapped to {resolved_symbol}.",
+                            databento_symbol,
+                            resolved_symbol,
+                            schema=depth_schema,
+                        )
                     )
-                )
-                continue
+                    continue
 
-            if isinstance(record, SystemMsg):
-                enqueue(encode_sse_comment())
+                if isinstance(record, SystemMsg):
+                    enqueue(encode_sse_comment())
 
-                if not bool(getattr(record, "is_heartbeat", False)) and not connected:
+                    if not bool(getattr(record, "is_heartbeat", False)) and not connected:
+                        connected = True
+                        enqueue(
+                            build_status_event(
+                                symbol,
+                                "connected",
+                                get_depth_connected_message(depth_schema),
+                                databento_symbol,
+                                resolved_symbol,
+                                schema=depth_schema,
+                            )
+                        )
+
+                    continue
+
+                if isinstance(record, ErrorMsg):
+                    message = str(getattr(record, "err", "")) or "Databento sent an error message."
+
+                    if is_depth_not_authorized(message):
+                        unauthorized = True
+                        break
+
+                    retrying = not classify_terminal(message)
+                    enqueue(
+                        build_error_event(
+                            symbol,
+                            message,
+                            retrying,
+                            ns_to_ms(getattr(record, "ts_event", None)),
+                            databento_symbol,
+                            resolved_symbol,
+                            schema=depth_schema,
+                        )
+                    )
+
+                    if not retrying:
+                        break
+
+                    continue
+
+                if not connected:
                     connected = True
                     enqueue(
                         build_status_event(
                             symbol,
                             "connected",
-                            "Databento live stream connected.",
+                            get_depth_connected_message(depth_schema),
                             databento_symbol,
                             resolved_symbol,
+                            schema=depth_schema,
                         )
                     )
 
-                continue
-
-            if isinstance(record, ErrorMsg):
-                message = str(getattr(record, "err", "")) or "Databento sent an error message."
-
-                if is_depth_not_authorized(message):
+                if isinstance(record, (MBP10Msg, MBP1Msg)):
                     enqueue(
-                        build_status_event(
-                            symbol,
-                            "stopped",
-                            "Live order book requires Databento mbp-10 entitlement.",
-                            databento_symbol,
-                            resolved_symbol,
-                            schema="mbp-10",
-                        )
+                        {
+                            "type": "book",
+                            "symbol": symbol,
+                            "time": ns_to_ms(getattr(record, "ts_event", None)),
+                            "snapshot": build_order_book_snapshot(record),
+                            "meta": build_meta(depth_schema, databento_symbol, resolved_symbol),
+                        }
                     )
-                    break
+        except Exception as error:
+            message = str(error) or "Databento live depth stream failed."
 
-                retrying = not classify_terminal(message)
+            if is_depth_not_authorized(message):
+                unauthorized = True
+            else:
                 enqueue(
                     build_error_event(
                         symbol,
                         message,
-                        retrying,
-                        ns_to_ms(getattr(record, "ts_event", None)),
+                        not classify_terminal(message),
+                        now_ms(),
                         databento_symbol,
                         resolved_symbol,
-                        schema="mbp-10",
+                        schema=depth_schema,
                     )
                 )
+                return
+        finally:
+            client_refs["depth"] = None
+            stop_live_client(client)
 
-                if not retrying:
-                    break
+        if not unauthorized:
+            return
 
-                continue
+        has_next_schema = schema_index < len(DEPTH_SCHEMAS) - 1
 
-            if not connected:
-                connected = True
-                enqueue(
-                    build_status_event(
-                        symbol,
-                        "connected",
-                        "Databento live depth stream connected.",
-                        databento_symbol,
-                        resolved_symbol,
-                        schema="mbp-10",
-                    )
-                )
-
-            if isinstance(record, MBP10Msg):
-                enqueue(
-                    {
-                        "type": "book",
-                        "symbol": symbol,
-                        "time": ns_to_ms(getattr(record, "ts_event", None)),
-                        "snapshot": build_order_book_snapshot(record),
-                        "meta": build_meta("mbp-10", databento_symbol, resolved_symbol),
-                    }
-                )
-    except Exception as error:
-        message = str(error) or "Databento live depth stream failed."
-
-        if is_depth_not_authorized(message):
+        if has_next_schema:
+            next_schema = DEPTH_SCHEMAS[schema_index + 1]
             enqueue(
                 build_status_event(
                     symbol,
-                    "stopped",
-                    "Live order book requires Databento mbp-10 entitlement.",
+                    "reconnecting",
+                    f"Databento {get_depth_schema_label(depth_schema)} unavailable. Falling back to {get_depth_schema_label(next_schema)}.",
                     databento_symbol,
                     resolved_symbol,
-                    schema="mbp-10",
+                    schema=next_schema,
                 )
             )
-            return
+            continue
 
         enqueue(
-            build_error_event(
+            build_status_event(
                 symbol,
-                message,
-                not classify_terminal(message),
-                now_ms(),
+                "stopped",
+                get_depth_unavailable_message(depth_schema),
                 databento_symbol,
                 resolved_symbol,
-                schema="mbp-10",
+                schema=depth_schema,
             )
         )
-    finally:
-        client_refs["depth"] = None
-        stop_live_client(client)
+        return
 
 
 def stream_databento_worker(

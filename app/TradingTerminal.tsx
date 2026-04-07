@@ -158,6 +158,8 @@ type MarketFeedMeta = {
   sourceTimeframe: string;
   databentoSymbol: string;
   updatedAt: string;
+  schema?: string;
+  resolvedSymbol?: string | null;
 };
 
 type MarketFeedResponse = {
@@ -239,15 +241,32 @@ const createPseudoAccountNumber = (seedText: string): string => {
 };
 
 const isLiveDepthSchemaMessage = (message: string, schema?: string) => {
-  return schema === "mbp-10" || /\bmbp-10\b/i.test(message);
+  return schema === "mbp-10" || schema === "mbp-1" || /\bmbp-(?:10|1)\b/i.test(message);
 };
 
-const formatLiveDepthStatusMessage = (message: string) => {
+const formatLiveDepthStatusMessage = (message: string, schema?: string) => {
   if (/(not authorized|not entitled|permission|license|subscription)/i.test(message)) {
-    return "Live order book requires Databento mbp-10 entitlement.";
+    return schema === "mbp-1"
+      ? "Live top-of-book quote requires a Databento depth entitlement."
+      : "Live order book requires a Databento depth entitlement.";
   }
 
   return message || "Live order book is currently unavailable.";
+};
+
+const isLikelyLocalHostname = (hostname: string) => {
+  const normalized = hostname.toLowerCase();
+
+  return (
+    normalized === "localhost" ||
+    normalized === "0.0.0.0" ||
+    normalized === "[::1]" ||
+    normalized.endsWith(".local") ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized) ||
+    /^10(?:\.\d{1,3}){3}$/.test(normalized) ||
+    /^192\.168(?:\.\d{1,3}){2}$/.test(normalized) ||
+    /^172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}$/.test(normalized)
+  );
 };
 
 const timeframes: Timeframe[] = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
@@ -1337,6 +1356,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [simulationFallback, setSimulationFallback] = useState(false);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [liveDepthMessage, setLiveDepthMessage] = useState<string | null>(null);
+  const [liveDepthSchema, setLiveDepthSchema] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
   const [yazanAccount, setYazanAccount] = useState<AccountSyncDraft | null>(DEFAULT_YAZAN_SYNC_DRAFT);
   const [showYazanSyncDraft, setShowYazanSyncDraft] = useState(false);
@@ -1993,6 +2013,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     setLiveOrderBookSnapshot(null);
     setLiveDepthMessage(null);
+    setLiveDepthSchema(null);
   }, [selectedSymbol]);
 
   useEffect(() => {
@@ -2062,7 +2083,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     let streamReconnectTimeoutId: number | null = null;
     let streamDisabled = false;
     let terminalStreamFailure = false;
-    const usesHostedLiveBackend = Boolean(process.env.NEXT_PUBLIC_BACKEND_URL) || Boolean(process.env.VERCEL);
+    const configuredBackendBase = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "").replace(/\/+$/, "");
+    let usesHostedLiveBackend = Boolean(configuredBackendBase);
+    let liveStreamUrl = `/api/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`;
+
+    if (configuredBackendBase) {
+      liveStreamUrl = `${configuredBackendBase}/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`;
+    } else if (typeof window !== "undefined" && !isLikelyLocalHostname(window.location.hostname)) {
+      usesHostedLiveBackend = true;
+      liveStreamUrl = `/api/backend/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`;
+    }
+
     let tradeFlushTimeoutId: number | null = null;
     let pendingTrade: LiveTradeResponse | null = null;
     let bookFlushTimeoutId: number | null = null;
@@ -2078,7 +2109,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         dataset: meta.dataset,
         sourceTimeframe: prev?.sourceTimeframe ?? selectedTimeframe,
         databentoSymbol: meta.databentoSymbol,
-        updatedAt: meta.updatedAt
+        updatedAt: meta.updatedAt,
+        schema: meta.schema,
+        resolvedSymbol: meta.resolvedSymbol ?? null
       }));
     };
 
@@ -2266,9 +2299,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     setLiveOrderBookSnapshot(null);
     setLiveDepthMessage(null);
+    setLiveDepthSchema(null);
 
     armStreamBootstrapTimeout();
-    eventSource = new EventSource(`/api/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`);
+    eventSource = new EventSource(liveStreamUrl);
     eventSource.onopen = () => {
       if (cancelled) {
         return;
@@ -2305,6 +2339,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       if (payload.type === "book") {
         markStreamAsLive();
         setLiveDepthMessage(null);
+        setLiveDepthSchema(payload.meta?.schema ?? "mbp-10");
         queueOrderBook(payload.snapshot);
         syncMarketFeedMeta(payload.meta);
         return;
@@ -2312,13 +2347,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       if (payload.type === "status") {
         if (isLiveDepthSchemaMessage(payload.message, payload.meta?.schema)) {
+          setLiveDepthSchema(payload.meta?.schema ?? null);
+
           if (payload.state === "connected") {
             setLiveDepthMessage(null);
           } else if (payload.state === "stopped") {
             setLiveOrderBookSnapshot(null);
-            setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message));
+            setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message, payload.meta?.schema));
           }
 
+          syncMarketFeedMeta(payload.meta);
           return;
         }
 
@@ -2331,7 +2369,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       if (isLiveDepthSchemaMessage(payload.message, payload.meta?.schema)) {
         setLiveOrderBookSnapshot(null);
-        setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message));
+        setLiveDepthSchema(payload.meta?.schema ?? null);
+        setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message, payload.meta?.schema));
         return;
       }
 
@@ -2552,15 +2591,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return "Live depth";
+      return liveDepthSchema === "mbp-1" ? "Live top of book" : "Live depth";
     }
 
     if (liveDepthMessage) {
-      return "Trade only";
+      return liveDepthSchema === "mbp-1" ? "Top of book unavailable" : "Trade only";
     }
 
     return "Waiting for depth";
-  }, [liveDepthMessage, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+  }, [liveDepthMessage, liveDepthSchema, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
 
   const orderBookSourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
@@ -2568,7 +2607,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return "Live depth";
+      return liveDepthSchema === "mbp-1" ? "Top of book" : "Live depth";
     }
 
     if (liveDepthMessage) {
@@ -2576,7 +2615,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return "Waiting";
-  }, [liveDepthMessage, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+  }, [liveDepthMessage, liveDepthSchema, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
 
   const watchlistRows = useMemo(() => {
     return orderedAssets.map((asset) => {
@@ -5093,7 +5132,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   </div>
                 ) : (
                   <p className="quote-overlay-empty">
-                    {liveDepthMessage ?? "Waiting for real Databento depth."}
+                    {liveDepthMessage ??
+                      (liveDepthSchema === "mbp-1"
+                        ? "Waiting for real Databento top-of-book."
+                        : "Waiting for real Databento depth.")}
                   </p>
                 )}
               </div>
@@ -5146,7 +5188,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   </>
                 ) : (
                   <p className="order-book-empty">
-                    {liveDepthMessage ?? "Waiting for real Databento depth."}
+                    {liveDepthMessage ??
+                      (liveDepthSchema === "mbp-1"
+                        ? "Waiting for real Databento top-of-book."
+                        : "Waiting for real Databento depth.")}
                   </p>
                 )}
               </div>

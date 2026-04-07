@@ -41,14 +41,94 @@ const proxyHostedLiveStream = async (request: Request, symbol: string) => {
     });
 
     if (!upstream.ok || !upstream.body) {
-      return null;
+      return Response.json(
+        {
+          error: "Databento live stream backend is unavailable. Use trade polling fallback."
+        },
+        {
+          status: upstream.status,
+          headers: {
+            "Cache-Control": "no-store"
+          }
+        }
+      );
     }
 
-    return new Response(upstream.body, {
+    const reader = upstream.body.getReader();
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let closed = false;
+
+        const closeStream = async () => {
+          if (closed) {
+            return;
+          }
+
+          closed = true;
+
+          try {
+            await reader.cancel();
+          } catch {
+            // Ignore reader cancellation races during abort/cancel.
+          }
+
+          try {
+            controller.close();
+          } catch {
+            // Ignore controller close races during abort/cancel.
+          }
+        };
+
+        const abortListener = () => {
+          void closeStream();
+        };
+
+        request.signal.addEventListener("abort", abortListener, { once: true });
+
+        const pump = async () => {
+          try {
+            while (!closed) {
+              const { done, value } = await reader.read();
+
+              if (done) {
+                break;
+              }
+
+              if (value) {
+                controller.enqueue(value);
+              }
+            }
+          } catch {
+            // Let the client reconnect or fall back if the upstream stream breaks.
+          } finally {
+            request.signal.removeEventListener("abort", abortListener);
+
+            try {
+              reader.releaseLock();
+            } catch {
+              // Ignore lock release races during shutdown.
+            }
+
+            try {
+              controller.close();
+            } catch {
+              // Ignore controller close races during shutdown.
+            }
+          }
+        };
+
+        void pump();
+      },
+      cancel() {
+        void reader.cancel();
+      }
+    });
+
+    return new Response(stream, {
       status: upstream.status,
       headers: {
         "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
         "Content-Type": "text/event-stream; charset=utf-8",
         "X-Accel-Buffering": "no"
       }
