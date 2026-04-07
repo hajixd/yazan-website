@@ -1,5 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "nextjs",
-  "outputDirectory": ".next"
+  "experimentalServices": {
+    "web": {
+      "entrypoint": ".",
+      "routePrefix": "/"
+    },
+    "backend": {
+      "entrypoint": "backend/main.py",
+      "routePrefix": "/api/backend",
+      "maxDuration": 900
+    }
+  }
 }

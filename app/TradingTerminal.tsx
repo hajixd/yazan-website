@@ -388,6 +388,8 @@ const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
 const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 250;
 const LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 4_000;
+const HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 12_000;
+const LIVE_STREAM_RECONNECT_GRACE_MS = 8_000;
 const SIMULATION_TICK_INTERVAL_MS = 1_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 2;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 1;
@@ -398,6 +400,14 @@ const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = {
 };
 const YAZAN_ACCOUNT_MENU_WIDTH = 188;
 const YAZAN_ACCOUNT_MENU_HEIGHT = 118;
+const HOSTED_LIVE_BACKEND_URL_BASE = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "").replace(
+  /\/+$/,
+  ""
+);
+const REALTIME_FUTURES_LIVE_STREAM_URL = HOSTED_LIVE_BACKEND_URL_BASE
+  ? `${HOSTED_LIVE_BACKEND_URL_BASE}/futures/live`
+  : "/api/futures/live";
+const USES_HOSTED_LIVE_BACKEND = HOSTED_LIVE_BACKEND_URL_BASE.length > 0;
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1m": 4,
@@ -2043,6 +2053,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     let streamOpened = false;
     let streamHasDeliveredData = false;
     let streamBootstrapTimeoutId: number | null = null;
+    let streamReconnectTimeoutId: number | null = null;
     let streamDisabled = false;
     let terminalStreamFailure = false;
     let tradeFlushTimeoutId: number | null = null;
@@ -2160,6 +2171,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
     };
 
+    const clearStreamReconnectTimeout = () => {
+      if (streamReconnectTimeoutId !== null) {
+        window.clearTimeout(streamReconnectTimeoutId);
+        streamReconnectTimeoutId = null;
+      }
+    };
+
     const disableStreamAndUsePolling = (message?: string) => {
       if (streamDisabled || cancelled) {
         return;
@@ -2167,6 +2185,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       streamDisabled = true;
       clearStreamBootstrapTimeout();
+      clearStreamReconnectTimeout();
       eventSource?.close();
       eventSource = null;
 
@@ -2222,6 +2241,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const markStreamAsLive = () => {
       streamHasDeliveredData = true;
       clearStreamBootstrapTimeout();
+      clearStreamReconnectTimeout();
       stopFallbackPolling();
       setMarketError(null);
     };
@@ -2234,19 +2254,22 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         }
 
         disableStreamAndUsePolling("Live stream unavailable. Using Databento trade polling.");
-      }, LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS);
+      }, USES_HOSTED_LIVE_BACKEND ? HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS : LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS);
     };
 
     setLiveOrderBookSnapshot(null);
 
     armStreamBootstrapTimeout();
-    eventSource = new EventSource(`/api/futures/live?symbol=${encodeURIComponent(selectedSymbol)}`);
+    eventSource = new EventSource(
+      `${REALTIME_FUTURES_LIVE_STREAM_URL}?symbol=${encodeURIComponent(selectedSymbol)}`
+    );
     eventSource.onopen = () => {
       if (cancelled) {
         return;
       }
 
       streamOpened = true;
+      clearStreamReconnectTimeout();
     };
 
     eventSource.onmessage = (messageEvent) => {
@@ -2301,6 +2324,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
+       if (USES_HOSTED_LIVE_BACKEND && !terminalStreamFailure) {
+        if (!streamHasDeliveredData) {
+          return;
+        }
+
+        if (streamReconnectTimeoutId === null) {
+          setMarketError("Live stream reconnecting...");
+          streamReconnectTimeoutId = window.setTimeout(() => {
+            if (cancelled || streamDisabled) {
+              return;
+            }
+
+            disableStreamAndUsePolling("Live stream unavailable. Using Databento trade polling.");
+          }, LIVE_STREAM_RECONNECT_GRACE_MS);
+        }
+
+        return;
+      }
+
       disableStreamAndUsePolling(
         terminalStreamFailure
           ? "Live stream stopped. Using Databento trade polling."
@@ -2313,6 +2355,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return () => {
       cancelled = true;
       clearStreamBootstrapTimeout();
+      clearStreamReconnectTimeout();
 
       if (tradeFlushTimeoutId !== null) {
         window.clearTimeout(tradeFlushTimeoutId);
@@ -2402,9 +2445,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : null;
 
-  const orderBookSnapshot = useMemo<OrderBookSnapshot>(() => {
+  const orderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
     if (liveOrderBookSnapshot) {
       return liveOrderBookSnapshot;
+    }
+
+    if (!showcaseMode && !simulationFallback) {
+      return null;
     }
 
     const referencePrice = latestCandle?.close ?? selectedAsset.basePrice;
@@ -2470,8 +2517,34 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedAsset.basePrice,
     selectedAsset.symbol,
     selectedAsset.tickSize,
-    selectedTimeframe
+    selectedTimeframe,
+    showcaseMode,
+    simulationFallback
   ]);
+
+  const quoteOverlaySourceLabel = useMemo(() => {
+    if (showcaseMode || simulationFallback) {
+      return "Simulation";
+    }
+
+    if (liveOrderBookSnapshot) {
+      return "Live depth";
+    }
+
+    return "Waiting for depth";
+  }, [liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+
+  const orderBookSourceLabel = useMemo(() => {
+    if (showcaseMode || simulationFallback) {
+      return "Simulation";
+    }
+
+    if (liveOrderBookSnapshot) {
+      return "Live depth";
+    }
+
+    return "Waiting";
+  }, [liveOrderBookSnapshot, showcaseMode, simulationFallback]);
 
   const watchlistRows = useMemo(() => {
     return orderedAssets.map((asset) => {
@@ -4947,76 +5020,99 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             <div className="chart-overlay-stack">
               <div className="quote-overlay-card">
                 <div className="quote-overlay-head">
-                  <strong>Quote</strong>
-                  <span>{showcaseMode ? "Showcase" : "Derived from last trade"}</span>
+                  <strong>Live Quote</strong>
+                  <span>{quoteOverlaySourceLabel}</span>
                 </div>
-                <div className="quote-overlay-grid">
-                  <div className="quote-overlay-item">
-                    <span>Bid</span>
-                    <strong className="up">
-                      {formatPriceByTick(orderBookSnapshot.bestBid, selectedAsset.tickSize)}
-                    </strong>
+                {orderBookSnapshot ? (
+                  <div className="quote-overlay-grid">
+                    <div className="quote-overlay-item">
+                      <span>Bid</span>
+                      <strong className="up">
+                        {formatPriceByTick(orderBookSnapshot.bestBid, selectedAsset.tickSize)}
+                      </strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Ask</span>
+                      <strong className="down">
+                        {formatPriceByTick(orderBookSnapshot.bestAsk, selectedAsset.tickSize)}
+                      </strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Spread</span>
+                      <strong className="neutral">
+                        {formatPriceByTick(orderBookSnapshot.spread, selectedAsset.tickSize)}
+                      </strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Bid Depth</span>
+                      <strong className="up">{formatDepthSize(orderBookSnapshot.bidTotal)}</strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Ask Depth</span>
+                      <strong className="down">{formatDepthSize(orderBookSnapshot.askTotal)}</strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Imbalance</span>
+                      <strong className={orderBookSnapshot.imbalance >= 0 ? "up" : "down"}>
+                        {orderBookSnapshot.imbalance >= 0 ? "+" : ""}
+                        {orderBookSnapshot.imbalance.toFixed(1)}%
+                      </strong>
+                    </div>
                   </div>
-                  <div className="quote-overlay-item">
-                    <span>Ask</span>
-                    <strong className="down">
-                      {formatPriceByTick(orderBookSnapshot.bestAsk, selectedAsset.tickSize)}
-                    </strong>
-                  </div>
-                  <div className="quote-overlay-item">
-                    <span>Spread</span>
-                    <strong className="neutral">
-                      {formatPriceByTick(orderBookSnapshot.spread, selectedAsset.tickSize)}
-                    </strong>
-                  </div>
-                  <div className="quote-overlay-item">
-                    <span>Bid Depth</span>
-                    <strong className="up">{formatDepthSize(orderBookSnapshot.bidTotal)}</strong>
-                  </div>
-                  <div className="quote-overlay-item">
-                    <span>Ask Depth</span>
-                    <strong className="down">{formatDepthSize(orderBookSnapshot.askTotal)}</strong>
-                  </div>
-                  <div className="quote-overlay-item">
-                    <span>Imbalance</span>
-                    <strong className={orderBookSnapshot.imbalance >= 0 ? "up" : "down"}>
-                      {orderBookSnapshot.imbalance >= 0 ? "+" : ""}
-                      {orderBookSnapshot.imbalance.toFixed(1)}%
-                    </strong>
-                  </div>
-                </div>
+                ) : (
+                  <p className="quote-overlay-empty">Waiting for real Databento depth.</p>
+                )}
               </div>
               <div className="order-book-card">
                 <div className="order-book-head">
                   <strong>Order Book</strong>
-                  <span>{showcaseMode ? "Simulation" : "Depth proxy"}</span>
+                  <span>{orderBookSourceLabel}</span>
                 </div>
-                <div className="order-book-labels">
-                  <span>Bid Size</span>
-                  <span>Bid</span>
-                  <span>Ask</span>
-                  <span>Ask Size</span>
-                </div>
-                <div className="order-book-rows">
-                  {orderBookSnapshot.levels.map((level) => (
-                    <div key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`} className="order-book-row">
-                      <span className="order-book-depth-cell bid">
-                        <span className="order-book-depth-fill bid" style={{ width: `${level.bidFillPct}%` }} />
-                        <span className="order-book-depth-value">{formatDepthSize(level.bidSize)}</span>
-                      </span>
-                      <span className="order-book-price bid">
-                        {formatPriceByTick(level.bidPrice, selectedAsset.tickSize)}
-                      </span>
-                      <span className="order-book-price ask">
-                        {formatPriceByTick(level.askPrice, selectedAsset.tickSize)}
-                      </span>
-                      <span className="order-book-depth-cell ask">
-                        <span className="order-book-depth-fill ask" style={{ width: `${level.askFillPct}%` }} />
-                        <span className="order-book-depth-value">{formatDepthSize(level.askSize)}</span>
-                      </span>
+                {orderBookSnapshot ? (
+                  <>
+                    <div className="order-book-labels">
+                      <span>Bid Size</span>
+                      <span>Bid</span>
+                      <span>Ask</span>
+                      <span>Ask Size</span>
                     </div>
-                  ))}
-                </div>
+                    <div className="order-book-rows">
+                      {orderBookSnapshot.levels.map((level) => (
+                        <div
+                          key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`}
+                          className="order-book-row"
+                        >
+                          <span className="order-book-depth-cell bid">
+                            <span
+                              className="order-book-depth-fill bid"
+                              style={{ width: `${level.bidFillPct}%` }}
+                            />
+                            <span className="order-book-depth-value">
+                              {formatDepthSize(level.bidSize)}
+                            </span>
+                          </span>
+                          <span className="order-book-price bid">
+                            {formatPriceByTick(level.bidPrice, selectedAsset.tickSize)}
+                          </span>
+                          <span className="order-book-price ask">
+                            {formatPriceByTick(level.askPrice, selectedAsset.tickSize)}
+                          </span>
+                          <span className="order-book-depth-cell ask">
+                            <span
+                              className="order-book-depth-fill ask"
+                              style={{ width: `${level.askFillPct}%` }}
+                            />
+                            <span className="order-book-depth-value">
+                              {formatDepthSize(level.askSize)}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="order-book-empty">Waiting for real Databento depth.</p>
+                )}
               </div>
             </div>
             {renderedSelectedCandles.length === 0 ? (

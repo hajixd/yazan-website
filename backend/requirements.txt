@@ -1,0 +1,2 @@
+fastapi>=0.115,<1
+databento>=0.73,<1

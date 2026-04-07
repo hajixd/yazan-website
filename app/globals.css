@@ -961,8 +961,8 @@ button {
 
 .chart-overlay-stack {
   position: absolute;
-  top: 42px;
-  left: 10px;
+  top: 14px;
+  left: 12px;
   z-index: 9;
   width: min(238px, calc(100% - 20px));
   display: grid;
@@ -1038,6 +1038,19 @@ button {
   color: rgba(244, 251, 255, 0.96);
 }
 
+.quote-overlay-empty,
+.order-book-empty {
+  margin: 0;
+  color: rgba(213, 226, 240, 0.72);
+  font-size: 0.52rem;
+  line-height: 1.45;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.quote-overlay-empty {
+  padding: 0.18rem 0.08rem 0.06rem;
+}
+
 .order-book-card {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 9px;
@@ -1097,6 +1110,10 @@ button {
 .order-book-rows {
   display: grid;
   gap: 0.16rem;
+}
+
+.order-book-empty {
+  padding: 0.08rem 0 0.02rem;
 }
 
 .order-book-row {
@@ -2138,7 +2155,7 @@ button {
 
 .chart-overlay-stack {
   width: min(220px, calc(100% - 16px));
-  top: 40px;
+  top: 10px;
   left: 8px;
 }
 
