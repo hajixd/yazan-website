@@ -12,7 +12,7 @@ export type FutureAsset = {
 export const futuresAssets: FutureAsset[] = [
   {
     symbol: "ES",
-    databentoSymbol: "ES.v.0",
+    databentoSymbol: "ES.c.0",
     name: "E-mini S&P 500",
     venue: "CME",
     category: "Equity Index",
@@ -22,7 +22,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "NQ",
-    databentoSymbol: "NQ.v.0",
+    databentoSymbol: "NQ.c.0",
     name: "E-mini Nasdaq-100",
     venue: "CME",
     category: "Equity Index",
@@ -32,7 +32,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "RTY",
-    databentoSymbol: "RTY.v.0",
+    databentoSymbol: "RTY.c.0",
     name: "E-mini Russell 2000",
     venue: "CME",
     category: "Equity Index",
@@ -42,7 +42,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "YM",
-    databentoSymbol: "YM.v.0",
+    databentoSymbol: "YM.c.0",
     name: "E-mini Dow",
     venue: "CBOT",
     category: "Equity Index",
@@ -52,7 +52,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "CL",
-    databentoSymbol: "CL.v.0",
+    databentoSymbol: "CL.c.0",
     name: "WTI Crude Oil",
     venue: "NYMEX",
     category: "Energy",
@@ -62,7 +62,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "NG",
-    databentoSymbol: "NG.v.0",
+    databentoSymbol: "NG.c.0",
     name: "Henry Hub Natural Gas",
     venue: "NYMEX",
     category: "Energy",
@@ -72,7 +72,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "MGC",
-    databentoSymbol: "MGC.v.0",
+    databentoSymbol: "MGC.c.0",
     name: "Micro Gold",
     venue: "COMEX",
     category: "Metals",
@@ -82,7 +82,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "SI",
-    databentoSymbol: "SI.v.0",
+    databentoSymbol: "SI.c.0",
     name: "Silver",
     venue: "COMEX",
     category: "Metals",
@@ -92,7 +92,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "HG",
-    databentoSymbol: "HG.v.0",
+    databentoSymbol: "HG.c.0",
     name: "Copper",
     venue: "COMEX",
     category: "Metals",
@@ -102,7 +102,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "ZN",
-    databentoSymbol: "ZN.v.0",
+    databentoSymbol: "ZN.c.0",
     name: "10-Year Treasury Note",
     venue: "CBOT",
     category: "Rates",
@@ -112,7 +112,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "6E",
-    databentoSymbol: "6E.v.0",
+    databentoSymbol: "6E.c.0",
     name: "Euro FX",
     venue: "CME",
     category: "FX",
@@ -122,7 +122,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "6J",
-    databentoSymbol: "6J.v.0",
+    databentoSymbol: "6J.c.0",
     name: "Japanese Yen",
     venue: "CME",
     category: "FX",
@@ -132,7 +132,7 @@ export const futuresAssets: FutureAsset[] = [
   },
   {
     symbol: "6A",
-    databentoSymbol: "6A.v.0",
+    databentoSymbol: "6A.c.0",
     name: "Australian Dollar",
     venue: "CME",
     category: "FX",
