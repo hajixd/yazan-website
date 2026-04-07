@@ -5,7 +5,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import databento as db
@@ -23,6 +23,7 @@ STREAM_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 DEPTH_SCHEMAS = ("mbp-10", "mbp-1")
+LIVE_REPLAY_WINDOW = timedelta(seconds=90)
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
     "unauthorized",
@@ -68,6 +69,10 @@ def build_meta(schema: str, databento_symbol: str, resolved_symbol: str | None) 
         .replace("+00:00", "Z"),
         "resolvedSymbol": resolved_symbol,
     }
+
+
+def get_live_replay_start() -> datetime:
+    return datetime.now(timezone.utc) - LIVE_REPLAY_WINDOW
 
 
 def encode_sse_event(payload: dict[str, Any]) -> bytes:
@@ -280,6 +285,7 @@ def stream_trades_client(
             schema="trades",
             symbols=[databento_symbol],
             stype_in="continuous",
+            start=get_live_replay_start(),
         )
 
         for record in client:
@@ -405,6 +411,7 @@ def stream_depth_client(
                 schema=depth_schema,
                 symbols=[databento_symbol],
                 stype_in="continuous",
+                start=get_live_replay_start(),
             )
 
             for record in client:
