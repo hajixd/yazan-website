@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import databento as db
-from databento_dbn import ErrorMsg, MBP1Msg, MBP10Msg, SymbolMappingMsg, SystemMsg, TradeMsg
+from databento_dbn import BBOMsg, ErrorMsg, MBP1Msg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -134,7 +134,7 @@ def stop_live_client(client: db.Live | None) -> None:
         pass
 
 
-def build_order_book_snapshot(record: MBP10Msg | MBP1Msg) -> dict[str, Any]:
+def build_order_book_snapshot(record: MBP10Msg | MBP1Msg | BBOMsg) -> dict[str, Any]:
     levels: list[dict[str, Any]] = []
 
     for level in record.levels:
@@ -553,6 +553,148 @@ def stream_depth_client(
         return
 
 
+def stream_bbo_client(
+    symbol: str,
+    databento_symbol: str,
+    api_key: str,
+    enqueue: Any,
+    stop_event: threading.Event,
+    client_refs: dict[str, db.Live | None],
+) -> None:
+    resolved_symbol: str | None = None
+    connected = False
+    client: db.Live | None = None
+
+    try:
+        client = db.Live(
+            key=api_key,
+            reconnect_policy=db.ReconnectPolicy.RECONNECT,
+            heartbeat_interval_s=10,
+        )
+        client_refs["bbo"] = client
+
+        client.subscribe(
+            dataset=DATABENTO_DATASET,
+            schema="bbo-1s",
+            symbols=[databento_symbol],
+            stype_in="continuous",
+            start=get_live_replay_start(),
+        )
+
+        for record in client:
+            if stop_event.is_set():
+                return
+
+            if isinstance(record, SymbolMappingMsg):
+                resolved = str(record.stype_out_symbol).strip()
+                resolved_symbol = resolved or None
+                enqueue(
+                    build_status_event(
+                        symbol,
+                        "connected",
+                        f"{databento_symbol} mapped to {resolved_symbol}.",
+                        databento_symbol,
+                        resolved_symbol,
+                        schema="bbo-1s",
+                    )
+                )
+                continue
+
+            if isinstance(record, SystemMsg):
+                enqueue(encode_sse_comment())
+
+                if not bool(getattr(record, "is_heartbeat", False)) and not connected:
+                    connected = True
+                    enqueue(
+                        build_status_event(
+                            symbol,
+                            "connected",
+                            "Databento live top-of-book quote connected.",
+                            databento_symbol,
+                            resolved_symbol,
+                            schema="bbo-1s",
+                        )
+                    )
+
+                continue
+
+            if isinstance(record, ErrorMsg):
+                message = str(getattr(record, "err", "")) or "Databento sent an error message."
+                retrying = not classify_terminal(message)
+                enqueue(
+                    build_error_event(
+                        symbol,
+                        message,
+                        retrying,
+                        ns_to_ms(getattr(record, "ts_event", None)),
+                        databento_symbol,
+                        resolved_symbol,
+                        schema="bbo-1s",
+                    )
+                )
+
+                if not retrying:
+                    break
+
+                continue
+
+            if not connected:
+                connected = True
+                enqueue(
+                    build_status_event(
+                        symbol,
+                        "connected",
+                        "Databento live top-of-book quote connected.",
+                        databento_symbol,
+                        resolved_symbol,
+                        schema="bbo-1s",
+                    )
+                )
+
+            if isinstance(record, BBOMsg):
+                enqueue(
+                    {
+                        "type": "book",
+                        "symbol": symbol,
+                        "time": ns_to_ms(getattr(record, "ts_event", None)),
+                        "snapshot": build_order_book_snapshot(record),
+                        "meta": build_meta("bbo-1s", databento_symbol, resolved_symbol),
+                    }
+                )
+
+                last_sale = normalise_price(
+                    getattr(record, "pretty_price", None), getattr(record, "price", None)
+                )
+
+                if last_sale > 0:
+                    enqueue(
+                        {
+                            "type": "trade",
+                            "symbol": symbol,
+                            "price": last_sale,
+                            "size": coerce_int(getattr(record, "size", 0)),
+                            "time": ns_to_ms(getattr(record, "ts_event", None)),
+                            "meta": build_meta("bbo-1s", databento_symbol, resolved_symbol),
+                        }
+                    )
+    except Exception as error:
+        message = str(error) or "Databento live top-of-book stream failed."
+        enqueue(
+            build_error_event(
+                symbol,
+                message,
+                not classify_terminal(message),
+                now_ms(),
+                databento_symbol,
+                resolved_symbol,
+                schema="bbo-1s",
+            )
+        )
+    finally:
+        client_refs["bbo"] = None
+        stop_live_client(client)
+
+
 def stream_databento_worker(
     symbol: str,
     databento_symbol: str,
@@ -609,11 +751,18 @@ def stream_databento_worker(
         args=(symbol, databento_symbol, api_key, enqueue, stop_event, client_refs),
         daemon=True,
     )
+    bbo_thread = threading.Thread(
+        target=stream_bbo_client,
+        args=(symbol, databento_symbol, api_key, enqueue, stop_event, client_refs),
+        daemon=True,
+    )
 
     trades_thread.start()
     depth_thread.start()
+    bbo_thread.start()
     trades_thread.join()
     depth_thread.join()
+    bbo_thread.join()
 
     enqueue(None)
 
@@ -636,7 +785,7 @@ async def futures_live(
 
     output_queue: queue.Queue[bytes | dict[str, Any] | None] = queue.Queue(maxsize=512)
     stop_event = threading.Event()
-    client_refs: dict[str, db.Live | None] = {"trades": None, "depth": None}
+    client_refs: dict[str, db.Live | None] = {"trades": None, "depth": None, "bbo": None}
     worker = threading.Thread(
         target=stream_databento_worker,
         args=(normalized_symbol, databento_symbol, output_queue, stop_event, client_refs),
@@ -670,6 +819,7 @@ async def futures_live(
             stop_event.set()
             stop_live_client(client_refs.get("trades"))
             stop_live_client(client_refs.get("depth"))
+            stop_live_client(client_refs.get("bbo"))
             worker.join(timeout=1.5)
 
     return StreamingResponse(

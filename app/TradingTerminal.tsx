@@ -241,12 +241,17 @@ const createPseudoAccountNumber = (seedText: string): string => {
 };
 
 const isLiveDepthSchemaMessage = (message: string, schema?: string) => {
-  return schema === "mbp-10" || schema === "mbp-1" || /\bmbp-(?:10|1)\b/i.test(message);
+  return (
+    schema === "mbp-10" ||
+    schema === "mbp-1" ||
+    schema === "bbo-1s" ||
+    /\b(?:mbp-(?:10|1)|bbo-1s)\b/i.test(message)
+  );
 };
 
 const formatLiveDepthStatusMessage = (message: string, schema?: string) => {
   if (/(not authorized|not entitled|permission|license|subscription)/i.test(message)) {
-    return schema === "mbp-1"
+    return schema === "mbp-1" || schema === "bbo-1s"
       ? "Live top-of-book quote requires a Databento depth entitlement."
       : "Live order book requires a Databento depth entitlement.";
   }
@@ -2591,11 +2596,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return liveDepthSchema === "mbp-1" ? "Live top of book" : "Live depth";
+      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+        ? "Live top of book"
+        : "Live depth";
     }
 
     if (liveDepthMessage) {
-      return liveDepthSchema === "mbp-1" ? "Top of book unavailable" : "Trade only";
+      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+        ? "Top of book unavailable"
+        : "Trade only";
     }
 
     return "Waiting for depth";
@@ -2607,7 +2616,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return liveDepthSchema === "mbp-1" ? "Top of book" : "Live depth";
+      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+        ? "Top of book"
+        : "Live depth";
     }
 
     if (liveDepthMessage) {
@@ -5133,7 +5144,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 ) : (
                   <p className="quote-overlay-empty">
                     {liveDepthMessage ??
-                      (liveDepthSchema === "mbp-1"
+                      (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
                         ? "Waiting for real Databento top-of-book."
                         : "Waiting for real Databento depth.")}
                   </p>
@@ -5144,7 +5155,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <strong>Order Book</strong>
                   <span>{orderBookSourceLabel}</span>
                 </div>
-                {liveOrderBookSnapshot && liveDepthSchema === "mbp-1" ? (
+                {liveOrderBookSnapshot &&
+                (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s") ? (
                   <p className="order-book-empty">Real-time top of book only. Full 10-level depth is not enabled.</p>
                 ) : null}
                 {orderBookSnapshot ? (
@@ -5192,7 +5204,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 ) : (
                   <p className="order-book-empty">
                     {liveDepthMessage ??
-                      (liveDepthSchema === "mbp-1"
+                      (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
                         ? "Waiting for real Databento top-of-book."
                         : "Waiting for real Databento depth.")}
                   </p>
