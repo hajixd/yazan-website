@@ -6,7 +6,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent
 } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CandlestickData,
   type ColorType,
@@ -1359,6 +1359,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const chartBackfillInFlightRef = useRef<Record<string, boolean>>({});
   const chartBackfillExhaustedRef = useRef<Record<string, boolean>>({});
   const pendingVisibleRangeShiftRef = useRef<Record<string, number>>({});
+  const marketClockAnchorRef = useRef<{ capturedAtMs: number; marketTimeMs: number } | null>(null);
   useEffect(() => {
     if (showcaseMode) {
       return;
@@ -1459,6 +1460,43 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectedModel = useMemo(() => {
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0];
   }, [selectedModelId]);
+
+  const syncMarketClock = useCallback((marketTimeMs: number) => {
+    if (!Number.isFinite(marketTimeMs) || marketTimeMs <= 0) {
+      return;
+    }
+
+    marketClockAnchorRef.current = {
+      capturedAtMs: Date.now(),
+      marketTimeMs
+    };
+  }, []);
+
+  const clearMarketClock = useCallback(() => {
+    marketClockAnchorRef.current = null;
+  }, []);
+
+  const getProjectedMarketNowMs = useCallback(() => {
+    if (showcaseMode) {
+      return referenceNowMs;
+    }
+
+    if (simulationFallback) {
+      return Date.now();
+    }
+
+    const anchor = marketClockAnchorRef.current;
+
+    if (!anchor) {
+      return Date.now();
+    }
+
+    return Date.now() - (anchor.capturedAtMs - anchor.marketTimeMs);
+  }, [referenceNowMs, showcaseMode, simulationFallback]);
+
+  useEffect(() => {
+    clearMarketClock();
+  }, [clearMarketClock, selectedSymbol, selectedTimeframe]);
   const orderedAssets = useMemo(() => {
     const assetMap = new Map(futuresAssets.map((asset) => [asset.symbol, asset]));
     const ordered: typeof futuresAssets = [];
@@ -1493,6 +1531,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   useEffect(() => {
     if (showcaseMode || simulationFallback) {
+      clearMarketClock();
       const simulationNowMs = showcaseMode ? referenceNowMs : Date.now();
       chartBackfillInFlightRef.current[selectedKey] = false;
       chartBackfillExhaustedRef.current[selectedKey] = false;
@@ -1545,6 +1584,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         }));
         chartBackfillExhaustedRef.current[selectedKey] =
           nextCandles.length >= MAX_CHART_CANDLE_COUNT;
+        const latestLoadedCandle = nextCandles[nextCandles.length - 1];
+
+        if (payload.meta?.provider !== "Simulation" && latestLoadedCandle) {
+          syncMarketClock(latestLoadedCandle.time + getTimeframeMs(selectedTimeframe) - 1);
+        } else {
+          clearMarketClock();
+        }
+
         setSimulationFallback(false);
         setMarketFeedMeta(payload.meta ?? null);
         setMarketStatus("ready");
@@ -1559,6 +1606,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           error instanceof Error ? error.message : "Failed to load market candles.";
 
         setSimulationFallback(true);
+        clearMarketClock();
         setMarketStatus("ready");
         setMarketError(errorMessage);
       });
@@ -1568,12 +1616,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       controller.abort();
     };
   }, [
+    clearMarketClock,
     referenceNowMs,
     selectedAsset.basePrice,
     selectedKey,
     selectedSymbol,
     selectedTimeframe,
     simulationFallback,
+    syncMarketClock,
     showcaseMode
   ]);
 
@@ -1880,6 +1930,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
+  const projectedMarketNowMs = getProjectedMarketNowMs();
+  const renderedSelectedCandles = useMemo(() => {
+    if (selectedCandles.length === 0 || showcaseMode || simulationFallback) {
+      return selectedCandles;
+    }
+
+    const lastCandle = selectedCandles[selectedCandles.length - 1];
+
+    if (!lastCandle) {
+      return selectedCandles;
+    }
+
+    if (!Number.isFinite(projectedMarketNowMs)) {
+      return selectedCandles;
+    }
+
+    const timeframeMs = getTimeframeMs(selectedTimeframe);
+    const projectedBucketTime = floorToTimeframe(projectedMarketNowMs, selectedTimeframe);
+    const nextBucketTime = lastCandle.time + timeframeMs;
+
+    if (projectedBucketTime < nextBucketTime) {
+      return selectedCandles;
+    }
+
+    const projectedPrice = roundToTick(lastCandle.close, selectedAsset.tickSize);
+
+    return [
+      ...selectedCandles,
+      {
+        time: nextBucketTime,
+        open: projectedPrice,
+        high: projectedPrice,
+        low: projectedPrice,
+        close: projectedPrice
+      }
+    ];
+  }, [
+    selectedAsset.tickSize,
+    selectedCandles,
+    selectedTimeframe,
+    showcaseMode,
+    simulationFallback,
+    projectedMarketNowMs
+  ]);
 
   useEffect(() => {
     setLiveOrderBookSnapshot(null);
@@ -1971,6 +2065,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     };
 
     const applyLiveTrade = (payload: LiveTradeResponse) => {
+      syncMarketClock(payload.time);
+
       setSeriesMap((prev) => {
         const activeSeries = prev[selectedKey];
 
@@ -2240,7 +2336,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedSymbol,
     selectedTimeframe,
     showcaseMode,
-    simulationFallback
+    simulationFallback,
+    syncMarketClock
   ]);
 
   const marketCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
@@ -2276,16 +2373,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
-    for (const candle of selectedCandles) {
+    for (const candle of renderedSelectedCandles) {
       map.set(toUtcTimestamp(candle.time), candle);
     }
 
     return map;
-  }, [selectedCandles]);
+  }, [renderedSelectedCandles]);
 
-  const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
+  const latestCandle = renderedSelectedCandles[renderedSelectedCandles.length - 1] ?? null;
   const previousCandle =
-    selectedCandles.length > 1 ? selectedCandles[selectedCandles.length - 2] : latestCandle;
+    renderedSelectedCandles.length > 1
+      ? renderedSelectedCandles[renderedSelectedCandles.length - 2]
+      : latestCandle;
 
   const quoteChange =
     latestCandle && previousCandle && previousCandle.close > 0
@@ -2632,12 +2731,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
 
-    for (let i = 0; i < selectedCandles.length; i += 1) {
-      map.set(toUtcTimestamp(selectedCandles[i].time), i);
+    for (let i = 0; i < renderedSelectedCandles.length; i += 1) {
+      map.set(toUtcTimestamp(renderedSelectedCandles[i].time), i);
     }
 
     return map;
-  }, [selectedCandles]);
+  }, [renderedSelectedCandles]);
 
   const actionRows = useMemo(() => {
     const rows: ActionItem[] = [];
@@ -3297,7 +3396,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       const candleEndMs = latestCandle.time + candleMs;
-      const nowMs = Date.now();
+      const nowMs = getProjectedMarketNowMs();
       const isStale = nowMs >= candleEndMs + candleMs;
       const remaining = isStale ? null : Math.max(0, Math.floor((candleEndMs - nowMs) / 1000));
       const h = remaining === null ? 0 : Math.floor(remaining / 3600);
@@ -3337,7 +3436,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     raf = window.requestAnimationFrame(update);
 
     return () => window.cancelAnimationFrame(raf);
-  }, [latestCandle, selectedAsset.tickSize, selectedTimeframe, selectedCandles]);
+  }, [
+    getProjectedMarketNowMs,
+    latestCandle,
+    selectedAsset.tickSize,
+    selectedTimeframe,
+    renderedSelectedCandles
+  ]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3348,14 +3453,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    if (selectedCandles.length === 0) {
+    if (renderedSelectedCandles.length === 0) {
       candleSeries.setData([]);
       delete pendingVisibleRangeShiftRef.current[selectedKey];
       selectionRef.current = "";
       return;
     }
 
-    const candleData: CandlestickData[] = selectedCandles.map((candle) => ({
+    const candleData: CandlestickData[] = renderedSelectedCandles.map((candle) => ({
       time: toUtcTimestamp(candle.time),
       open: candle.open,
       high: candle.high,
@@ -3365,7 +3470,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     candleSeries.setData(candleData);
 
-    const lastBar = selectedCandles[selectedCandles.length - 1];
+    const lastBar = renderedSelectedCandles[renderedSelectedCandles.length - 1];
 
     if (lastBar) {
       const isUp = lastBar.close >= lastBar.open;
@@ -3401,7 +3506,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       delete pendingVisibleRangeShiftRef.current[selectedKey];
     }
-  }, [chartReadyVersion, selectedCandles, selectedKey, selectedSymbol, selectedTimeframe]);
+  }, [chartReadyVersion, renderedSelectedCandles, selectedKey, selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3427,11 +3532,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       const chart = chartRef.current;
 
-      if (!chart || selectedCandles.length === 0) {
+      if (!chart || renderedSelectedCandles.length === 0) {
         return;
       }
 
-      const to = selectedCandles.length - 1;
+      const to = renderedSelectedCandles.length - 1;
       const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
       chart.timeScale().setVisibleLogicalRange({ from, to });
       focusTradeIdRef.current = null;
@@ -3442,7 +3547,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [selectedCandles, selectedTimeframe]);
+  }, [renderedSelectedCandles, selectedTimeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3470,10 +3575,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const rightBound = Math.max(entryIndex, exitIndex);
     const span = Math.max(32, Math.round(timeframeVisibleCount[selectedTimeframe] * 0.72));
     const from = Math.max(0, leftBound - Math.round(span * 0.4));
-    const to = Math.min(selectedCandles.length - 1, rightBound + Math.round(span * 0.6));
+    const to = Math.min(renderedSelectedCandles.length - 1, rightBound + Math.round(span * 0.6));
     chart.timeScale().setVisibleLogicalRange({ from, to });
     focusTradeIdRef.current = null;
-  }, [candleIndexByUnix, selectedCandles, selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
+  }, [
+    candleIndexByUnix,
+    renderedSelectedCandles,
+    selectedHistoryTrade,
+    selectedSymbol,
+    selectedTimeframe
+  ]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3852,7 +3963,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const key = symbolTimeframeKey(selectedSymbol, timeframe);
       const list =
         timeframe === selectedTimeframe
-          ? selectedCandles
+          ? renderedSelectedCandles
           : timeframePreviewMap[key] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
@@ -3864,15 +3975,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         change
       };
     });
-  }, [selectedCandles, selectedSymbol, selectedTimeframe, timeframePreviewMap]);
+  }, [renderedSelectedCandles, selectedSymbol, selectedTimeframe, timeframePreviewMap]);
   const resetChart = () => {
     const chart = chartRef.current;
 
-    if (!chart || selectedCandles.length === 0) {
+    if (!chart || renderedSelectedCandles.length === 0) {
       return;
     }
 
-    const to = selectedCandles.length - 1;
+    const to = renderedSelectedCandles.length - 1;
     const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
     chart.timeScale().setVisibleLogicalRange({ from, to });
     focusTradeIdRef.current = null;
@@ -4805,8 +4916,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 );
               }
 
-              const displayIndex = selectedCandles.indexOf(display);
-              const previousDisplay = displayIndex > 0 ? selectedCandles[displayIndex - 1] : null;
+              const displayIndex = renderedSelectedCandles.indexOf(display);
+              const previousDisplay =
+                displayIndex > 0 ? renderedSelectedCandles[displayIndex - 1] : null;
               const openClass =
                 previousDisplay && previousDisplay.close < previousDisplay.open ? "ohlc-down" : "ohlc-up";
               const closeClass = display.close >= display.open ? "ohlc-up" : "ohlc-down";
@@ -4907,7 +5019,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 </div>
               </div>
             </div>
-            {selectedCandles.length === 0 ? (
+            {renderedSelectedCandles.length === 0 ? (
               <div
                 className={`chart-empty-state${marketStatus === "loading" ? " loading" : ""}`}
                 role="status"
@@ -4929,7 +5041,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 className="chart-reset-btn"
                 onClick={resetChart}
                 title="Reset chart view (Opt+R)"
-                disabled={selectedCandles.length === 0}
+                disabled={renderedSelectedCandles.length === 0}
               >
                 Reset Chart
               </button>
