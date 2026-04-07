@@ -59,6 +59,15 @@ const normalizeNumber = (value: string | number | undefined): number => {
   return Number.isFinite(next) ? next : NaN;
 };
 
+const parseAvailableEndMs = (payload: string): number | null => {
+  const availableEndMatch =
+    payload.match(/available up to '([^']+)'/i) ??
+    payload.match(/available end of dataset [^(]*\('([^']+)'\)/i);
+  const availableEndMs = availableEndMatch ? Date.parse(availableEndMatch[1]) : NaN;
+
+  return Number.isFinite(availableEndMs) ? availableEndMs : null;
+};
+
 const buildDatabentoUrl = (databentoSymbol: string, startMs: number, endMs: number) => {
   const url = new URL(DATABENTO_HISTORICAL_URL);
 
@@ -227,13 +236,29 @@ export async function GET(request: Request) {
   const startMs = endMs - RECENT_TRADE_WINDOW_MS;
 
   try {
-    const { response, payload } = await fetchDatabentoText(
-      buildDatabentoUrl(asset.databentoSymbol, startMs, endMs),
-      {
-        Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
-        Accept: "application/json"
-      }
+    const authHeaders = {
+      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+      Accept: "application/json"
+    };
+    let activeStartMs = startMs;
+    let activeEndMs = endMs;
+    let { response, payload } = await fetchDatabentoText(
+      buildDatabentoUrl(asset.databentoSymbol, activeStartMs, activeEndMs),
+      authHeaders
     );
+
+    if (!response.ok) {
+      const availableEndMs = parseAvailableEndMs(payload);
+
+      if (availableEndMs !== null && activeStartMs > availableEndMs) {
+        activeEndMs = availableEndMs;
+        activeStartMs = Math.max(0, activeEndMs - RECENT_TRADE_WINDOW_MS);
+        ({ response, payload } = await fetchDatabentoText(
+          buildDatabentoUrl(asset.databentoSymbol, activeStartMs, activeEndMs),
+          authHeaders
+        ));
+      }
+    }
 
     if (!response.ok) {
       logDatabentoApiKeyFailure("databento:last", {

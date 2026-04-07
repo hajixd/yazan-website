@@ -271,6 +271,15 @@ const parseDatabentoCandles = (payload: string): Candle[] => {
   return candles.sort((left, right) => left.time - right.time);
 };
 
+const parseAvailableEndMs = (payload: string): number | null => {
+  const availableEndMatch =
+    payload.match(/available up to '([^']+)'/i) ??
+    payload.match(/available end of dataset [^(]*\('([^']+)'\)/i);
+  const availableEndMs = availableEndMatch ? Date.parse(availableEndMatch[1]) : NaN;
+
+  return Number.isFinite(availableEndMs) ? availableEndMs : null;
+};
+
 const buildDatabentoUrl = (
   databentoSymbol: string,
   schema: "ohlcv-1m" | "ohlcv-1h" | "ohlcv-1d",
@@ -466,10 +475,9 @@ const fetchDatabentoCandles = async (
   );
 
   if (!response.ok) {
-    const availableEndMatch = payload.match(/available up to '([^']+)'/i);
-    const availableEndMs = availableEndMatch ? Date.parse(availableEndMatch[1]) : NaN;
+    const availableEndMs = parseAvailableEndMs(payload);
 
-    if (Number.isFinite(availableEndMs) && endMs > availableEndMs) {
+    if (availableEndMs !== null && endMs > availableEndMs) {
       endMs = availableEndMs;
       startMs = endMs - rawBars * stepMs;
       ({ response, payload } = await fetchDatabentoText(
