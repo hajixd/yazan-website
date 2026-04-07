@@ -16,7 +16,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "E-mini S&P 500",
     venue: "CME",
     category: "Equity Index",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 6398.0,
     tickSize: 0.25
   },
@@ -26,7 +26,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "E-mini Nasdaq-100",
     venue: "CME",
     category: "Equity Index",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 23254.25,
     tickSize: 0.25
   },
@@ -36,7 +36,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "E-mini Russell 2000",
     venue: "CME",
     category: "Equity Index",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 2456.0,
     tickSize: 0.1
   },
@@ -46,7 +46,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "E-mini Dow",
     venue: "CBOT",
     category: "Equity Index",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 45310.0,
     tickSize: 1
   },
@@ -56,7 +56,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "WTI Crude Oil",
     venue: "NYMEX",
     category: "Energy",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 101.18,
     tickSize: 0.01
   },
@@ -66,7 +66,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Henry Hub Natural Gas",
     venue: "NYMEX",
     category: "Energy",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 3.081,
     tickSize: 0.001
   },
@@ -76,7 +76,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Micro Gold",
     venue: "COMEX",
     category: "Metals",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 4488.9,
     tickSize: 0.1
   },
@@ -86,7 +86,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Silver",
     venue: "COMEX",
     category: "Metals",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 34.725,
     tickSize: 0.005
   },
@@ -96,7 +96,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Copper",
     venue: "COMEX",
     category: "Metals",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 5.454,
     tickSize: 0.0005
   },
@@ -106,7 +106,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "10-Year Treasury Note",
     venue: "CBOT",
     category: "Rates",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 110.1875,
     tickSize: 0.015625
   },
@@ -116,7 +116,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Euro FX",
     venue: "CME",
     category: "FX",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 1.1521,
     tickSize: 0.00005
   },
@@ -126,7 +126,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Japanese Yen",
     venue: "CME",
     category: "FX",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 0.0062485,
     tickSize: 0.0000005
   },
@@ -136,7 +136,7 @@ export const futuresAssets: FutureAsset[] = [
     name: "Australian Dollar",
     venue: "CME",
     category: "FX",
-    contract: "Volume lead month continuous",
+    contract: "Front month continuous",
     basePrice: 0.6865,
     tickSize: 0.00005
   }
