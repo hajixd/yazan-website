@@ -5144,6 +5144,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <strong>Order Book</strong>
                   <span>{orderBookSourceLabel}</span>
                 </div>
+                {liveOrderBookSnapshot && liveDepthSchema === "mbp-1" ? (
+                  <p className="order-book-empty">Real-time top of book only. Full 10-level depth is not enabled.</p>
+                ) : null}
                 {orderBookSnapshot ? (
                   <>
                     <div className="order-book-labels">
