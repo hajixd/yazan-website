@@ -390,6 +390,14 @@ const isLikelyLocalHostname = (hostname: string) => {
 
 const timeframes: Timeframe[] = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"];
 const defaultAssetOrder = futuresAssets.map((asset) => asset.symbol);
+const defaultVisibleAssetOrder = defaultAssetOrder.slice(0, 1);
+
+const isLegacyFullAssetOrder = (order: string[]) => {
+  return (
+    order.length === defaultAssetOrder.length &&
+    order.every((symbol, index) => symbol === defaultAssetOrder[index])
+  );
+};
 
 const normalizeAssetOrder = (order: string[]): string[] => {
   const validSymbols = new Set(defaultAssetOrder);
@@ -407,7 +415,7 @@ const normalizeAssetOrder = (order: string[]): string[] => {
     return next;
   }
 
-  return defaultAssetOrder[0] ? [defaultAssetOrder[0]] : [];
+  return defaultVisibleAssetOrder;
 };
 
 const matchesAssetSearch = (asset: FutureAsset, query: string) => {
@@ -2022,8 +2030,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [accountEntryMode, setAccountEntryMode] = useState<AccountRole | null>(null);
   const [adminCodeInput, setAdminCodeInput] = useState("");
   const [accountAccessError, setAccountAccessError] = useState("");
-  const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
-  const [assetOrder, setAssetOrder] = useState<string[]>(defaultAssetOrder);
+  const [selectedSymbol, setSelectedSymbol] = useState(
+    defaultVisibleAssetOrder[0] ?? futuresAssets[0].symbol
+  );
+  const [assetOrder, setAssetOrder] = useState<string[]>(defaultVisibleAssetOrder);
   const [draggedAssetSymbol, setDraggedAssetSymbol] = useState<string | null>(null);
   const [assetDropTarget, setAssetDropTarget] = useState<{
     symbol: string;
@@ -2248,9 +2258,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
-      setAssetOrder(normalizeAssetOrder(parsed.filter((value): value is string => typeof value === "string")));
+      const nextOrder = normalizeAssetOrder(
+        parsed.filter((value): value is string => typeof value === "string")
+      );
+      setAssetOrder(isLegacyFullAssetOrder(nextOrder) ? defaultVisibleAssetOrder : nextOrder);
     } catch {
-      setAssetOrder(defaultAssetOrder);
+      setAssetOrder(defaultVisibleAssetOrder);
     }
   }, []);
 
