@@ -1549,6 +1549,12 @@ button {
   opacity: 0.72;
 }
 
+.rail-btn-compact-label .rail-label {
+  font-size: 0.38rem;
+  line-height: 1;
+  letter-spacing: 0.03em;
+}
+
 .panel-content {
   position: absolute;
   inset: 0 64px 0 0;

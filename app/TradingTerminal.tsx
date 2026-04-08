@@ -526,14 +526,14 @@ const buildSimulationProfileFromConnection = (connection: SavedAccountSync): Mod
   };
 };
 
-const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
+const sidebarTabs: Array<{ id: PanelTab; label: string; compactLabel?: boolean }> = [
   { id: "active", label: "Active" },
   { id: "assets", label: "Assets" },
   { id: "models", label: "Models" },
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
-  { id: "marketMaker", label: "Market Maker" },
-  { id: "orderFlow", label: "Order Flow" }
+  { id: "marketMaker", label: "Market Maker", compactLabel: true },
+  { id: "orderFlow", label: "Order Flow", compactLabel: true }
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
@@ -8058,7 +8058,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               <button
                 key={tab.id}
                 type="button"
-                className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}`}
+                className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}${
+                  tab.compactLabel ? " rail-btn-compact-label" : ""
+                }`}
                 onClick={() => {
                   if (panelExpanded && activePanelTab === tab.id) {
                     setPanelExpanded(false);
