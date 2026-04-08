@@ -46,6 +46,7 @@ FUTURES_SYMBOLS = {
     "CL": "CL.c.0",
     "NG": "NG.c.0",
     "MGC": "MGC.c.0",
+    "SIL": "SIL.c.0",
     "SI": "SI.c.0",
     "HG": "HG.c.0",
     "ZN": "ZN.c.0",

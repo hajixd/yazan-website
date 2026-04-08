@@ -81,6 +81,16 @@ export const futuresAssets: FutureAsset[] = [
     tickSize: 0.1
   },
   {
+    symbol: "SIL",
+    databentoSymbol: "SIL.c.0",
+    name: "Micro Silver",
+    venue: "COMEX",
+    category: "Metals",
+    contract: "Front month continuous",
+    basePrice: 34.725,
+    tickSize: 0.001
+  },
+  {
     symbol: "SI",
     databentoSymbol: "SI.c.0",
     name: "Silver",
