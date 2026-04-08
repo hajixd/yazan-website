@@ -1956,8 +1956,13 @@ button {
 
 .account-editor-form {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 0.9rem;
   padding: 0.95rem 0.78rem 0.82rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .sync-provider-switch,

@@ -196,7 +196,16 @@ type AccountMenuPosition = {
   y: number;
 };
 
-type DrawingTool = "cursor" | "trendline" | "ray" | "horizontal" | "vertical" | "rectangle";
+type DrawingTool =
+  | "cursor"
+  | "trendline"
+  | "ray"
+  | "horizontal"
+  | "vertical"
+  | "rectangle"
+  | "longPosition"
+  | "shortPosition"
+  | "fibonacci";
 
 type DrawingPoint = {
   time: number;
@@ -212,7 +221,7 @@ type ChartDrawing = {
 };
 
 type DrawingDraft = {
-  tool: Extract<DrawingTool, "trendline" | "ray" | "rectangle">;
+  tool: Extract<DrawingTool, "trendline" | "ray" | "rectangle" | "longPosition" | "shortPosition" | "fibonacci">;
   start: DrawingPoint;
   current: DrawingPoint;
 };
@@ -700,6 +709,24 @@ const chartDrawingTools: Array<{
     label: "Range Box",
     shortcut: "R",
     detail: "Click two corners to frame a zone."
+  },
+  {
+    tool: "longPosition",
+    label: "Long Position",
+    shortcut: "L",
+    detail: "Click entry first, then drag to size the long setup."
+  },
+  {
+    tool: "shortPosition",
+    label: "Short Position",
+    shortcut: "S",
+    detail: "Click entry first, then drag to size the short setup."
+  },
+  {
+    tool: "fibonacci",
+    label: "Fibonacci",
+    shortcut: "F",
+    detail: "Click swing start and end to lay out retracement levels."
   }
 ];
 
@@ -768,6 +795,26 @@ const renderDrawingToolIcon = (tool: DrawingTool) => {
             stroke="currentColor"
             strokeWidth="1.4"
           />
+        </svg>
+      );
+    case "longPosition":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M10 15.2V4.8m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 13.7h11" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2.4 2.4" />
+        </svg>
+      );
+    case "shortPosition":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M10 4.8v10.4m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4.5 6.3h11" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2.4 2.4" />
+        </svg>
+      );
+    case "fibonacci":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M5 5.3h10M5 9.2h7.4M5 13.2h5.1M5 16h3.3" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
         </svg>
       );
     default:
@@ -4416,6 +4463,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         event.preventDefault();
         setActiveDrawingTool("rectangle");
         setDrawingDraft(null);
+      } else if (shortcut === "l") {
+        event.preventDefault();
+        setActiveDrawingTool("longPosition");
+        setDrawingDraft(null);
+      } else if (shortcut === "s") {
+        event.preventDefault();
+        setActiveDrawingTool("shortPosition");
+        setDrawingDraft(null);
+      } else if (shortcut === "f") {
+        event.preventDefault();
+        setActiveDrawingTool("fibonacci");
+        setDrawingDraft(null);
       }
     };
 
@@ -5890,6 +5949,150 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     if (!start || !end) {
       return null;
+    }
+
+    if (drawing.tool === "fibonacci") {
+      const left = Math.min(start.x, end.x);
+      const right = Math.max(start.x, end.x);
+      const width = Math.max(56, right - left);
+      const top = start.y;
+      const bottom = end.y;
+      const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+      const fibStroke = isSelected ? "#f6fbff" : "#d9bf76";
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          {ratios.map((ratio) => {
+            const y = top + (bottom - top) * ratio;
+
+            return (
+              <g key={`${drawing.id}-fib-${ratio}`}>
+                <line
+                  x1={left}
+                  y1={y}
+                  x2={left + width}
+                  y2={y}
+                  stroke={fibStroke}
+                  strokeWidth={ratio === 0 || ratio === 1 ? 1.9 : 1.2}
+                  opacity={opacity}
+                />
+                <text
+                  x={left + 6}
+                  y={y - 4}
+                  fill={fibStroke}
+                  fontSize="9"
+                  fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
+                  opacity={Math.max(0.72, opacity)}
+                >
+                  {ratio.toFixed(3)}
+                </text>
+              </g>
+            );
+          })}
+          {!isDraft ? (
+            <rect
+              x={left}
+              y={Math.min(top, bottom) - 10}
+              width={width}
+              height={Math.abs(bottom - top) + 20}
+              fill="transparent"
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [start, end])}
+        </g>
+      );
+    }
+
+    if (drawing.tool === "longPosition" || drawing.tool === "shortPosition") {
+      const isLongPosition = drawing.tool === "longPosition";
+      const left = Math.min(start.x, end.x);
+      const width = Math.max(64, Math.abs(end.x - start.x));
+      const entryY = start.y;
+      const riskHeight = Math.max(16, Math.abs(end.y - start.y));
+      const rewardHeight = riskHeight * 2;
+      const stopY = isLongPosition ? entryY + riskHeight : entryY - riskHeight;
+      const targetY = isLongPosition ? entryY - rewardHeight : entryY + rewardHeight;
+      const stopTop = Math.min(entryY, stopY);
+      const stopHeight = Math.abs(stopY - entryY);
+      const targetTop = Math.min(entryY, targetY);
+      const targetHeight = Math.abs(targetY - entryY);
+      const targetFill = isSelected ? "rgba(72, 199, 142, 0.28)" : "rgba(38, 176, 118, 0.22)";
+      const stopFill = isSelected ? "rgba(255, 111, 131, 0.24)" : "rgba(214, 74, 98, 0.18)";
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <rect
+            x={left}
+            y={targetTop}
+            width={width}
+            height={Math.max(1, targetHeight)}
+            fill={targetFill}
+            stroke="rgba(79, 214, 154, 0.92)"
+            strokeWidth={isSelected ? 1.8 : 1.2}
+            opacity={opacity}
+          />
+          <rect
+            x={left}
+            y={stopTop}
+            width={width}
+            height={Math.max(1, stopHeight)}
+            fill={stopFill}
+            stroke="rgba(255, 123, 145, 0.9)"
+            strokeWidth={isSelected ? 1.8 : 1.2}
+            opacity={opacity}
+          />
+          <line
+            x1={left}
+            y1={entryY}
+            x2={left + width}
+            y2={entryY}
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.4 : 1.8}
+            strokeDasharray="5 4"
+            opacity={opacity}
+          />
+          <text
+            x={left + 6}
+            y={entryY - 6}
+            fill={stroke}
+            fontSize="9"
+            fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
+            opacity={Math.max(0.78, opacity)}
+          >
+            {isLongPosition ? "LONG" : "SHORT"}
+          </text>
+          <text
+            x={left + 6}
+            y={targetTop + 12}
+            fill="#b8f3d7"
+            fontSize="8.5"
+            fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
+            opacity={Math.max(0.74, opacity)}
+          >
+            TP 2.0R
+          </text>
+          <text
+            x={left + 6}
+            y={stopTop + 12}
+            fill="#ffc2cb"
+            fontSize="8.5"
+            fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
+            opacity={Math.max(0.74, opacity)}
+          >
+            SL 1.0R
+          </text>
+          {!isDraft ? (
+            <rect
+              x={left}
+              y={Math.min(targetTop, stopTop)}
+              width={width}
+              height={Math.max(targetTop + targetHeight, stopTop + stopHeight) - Math.min(targetTop, stopTop)}
+              fill="transparent"
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [start, end])}
+        </g>
+      );
     }
 
     if (drawing.tool === "rectangle") {
