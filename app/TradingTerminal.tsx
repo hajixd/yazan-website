@@ -196,6 +196,8 @@ type AccountMenuPosition = {
   y: number;
 };
 
+type AssetDropPlacement = "before" | "after";
+
 type DrawingTool =
   | "cursor"
   | "trendline"
@@ -369,6 +371,18 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
 };
 
 const modelProfiles: ModelProfile[] = [];
+
+const INTERNAL_SIMULATION_MODEL: ModelProfile = {
+  id: "roman-simulation-engine",
+  name: "Roman Simulation",
+  kind: "Model",
+  riskMin: 0.35,
+  riskMax: 1.15,
+  rrMin: 1.3,
+  rrMax: 2.8,
+  longBias: 0.54,
+  winRate: 0.58
+};
 
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "active", label: "Active" },
@@ -1562,12 +1576,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [assetOrder, setAssetOrder] = useState<string[]>(defaultAssetOrder);
   const [draggedAssetSymbol, setDraggedAssetSymbol] = useState<string | null>(null);
-  const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(modelProfiles[0]?.id ?? null);
+  const [assetDropTarget, setAssetDropTarget] = useState<{
+    symbol: string;
+    placement: AssetDropPlacement;
+  } | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(
+    modelProfiles[0]?.id ?? INTERNAL_SIMULATION_MODEL.id
+  );
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [selectedActiveTradeId, setSelectedActiveTradeId] = useState<string | null>(null);
   const [chartSimulationEnabled, setChartSimulationEnabled] = useState(true);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1791,7 +1811,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    const nextModelId = modelProfiles[0]?.id ?? null;
+    const nextModelId = modelProfiles[0]?.id ?? INTERNAL_SIMULATION_MODEL.id;
 
     if (selectedModelId !== nextModelId) {
       setSelectedModelId(nextModelId);
@@ -1802,7 +1822,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
   const selectedModel = useMemo(() => {
-    return modelProfiles.find((model) => model.id === selectedModelId) ?? null;
+    return (
+      modelProfiles.find((model) => model.id === selectedModelId) ??
+      (selectedModelId === INTERNAL_SIMULATION_MODEL.id ? INTERNAL_SIMULATION_MODEL : null)
+    );
   }, [selectedModelId]);
   const hasWorkspaceProfiles = modelProfiles.length > 0;
   const hasYazanProfile = modelProfiles.some((model) => model.id === "yazan");
@@ -3452,13 +3475,29 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return historyRows.filter((row) => row.symbol === selectedSymbol);
   }, [historyRows, selectedSymbol]);
 
-  const activeTrade = useMemo(() => {
+  const activeTrades = useMemo(() => {
     if (!chartSimulationEnabled) {
+      return [];
+    }
+
+    return historyRows.slice(0, 12);
+  }, [chartSimulationEnabled, historyRows]);
+
+  const activeTrade = useMemo(() => {
+    if (activeTrades.length === 0) {
       return null;
     }
 
-    return currentSymbolHistoryRows[0] ?? null;
-  }, [chartSimulationEnabled, currentSymbolHistoryRows]);
+    if (selectedActiveTradeId) {
+      return activeTrades.find((row) => row.id === selectedActiveTradeId) ?? activeTrades[0] ?? null;
+    }
+
+    return activeTrades[0] ?? null;
+  }, [activeTrades, selectedActiveTradeId]);
+
+  const simulationToggleLabel = chartSimulationEnabled
+    ? "Turn Off Simulation"
+    : "Turn On Simulation";
 
   const activeTradeDuration = useMemo(() => {
     if (!activeTrade) {
@@ -3485,13 +3524,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedHistoryId === activeTrade.id &&
     activeTrade.symbol === selectedSymbol;
 
-  const mobileDisplayTrade = useMemo(() => {
-    if (!chartSimulationEnabled) {
-      return null;
-    }
-
-    return historyRows[0] ?? null;
-  }, [chartSimulationEnabled, historyRows]);
+  const mobileDisplayTrade = activeTrade;
   const mobileDisplayTradeDuration = useMemo(() => {
     if (!mobileDisplayTrade) {
       return null;
@@ -3878,13 +3911,28 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [historyRows, selectedHistoryId]);
 
   useEffect(() => {
+    if (activeTrades.length === 0) {
+      if (selectedActiveTradeId !== null) {
+        setSelectedActiveTradeId(null);
+      }
+      return;
+    }
+
+    if (!selectedActiveTradeId || !activeTrades.some((row) => row.id === selectedActiveTradeId)) {
+      setSelectedActiveTradeId(activeTrades[0]?.id ?? null);
+    }
+  }, [activeTrades, selectedActiveTradeId]);
+
+  useEffect(() => {
     setSelectedHistoryId(null);
+    setSelectedActiveTradeId(null);
     setShowAllTradesOnChart(false);
     focusTradeIdRef.current = null;
   }, [selectedModelId]);
 
   useEffect(() => {
     setSelectedHistoryId(null);
+    setSelectedActiveTradeId(null);
     setShowAllTradesOnChart(false);
     focusTradeIdRef.current = null;
   }, [selectedTimeframe]);
@@ -5107,7 +5155,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    setSelectedModelId("yazan");
     setShowYazanAccountMenu(false);
     setYazanSyncDraftMode(mode);
     setYazanSyncError(null);
@@ -5142,7 +5189,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    setSelectedModelId("yazan");
     setShowYazanSyncDraft(false);
     setYazanAccountMenuPosition({
       x: Math.max(12, Math.min(clientX + 6, window.innerWidth - YAZAN_ACCOUNT_MENU_WIDTH)),
@@ -5240,7 +5286,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setShowYazanAccountMenu(false);
   };
 
-  const moveAssetSymbol = (sourceSymbol: string, targetSymbol: string) => {
+  const moveAssetSymbol = (
+    sourceSymbol: string,
+    targetSymbol: string,
+    placement: AssetDropPlacement = "before"
+  ) => {
     if (sourceSymbol === targetSymbol) {
       return;
     }
@@ -5256,8 +5306,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       const next = [...normalized];
       const [movedSymbol] = next.splice(sourceIndex, 1);
+      const adjustedTargetIndex = next.indexOf(targetSymbol);
 
-      next.splice(targetIndex, 0, movedSymbol);
+      if (adjustedTargetIndex < 0) {
+        return normalized;
+      }
+
+      next.splice(adjustedTargetIndex + (placement === "after" ? 1 : 0), 0, movedSymbol);
 
       return next;
     });
@@ -5265,7 +5320,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const handleAssetDragStart = (event: ReactDragEvent<HTMLButtonElement>, symbol: string) => {
     setDraggedAssetSymbol(symbol);
-    setAssetDropTarget(symbol);
+    setAssetDropTarget(null);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", symbol);
   };
@@ -5277,7 +5332,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    setAssetDropTarget(symbol);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const placement: AssetDropPlacement =
+      event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+
+    setAssetDropTarget((current) =>
+      current?.symbol === symbol && current.placement === placement
+        ? current
+        : { symbol, placement }
+    );
   };
 
   const handleAssetDrop = (event: ReactDragEvent<HTMLLIElement>, symbol: string) => {
@@ -5288,7 +5351,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    moveAssetSymbol(sourceSymbol, symbol);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const fallbackPlacement: AssetDropPlacement =
+      event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    const placement =
+      assetDropTarget?.symbol === symbol ? assetDropTarget.placement : fallbackPlacement;
+
+    moveAssetSymbol(sourceSymbol, symbol, placement);
     setDraggedAssetSymbol(null);
     setAssetDropTarget(null);
   };
@@ -5308,22 +5377,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [isAdmin]);
 
   useEffect(() => {
-    if (selectedModelId === "yazan") {
+    if (showYazanSyncDraft) {
       return;
     }
 
     setShowYazanAccountMenu(false);
-    setShowYazanSyncDraft(false);
-  }, [selectedModelId]);
-
-  useEffect(() => {
-    if (hasYazanProfile) {
-      return;
-    }
-
-    setShowYazanAccountMenu(false);
-    setShowYazanSyncDraft(false);
-  }, [hasYazanProfile]);
+  }, [selectedModelId, showYazanSyncDraft]);
 
   useEffect(() => {
     if (!showYazanAccountMenu) {
@@ -5570,7 +5629,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
               <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
                 <span className="mobile-phone-brand">Roman Capital</span>
-                <h1>{mobileWorkspaceTab === "trade" ? "Trade" : "Trade History"}</h1>
+                <h1>{mobileWorkspaceTab === "trade" ? "Active Trades" : "Trade History"}</h1>
                 <p className="mobile-phone-header-date">{mobileDateLabel}</p>
                 <div className="mobile-phone-header-time-row">
                   <span className="mobile-phone-header-time">{mobileTimeLabel}</span>
@@ -5587,154 +5646,210 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <>
                     <div className="mobile-phone-card-head">
                       <div className="mobile-phone-card-copy">
-                        <span className="mobile-phone-card-kicker">
-                          {mobileDisplayTrade.symbol}
-                        </span>
-                        <h2>Latest Trade</h2>
+                        <span className="mobile-phone-card-kicker">Simulation Desk</span>
+                        <h2>Active Trades</h2>
                       </div>
-                      <span
-                        className={`mobile-phone-side-pill ${
-                          mobileDisplayTrade.side === "Long" ? "up" : "down"
-                        }`}
-                      >
-                        {mobileDisplayTrade.side === "Long" ? "Buy" : "Sell"}
+                      <span className="mobile-phone-count-chip">
+                        {activeTrades.length.toLocaleString("en-US")}
                       </span>
                     </div>
 
-                    <div className="mobile-phone-pnl-block">
-                      <span>Trade PnL</span>
-                      <strong className={mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"}>
-                        {formatSignedUsd(mobileDisplayTrade.pnlUsd)}
-                      </strong>
-                      <small className={mobileDisplayTrade.pnlPct >= 0 ? "up" : "down"}>
-                        {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
-                        {mobileDisplayTrade.pnlPct.toFixed(2)}%
-                      </small>
+                    <div className="mobile-phone-active-list" role="list">
+                      {activeTrades.map((trade) => (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className={`mobile-phone-active-row ${
+                            mobileDisplayTrade.id === trade.id ? "selected" : ""
+                          }`}
+                          onClick={() => setSelectedActiveTradeId(trade.id)}
+                          aria-pressed={mobileDisplayTrade.id === trade.id}
+                        >
+                          <span className="mobile-phone-active-row-main">
+                            <span className="mobile-phone-active-row-copy">
+                              <span className="mobile-phone-active-row-headline">
+                                <strong>{trade.symbol}</strong>
+                                <span
+                                  className={`mobile-phone-side-pill ${
+                                    trade.side === "Long" ? "up" : "down"
+                                  }`}
+                                >
+                                  {trade.side === "Long" ? "Buy" : "Sell"}
+                                </span>
+                              </span>
+                              <span className="mobile-phone-active-row-meta">
+                                <span className={trade.result === "Win" ? "up" : "down"}>
+                                  {trade.result}
+                                </span>
+                                <span>{trade.time}</span>
+                              </span>
+                            </span>
+                            <span className="mobile-phone-active-row-values">
+                              <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(trade.pnlUsd)}
+                              </strong>
+                              <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                                {trade.pnlPct >= 0 ? "+" : ""}
+                                {trade.pnlPct.toFixed(2)}%
+                              </span>
+                            </span>
+                          </span>
+                        </button>
+                      ))}
                     </div>
 
-                    {mobileTradeSparkline ? (
-                      <div className="mobile-phone-active-chart-shell">
-                        <div
-                          className={`mobile-phone-active-chart-change ${
-                            mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"
-                          }`}
-                        >
-                          <span className="mobile-phone-active-chart-arrow" aria-hidden="true">
-                            {mobileDisplayTrade.pnlUsd >= 0 ? "^" : "v"}
+                    <div className="mobile-phone-active-detail-card">
+                      <div className="mobile-phone-card-head">
+                        <div className="mobile-phone-card-copy">
+                          <span className="mobile-phone-card-kicker">
+                            {mobileDisplayTrade.symbol}
                           </span>
-                          <strong>{formatSignedUsd(mobileDisplayTrade.pnlUsd)}</strong>
-                          <span>
-                            {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
-                            {mobileDisplayTrade.pnlPct.toFixed(2)}%
-                          </span>
+                          <h2>Trade Detail</h2>
                         </div>
-                        <div
-                          ref={mobileTradeChartRef}
-                          className={`mobile-phone-active-chart ${
-                            mobileDisplayTrade.pnlUsd >= 0
-                              ? "mobile-phone-active-chart-up"
-                              : "mobile-phone-active-chart-down"
+                        <span
+                          className={`mobile-phone-side-pill ${
+                            mobileDisplayTrade.side === "Long" ? "up" : "down"
                           }`}
-                          onPointerDown={handleMobileTradeChartPointerDown}
-                          onPointerMove={handleMobileTradeChartPointerMove}
-                          onPointerUp={handleMobileTradeChartPointerEnd}
-                          onPointerCancel={handleMobileTradeChartPointerEnd}
-                          onPointerLeave={(event) => {
-                            if (event.pointerType === "mouse") {
-                              setMobileTradeChartScrubIndex(null);
-                            }
-                          }}
                         >
-                          <svg
-                            viewBox={`0 0 ${mobileTradeSparkline.width} ${mobileTradeSparkline.height}`}
-                            preserveAspectRatio="none"
-                            aria-hidden="true"
+                          {mobileDisplayTrade.side === "Long" ? "Buy" : "Sell"}
+                        </span>
+                      </div>
+
+                      <div className="mobile-phone-pnl-block">
+                        <span>Trade PnL</span>
+                        <strong className={mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"}>
+                          {formatSignedUsd(mobileDisplayTrade.pnlUsd)}
+                        </strong>
+                        <small className={mobileDisplayTrade.pnlPct >= 0 ? "up" : "down"}>
+                          {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
+                          {mobileDisplayTrade.pnlPct.toFixed(2)}%
+                        </small>
+                      </div>
+
+                      {mobileTradeSparkline ? (
+                        <div className="mobile-phone-active-chart-shell">
+                          <div
+                            className={`mobile-phone-active-chart-change ${
+                              mobileDisplayTrade.pnlUsd >= 0 ? "up" : "down"
+                            }`}
                           >
-                            <line
-                              x1="0"
-                              y1={mobileTradeSparkline.height - 1}
-                              x2={mobileTradeSparkline.width}
-                              y2={mobileTradeSparkline.height - 1}
-                              className="mobile-phone-active-chart-baseline"
-                            />
-                            <path
-                              d={mobileTradeSparkline.path}
-                              className="mobile-phone-active-chart-path"
-                            />
-                            {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
+                            <span className="mobile-phone-active-chart-arrow" aria-hidden="true">
+                              {mobileDisplayTrade.pnlUsd >= 0 ? "^" : "v"}
+                            </span>
+                            <strong>{formatSignedUsd(mobileDisplayTrade.pnlUsd)}</strong>
+                            <span>
+                              {mobileDisplayTrade.pnlPct >= 0 ? "+" : ""}
+                              {mobileDisplayTrade.pnlPct.toFixed(2)}%
+                            </span>
+                          </div>
+                          <div
+                            ref={mobileTradeChartRef}
+                            className={`mobile-phone-active-chart ${
+                              mobileDisplayTrade.pnlUsd >= 0
+                                ? "mobile-phone-active-chart-up"
+                                : "mobile-phone-active-chart-down"
+                            }`}
+                            onPointerDown={handleMobileTradeChartPointerDown}
+                            onPointerMove={handleMobileTradeChartPointerMove}
+                            onPointerUp={handleMobileTradeChartPointerEnd}
+                            onPointerCancel={handleMobileTradeChartPointerEnd}
+                            onPointerLeave={(event) => {
+                              if (event.pointerType === "mouse") {
+                                setMobileTradeChartScrubIndex(null);
+                              }
+                            }}
+                          >
+                            <svg
+                              viewBox={`0 0 ${mobileTradeSparkline.width} ${mobileTradeSparkline.height}`}
+                              preserveAspectRatio="none"
+                              aria-hidden="true"
+                            >
                               <line
-                                x1={mobileTradeChartDisplayPoint.x}
-                                y1="0"
-                                x2={mobileTradeChartDisplayPoint.x}
-                                y2={mobileTradeSparkline.height}
-                                className="mobile-phone-active-chart-scrubline"
+                                x1="0"
+                                y1={mobileTradeSparkline.height - 1}
+                                x2={mobileTradeSparkline.width}
+                                y2={mobileTradeSparkline.height - 1}
+                                className="mobile-phone-active-chart-baseline"
+                              />
+                              <path
+                                d={mobileTradeSparkline.path}
+                                className="mobile-phone-active-chart-path"
+                              />
+                              {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
+                                <line
+                                  x1={mobileTradeChartDisplayPoint.x}
+                                  y1="0"
+                                  x2={mobileTradeChartDisplayPoint.x}
+                                  y2={mobileTradeSparkline.height}
+                                  className="mobile-phone-active-chart-scrubline"
+                                />
+                              ) : null}
+                            </svg>
+                            {mobileTradeSparkline.points.length > 0 ? (
+                              <span
+                                className="mobile-phone-active-chart-dot mobile-phone-active-chart-endpoint"
+                                style={{
+                                  left: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.x / mobileTradeSparkline.width) * 100}%`,
+                                  top: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.y / mobileTradeSparkline.height) * 100}%`
+                                }}
                               />
                             ) : null}
-                          </svg>
-                          {mobileTradeSparkline.points.length > 0 ? (
-                            <span
-                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-endpoint"
-                              style={{
-                                left: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.x / mobileTradeSparkline.width) * 100}%`,
-                                top: `${(mobileTradeSparkline.points[mobileTradeSparkline.points.length - 1]!.y / mobileTradeSparkline.height) * 100}%`
-                              }}
-                            />
-                          ) : null}
-                          {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
-                            <span
-                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-point"
-                              style={{
-                                left: `${(mobileTradeChartDisplayPoint.x / mobileTradeSparkline.width) * 100}%`,
-                                top: `${(mobileTradeChartDisplayPoint.y / mobileTradeSparkline.height) * 100}%`
-                              }}
-                            />
-                          ) : null}
+                            {mobileTradeChartScrubIndex !== null && mobileTradeChartDisplayPoint ? (
+                              <span
+                                className="mobile-phone-active-chart-dot mobile-phone-active-chart-point"
+                                style={{
+                                  left: `${(mobileTradeChartDisplayPoint.x / mobileTradeSparkline.width) * 100}%`,
+                                  top: `${(mobileTradeChartDisplayPoint.y / mobileTradeSparkline.height) * 100}%`
+                                }}
+                              />
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    <div className="mobile-phone-detail-list">
-                      <div className="mobile-phone-detail-row">
-                        <span>Entry Price</span>
-                        <strong>{formatPrice(mobileDisplayTrade.entryPrice)}</strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>Exit Price</span>
-                        <strong>{formatPrice(mobileDisplayTrade.outcomePrice)}</strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>Take Profit</span>
-                        <strong className="up">{formatPrice(mobileDisplayTrade.targetPrice)}</strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>Stop Loss</span>
-                        <strong className="down">{formatPrice(mobileDisplayTrade.stopPrice)}</strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>Result</span>
-                        <strong className={mobileDisplayTrade.result === "Win" ? "up" : "down"}>
-                          {mobileDisplayTrade.result}
-                        </strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>Duration</span>
-                        <strong>{mobileDisplayTradeDuration ?? "--"}</strong>
-                      </div>
-                      <div className="mobile-phone-detail-row">
-                        <span>R:R</span>
-                        <strong>
-                          {mobileDisplayTradeRiskReward
-                            ? `1:${mobileDisplayTradeRiskReward.toFixed(2)}`
-                            : "--"}
-                        </strong>
+                      <div className="mobile-phone-detail-list">
+                        <div className="mobile-phone-detail-row">
+                          <span>Entry Price</span>
+                          <strong>{formatPrice(mobileDisplayTrade.entryPrice)}</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Exit Price</span>
+                          <strong>{formatPrice(mobileDisplayTrade.outcomePrice)}</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Take Profit</span>
+                          <strong className="up">{formatPrice(mobileDisplayTrade.targetPrice)}</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Stop Loss</span>
+                          <strong className="down">{formatPrice(mobileDisplayTrade.stopPrice)}</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Result</span>
+                          <strong className={mobileDisplayTrade.result === "Win" ? "up" : "down"}>
+                            {mobileDisplayTrade.result}
+                          </strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Duration</span>
+                          <strong>{mobileDisplayTradeDuration ?? "--"}</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>R:R</span>
+                          <strong>
+                            {mobileDisplayTradeRiskReward
+                              ? `1:${mobileDisplayTradeRiskReward.toFixed(2)}`
+                              : "--"}
+                          </strong>
+                        </div>
                       </div>
                     </div>
                   </>
                 ) : (
                   <div className="mobile-phone-empty-state">
-                    <span className="mobile-phone-card-kicker">Active Position</span>
-                    <h2>No trade available</h2>
-                    <p>Trade simulation needs candle history before the mobile workspace can populate.</p>
+                    <span className="mobile-phone-card-kicker">Simulation Desk</span>
+                    <h2>No active trades</h2>
+                    <p>Turn simulation on to populate the active blotter and inspect trade details.</p>
                   </div>
                 )}
               </section>
@@ -5822,11 +5937,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     );
   }
 
-  const chartDrawingToolbarHint = activeDrawingDraft
-    ? `${activeDrawingToolConfig.label}: click again to finish the shape.`
-    : selectedDrawing
-      ? `${activeDrawingToolConfig.label}: drag to move the selected drawing, or press Delete to remove it.`
-      : activeDrawingToolConfig.detail;
   const chartDrawingsForRender = activeDrawingDraft
     ? [
         ...currentChartDrawings,
@@ -6613,10 +6723,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <strong>Order Book</strong>
                   <span>{orderBookSourceLabel}</span>
                 </div>
-                {liveOrderBookSnapshot &&
-                isTopOfBookSchema(liveDepthSchema) ? (
-                  <p className="order-book-empty">Real-time top of book only. Full 10-level depth is not enabled.</p>
-                ) : null}
                 {orderBookSnapshot ? (
                   <>
                     <div className="order-book-labels">
@@ -6686,10 +6792,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               </div>
             ) : null}
             <div className="chart-stage-actions">
-              <div className="chart-drawing-status" aria-live="polite">
-                <strong>{activeDrawingToolConfig.label}</strong>
-                <span>{chartDrawingToolbarHint}</span>
-              </div>
               <button
                 type="button"
                 className="chart-reset-btn"
@@ -6733,8 +6835,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               {activePanelTab === "active" ? (
                 <div className="tab-view active-tab">
                   <div className="watchlist-head with-action">
-                    <div>
-                      <h2>Active Trade</h2>
+                    <div className="active-tab-heading">
+                      <h2>Active Trades</h2>
+                      <span className="active-count-chip">
+                        {activeTrades.length.toLocaleString("en-US")}
+                      </span>
                     </div>
                     <div className="panel-head-actions">
                       <button
@@ -6744,7 +6849,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         }`}
                         onClick={() => setChartSimulationEnabled((current) => !current)}
                       >
-                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                        {simulationToggleLabel}
                       </button>
                       <button
                         type="button"
@@ -6773,75 +6878,128 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     </div>
                   </div>
 
-                  {activeTrade ? (
-                    <div className="active-card">
-                      <div className="active-card-top">
-                        <div>
-                          <span
-                            className={`active-side ${
-                              activeTrade.side === "Long" ? "up" : "down"
+                  {activeTrades.length > 0 && activeTrade ? (
+                    <div className="active-trade-shell">
+                      <div className="active-trade-list" role="list">
+                        {activeTrades.map((trade) => (
+                          <button
+                            key={trade.id}
+                            type="button"
+                            className={`active-trade-row ${
+                              activeTrade.id === trade.id ? "selected" : ""
                             }`}
+                            onClick={() => setSelectedActiveTradeId(trade.id)}
+                            aria-pressed={activeTrade.id === trade.id}
                           >
-                            {activeTrade.side}
-                          </span>
-                          <h3>{activeTrade.symbol}</h3>
-                        </div>
-                        <span className="active-live-tag">Latest</span>
+                            <span className="active-trade-row-main">
+                              <span className="active-trade-row-head">
+                                <span className="active-trade-symbol-wrap">
+                                  <strong className="active-trade-symbol">{trade.symbol}</strong>
+                                  <span
+                                    className={`active-side ${
+                                      trade.side === "Long" ? "up" : "down"
+                                    }`}
+                                  >
+                                    {trade.side === "Long" ? "Buy" : "Sell"}
+                                  </span>
+                                </span>
+                                <span
+                                  className={`active-trade-result ${
+                                    trade.result === "Win" ? "up" : "down"
+                                  }`}
+                                >
+                                  {trade.result}
+                                </span>
+                              </span>
+                              <span className="active-trade-row-meta">
+                                <span>{trade.time}</span>
+                                <span>Entry {formatPrice(trade.entryPrice)}</span>
+                              </span>
+                            </span>
+                            <span className="active-trade-values">
+                              <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(trade.pnlUsd)}
+                              </strong>
+                              <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                                {trade.pnlPct >= 0 ? "+" : ""}
+                                {trade.pnlPct.toFixed(2)}%
+                              </span>
+                            </span>
+                          </button>
+                        ))}
                       </div>
 
-                      <div className="active-pnl">
-                        <span>Trade PnL</span>
-                        <strong className={activeTrade.pnlUsd >= 0 ? "up" : "down"}>
-                          {formatSignedUsd(activeTrade.pnlUsd)}
-                        </strong>
-                        <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
-                          {activeTrade.pnlPct >= 0 ? "+" : ""}
-                          {activeTrade.pnlPct.toFixed(2)}%
-                        </small>
-                      </div>
+                      <div className="active-card active-detail-card">
+                        <div className="active-card-top">
+                          <div className="active-card-symbol">
+                            <span
+                              className={`active-side ${
+                                activeTrade.side === "Long" ? "up" : "down"
+                              }`}
+                            >
+                              {activeTrade.side === "Long" ? "Buy" : "Sell"}
+                            </span>
+                            <h3>{activeTrade.symbol}</h3>
+                          </div>
+                          <span className="active-live-tag">Focused</span>
+                        </div>
 
-                      <div className="active-metrics-grid">
-                        <div className="active-metric">
-                          <span>Entry</span>
-                          <strong>{formatPrice(activeTrade.entryPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Exit</span>
-                          <strong>{formatPrice(activeTrade.outcomePrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>TP</span>
-                          <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>SL</span>
-                          <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Size</span>
-                          <strong>{formatUnits(activeTrade.units)} units</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>R:R</span>
-                          <strong>{activeTradeRiskReward ? `1:${activeTradeRiskReward.toFixed(2)}` : "--"}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Opened</span>
-                          <strong>{activeTrade.entryAt}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Closed</span>
-                          <strong>{activeTrade.exitAt}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Result</span>
-                          <strong className={activeTrade.result === "Win" ? "up" : "down"}>
-                            {activeTrade.result}
+                        <div className="active-pnl">
+                          <span>Trade PnL</span>
+                          <strong className={activeTrade.pnlUsd >= 0 ? "up" : "down"}>
+                            {formatSignedUsd(activeTrade.pnlUsd)}
                           </strong>
+                          <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
+                            {activeTrade.pnlPct >= 0 ? "+" : ""}
+                            {activeTrade.pnlPct.toFixed(2)}%
+                          </small>
                         </div>
-                        <div className="active-metric">
-                          <span>Duration</span>
-                          <strong>{activeTradeDuration ?? "--"}</strong>
+
+                        <div className="active-metrics-grid">
+                          <div className="active-metric">
+                            <span>Entry</span>
+                            <strong>{formatPrice(activeTrade.entryPrice)}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Exit</span>
+                            <strong>{formatPrice(activeTrade.outcomePrice)}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>TP</span>
+                            <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>SL</span>
+                            <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Size</span>
+                            <strong>{formatUnits(activeTrade.units)} units</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>R:R</span>
+                            <strong>
+                              {activeTradeRiskReward ? `1:${activeTradeRiskReward.toFixed(2)}` : "--"}
+                            </strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Opened</span>
+                            <strong>{activeTrade.entryAt}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Closed</span>
+                            <strong>{activeTrade.exitAt}</strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Result</span>
+                            <strong className={activeTrade.result === "Win" ? "up" : "down"}>
+                              {activeTrade.result}
+                            </strong>
+                          </div>
+                          <div className="active-metric">
+                            <span>Duration</span>
+                            <strong>{activeTradeDuration ?? "--"}</strong>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -6849,7 +7007,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <div className="ai-placeholder">
                       <p>
                         {chartSimulationEnabled
-                          ? "No replay trades are available for the current chart yet."
+                          ? "No replay trades are available for the active blotter yet."
                           : "Trade simulation is turned off."}
                       </p>
                     </div>
@@ -6875,7 +7033,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     {watchlistRows.map((row) => (
                       <li
                         key={row.symbol}
-                        className={`watchlist-item${assetDropTarget === row.symbol ? " drag-target" : ""}${
+                        className={`watchlist-item${
+                          assetDropTarget?.symbol === row.symbol
+                            ? assetDropTarget.placement === "before"
+                              ? " drop-before"
+                              : " drop-after"
+                            : ""
+                        }${
                           draggedAssetSymbol === row.symbol ? " dragging" : ""
                         }`}
                         onDragOver={(event) => handleAssetDragOver(event, row.symbol)}
@@ -6897,20 +7061,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           onDragEnd={handleAssetDragEnd}
                         >
                           <span className="symbol-col">
-                            <span className="symbol-line">
-                              <span className="watchlist-grip" aria-hidden>
-                                <svg viewBox="0 0 16 16">
-                                  <path
-                                    d="M5 3.2h.01M11 3.2h.01M5 8h.01M11 8h.01M5 12.8h.01M11 12.8h.01"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.8"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              </span>
-                              <span>{row.symbol}</span>
-                            </span>
+                            <span className="symbol-line">{row.symbol}</span>
                             <small>
                               {row.name} - {row.category}
                             </small>
@@ -6937,12 +7088,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "models" ? (
                 <div className="tab-view">
-                  {hasYazanProfile && showYazanSyncDraft ? (
+                  {showYazanSyncDraft ? (
                     <>
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
-                          <p>Choose a Tradovate or Trade Syncer setup for Yazan.</p>
+                          <p>Connect Tradovate or Trade Syncer to this workspace.</p>
                         </div>
                         <button
                           type="button"
@@ -7627,10 +7778,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               ? isAdmin
                                 ? "Add a Tradovate or Trade Syncer setup for Yazan."
                                 : "Profiles in the current workspace."
-                              : "No profiles in the current workspace."}
+                              : isAdmin
+                                ? "No profiles in the current workspace. Add a connection to keep the desk wired."
+                                : "No profiles in the current workspace."}
                           </p>
                         </div>
-                        {isAdmin && hasYazanProfile ? (
+                        {isAdmin ? (
                           <button
                             type="button"
                             className="panel-action-btn"
@@ -7640,13 +7793,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           </button>
                         ) : null}
                       </div>
-                      {hasYazanProfile && yazanSyncSuccess ? (
+                      {yazanSyncSuccess ? (
                         <div className="sync-note-card sync-status-card sync-status-card-success">
                           <strong>Broker connection saved</strong>
                           <p>{yazanSyncSuccess}</p>
                         </div>
                       ) : null}
-                      {hasYazanProfile && yazanAccount?.connectionMessage ? (
+                      {yazanAccount?.connectionMessage ? (
                         <div className="sync-note-card sync-storage-card">
                           <strong>{yazanAccount.connectionState === "connected" ? "Connection healthy" : "Connection status"}</strong>
                           <p>{yazanAccount.connectionMessage}</p>
@@ -7727,7 +7880,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         }`}
                         onClick={() => setChartSimulationEnabled((current) => !current)}
                       >
-                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                        {simulationToggleLabel}
                       </button>
                       <button
                         type="button"
@@ -7815,7 +7968,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         }`}
                         onClick={() => setChartSimulationEnabled((current) => !current)}
                       >
-                        {chartSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                        {simulationToggleLabel}
                       </button>
                     </div>
                   </div>
@@ -7870,7 +8023,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>Account: {currentAccountLabel}</span>
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
-        <span>Model: {selectedModel?.name ?? "None"}</span>
+        <span>Model: {hasWorkspaceProfiles ? selectedModel?.name ?? "None" : "None"}</span>
         <span>Feed: {feedStatusLabel}</span>
         <span>{marketError ? marketStatusDetails : `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>

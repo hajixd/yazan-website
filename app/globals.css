@@ -1136,40 +1136,6 @@ button {
   pointer-events: all;
 }
 
-.chart-drawing-status {
-  position: absolute;
-  left: 72px;
-  bottom: 0;
-  max-width: min(300px, calc(100% - 168px));
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(10, 14, 21, 0.8);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.chart-drawing-status strong,
-.chart-drawing-status span {
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.chart-drawing-status strong {
-  color: #e7eff9;
-  font-size: 0.56rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.chart-drawing-status span {
-  color: rgba(221, 232, 244, 0.68);
-  font-size: 0.62rem;
-  line-height: 1.45;
-}
-
 .chart-reset-btn {
   padding: 6px 16px;
   background: rgba(5, 5, 5, 0.9);
@@ -1685,15 +1651,168 @@ button {
   overflow-y: auto;
 }
 
+.active-tab-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.active-tab-heading h2 {
+  margin: 0;
+}
+
+.active-count-chip {
+  min-height: 22px;
+  padding: 0 0.52rem;
+  border-radius: 999px;
+  border: 1px solid rgba(92, 131, 217, 0.3);
+  background: rgba(46, 87, 173, 0.16);
+  color: #c8d7ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.active-trade-shell {
+  padding: 0.72rem 0.72rem 0.86rem;
+  display: grid;
+  gap: 0.78rem;
+}
+
+.active-trade-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.active-trade-row {
+  width: 100%;
+  border: 1px solid rgba(47, 64, 94, 0.92);
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, rgba(19, 27, 40, 0.98) 0%, rgba(11, 16, 23, 0.98) 100%);
+  color: inherit;
+  padding: 0.68rem 0.72rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.72rem;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.active-trade-row:hover {
+  border-color: rgba(86, 117, 186, 0.9);
+  background:
+    linear-gradient(180deg, rgba(23, 34, 50, 0.98) 0%, rgba(13, 20, 29, 0.98) 100%);
+  transform: translateY(-1px);
+}
+
+.active-trade-row.selected {
+  border-color: rgba(86, 117, 186, 0.96);
+  background:
+    linear-gradient(180deg, rgba(20, 34, 63, 0.94) 0%, rgba(13, 22, 36, 0.98) 100%);
+  box-shadow: inset 0 0 0 1px rgba(100, 137, 219, 0.18);
+}
+
+.active-trade-row-main,
+.active-card-symbol {
+  min-width: 0;
+  display: grid;
+}
+
+.active-trade-row-main {
+  gap: 0.34rem;
+}
+
+.active-trade-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.58rem;
+}
+
+.active-trade-symbol-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.active-trade-symbol {
+  color: #f5f8ff;
+  font-size: 0.88rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.active-trade-result {
+  flex: 0 0 auto;
+  color: rgba(228, 236, 248, 0.66);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.active-trade-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.active-trade-row-meta span {
+  color: rgba(183, 197, 216, 0.72);
+  font-size: 0.58rem;
+  line-height: 1.2;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.active-trade-values {
+  flex: 0 0 auto;
+  min-width: 88px;
+  display: grid;
+  justify-items: end;
+  align-content: center;
+  gap: 0.18rem;
+}
+
+.active-trade-values strong {
+  font-size: 0.8rem;
+  line-height: 1;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.active-trade-values span {
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .active-card {
   margin: 0;
-  padding: 0.74rem 0.76rem 0.9rem;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  padding: 0.82rem 0.8rem 0.92rem;
+  border: 1px solid rgba(48, 63, 91, 0.94);
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, rgba(16, 24, 36, 0.98) 0%, rgba(9, 13, 19, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.active-detail-card {
+  gap: 0.82rem;
 }
 
 .active-card-top {
@@ -1705,8 +1824,8 @@ button {
 
 .active-card-top h3 {
   margin: 0.18rem 0 0;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
+  font-size: 1.02rem;
+  letter-spacing: -0.03em;
 }
 
 .active-side {
@@ -1738,6 +1857,8 @@ button {
 .active-pnl {
   display: grid;
   gap: 0.16rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .active-pnl span {
@@ -1761,13 +1882,13 @@ button {
 .active-metrics-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
+  gap: 0.48rem 0.56rem;
 }
 
 .active-metric {
   padding: 0.34rem 0;
   border: 0;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 0;
   background: transparent;
   display: grid;
@@ -1821,20 +1942,20 @@ button {
 .watchlist-row {
   display: grid;
   grid-template-columns:
-    minmax(0, 1.75fr)
-    minmax(92px, 1fr)
-    minmax(84px, 0.92fr);
+    minmax(0, 1.72fr)
+    minmax(90px, 0.92fr)
+    minmax(68px, 0.76fr);
   align-items: center;
-  gap: 0.32rem;
+  gap: 0;
 }
 
 .watchlist-labels {
-  padding: 0.45rem 0.7rem;
+  padding: 0.38rem 0.7rem 0.4rem;
   border-bottom: 1px solid var(--line-soft);
-  color: var(--text-faint);
-  font-size: 0.62rem;
+  color: rgba(183, 197, 216, 0.6);
+  font-size: 0.58rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.08em;
   background: #0b1017;
   position: sticky;
   top: 0;
@@ -1845,6 +1966,11 @@ button {
   width: 100%;
   justify-self: end;
   text-align: right;
+  padding-left: 0.5rem;
+}
+
+.watchlist-labels span + span {
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .watchlist-body {
@@ -1858,15 +1984,33 @@ button {
 }
 
 .watchlist-body li {
-  border-bottom: 1px solid var(--line-soft);
+  position: relative;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.watchlist-item.drag-target {
-  background: rgba(45, 108, 255, 0.08);
+.watchlist-item.drop-before::before,
+.watchlist-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(76, 147, 255, 0), rgba(76, 147, 255, 0.98) 16%, rgba(140, 205, 255, 0.98) 84%, rgba(76, 147, 255, 0));
+  box-shadow: 0 0 0 1px rgba(47, 129, 255, 0.14), 0 0 18px rgba(47, 129, 255, 0.34);
+  z-index: 2;
+}
+
+.watchlist-item.drop-before::before {
+  top: -1px;
+}
+
+.watchlist-item.drop-after::after {
+  bottom: -1px;
 }
 
 .watchlist-item.dragging {
-  opacity: 0.78;
+  opacity: 0.56;
 }
 
 .watchlist-row {
@@ -1874,18 +2018,23 @@ button {
   border: 0;
   background: transparent;
   text-align: left;
-  padding: 0.5rem 0.7rem;
+  padding: 0.6rem 0.7rem 0.62rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-size: 0.71rem;
+  font-size: 0.7rem;
   cursor: pointer;
+  position: relative;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .watchlist-row:hover {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .watchlist-row.selected {
-  background: rgba(45, 108, 255, 0.16);
+  background:
+    linear-gradient(90deg, rgba(39, 76, 135, 0.34), rgba(25, 45, 76, 0.18) 48%, rgba(12, 18, 27, 0) 100%),
+    rgba(18, 32, 54, 0.42);
+  box-shadow: inset 2px 0 0 #4f8ef4;
 }
 
 .symbol-col {
@@ -1894,38 +2043,25 @@ button {
 }
 
 .symbol-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.34rem;
-}
-
-.watchlist-grip {
-  width: 0.8rem;
-  height: 0.8rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-faint);
-  flex: 0 0 auto;
-}
-
-.watchlist-grip svg {
-  width: 100%;
-  height: 100%;
-}
-
-.symbol-col span {
   display: block;
-  color: var(--text);
+  color: #f0f5fd;
+  font-size: 0.92rem;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
+.symbol-col span {
+  display: block;
+  color: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+
 .symbol-col small {
   display: block;
-  margin-top: 0.1rem;
-  color: var(--text-faint);
-  font-size: 0.61rem;
+  margin-top: 0.16rem;
+  color: rgba(160, 176, 196, 0.66);
+  font-size: 0.6rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1933,6 +2069,16 @@ button {
 
 .num-col {
   text-align: right;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-left: 0.5rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  color: #eef4fd;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .model-list {
@@ -2469,11 +2615,6 @@ button {
   display: none;
 }
 
-.chart-drawing-status {
-  left: 58px;
-  max-width: min(240px, calc(100% - 140px));
-}
-
 .mobile-phone-shell {
   position: relative;
   overflow: hidden;
@@ -2631,6 +2772,11 @@ button {
   overflow: hidden;
 }
 
+.mobile-phone-card-active {
+  overflow-y: auto;
+  padding-right: 0.02rem;
+}
+
 .mobile-phone-card-head,
 .mobile-phone-history-main {
   display: flex;
@@ -2658,7 +2804,7 @@ button {
 }
 
 .mobile-phone-card-active .mobile-phone-card-copy h2 {
-  font-size: clamp(1.22rem, 6vw, 1.6rem);
+  font-size: clamp(1.08rem, 5.4vw, 1.36rem);
 }
 
 .mobile-phone-side-pill,
@@ -2701,6 +2847,7 @@ button {
 
 .mobile-phone-pnl-block span,
 .mobile-phone-detail-row span,
+.mobile-phone-active-row-meta span,
 .mobile-phone-history-copy span,
 .mobile-phone-history-meta span,
 .mobile-phone-empty-state p {
@@ -2824,6 +2971,106 @@ button {
 
 .mobile-phone-shell .down {
   color: #ff9198;
+}
+
+.mobile-phone-active-list {
+  display: grid;
+  gap: 0.46rem;
+  padding: 0.04rem 0 0.18rem;
+}
+
+.mobile-phone-active-row {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(16, 19, 25, 0.98) 0%, rgba(10, 13, 18, 0.98) 100%);
+  color: inherit;
+  padding: 0.72rem 0.76rem;
+  text-align: left;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.mobile-phone-active-row.selected {
+  border-color: rgba(92, 128, 214, 0.58);
+  background:
+    linear-gradient(180deg, rgba(18, 30, 52, 0.96) 0%, rgba(10, 17, 27, 0.98) 100%);
+  box-shadow: inset 0 0 0 1px rgba(92, 128, 214, 0.16);
+}
+
+.mobile-phone-active-row-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.82rem;
+}
+
+.mobile-phone-active-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.mobile-phone-active-row-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mobile-phone-active-row-headline strong {
+  color: #fbfdfb;
+  font-size: 0.92rem;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.mobile-phone-active-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.mobile-phone-active-row-values {
+  flex: 0 0 auto;
+  min-width: 82px;
+  display: grid;
+  justify-items: end;
+  gap: 0.16rem;
+}
+
+.mobile-phone-active-row-values strong {
+  font-size: 0.94rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.mobile-phone-active-row-values span {
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+.mobile-phone-active-detail-card {
+  display: grid;
+  gap: 0.72rem;
+  padding: 0.88rem 0.84rem 0.12rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(16, 19, 25, 0.98) 0%, rgba(8, 10, 14, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.mobile-phone-active-detail-card .mobile-phone-card-copy h2 {
+  font-size: 1rem;
+}
+
+.mobile-phone-active-detail-card .mobile-phone-detail-list {
+  margin-top: 0.08rem;
 }
 
 .mobile-phone-detail-list {
