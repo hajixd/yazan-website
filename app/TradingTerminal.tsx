@@ -259,9 +259,10 @@ const createPseudoAccountNumber = (seedText: string): string => {
 const isLiveDepthSchemaMessage = (message: string, schema?: string) => {
   return (
     schema === "mbp-10" ||
+    schema === "mbo" ||
     schema === "mbp-1" ||
     schema === "bbo-1s" ||
-    /\b(?:mbp-(?:10|1)|bbo-1s)\b/i.test(message)
+    /\b(?:mbp-10|mbo|mbp-1|bbo-1s)\b/i.test(message)
   );
 };
 
@@ -277,6 +278,8 @@ const formatLiveDepthStatusMessage = (message: string, schema?: string) => {
 
 const getLiveBookSchemaRank = (schema?: string | null) => {
   switch (schema) {
+    case "mbo":
+      return 4;
     case "mbp-10":
       return 3;
     case "mbp-1":
@@ -293,7 +296,7 @@ const isTopOfBookSchema = (schema?: string | null) => {
 };
 
 const isOrderBookDepthSchema = (schema?: string | null) => {
-  return schema === "mbp-10" || schema === "mbp-1";
+  return schema === "mbo" || schema === "mbp-10" || schema === "mbp-1";
 };
 
 const isLikelyLocalHostname = (hostname: string) => {
@@ -703,6 +706,28 @@ const chartDrawingTools: Array<{
     label: "Fibonacci",
     shortcut: "F",
     detail: "Click swing start and end to lay out retracement levels."
+  }
+];
+
+const chartDrawingToolGroups: Array<{
+  id: string;
+  label: string;
+  tools: DrawingTool[];
+}> = [
+  {
+    id: "select",
+    label: "Select",
+    tools: ["cursor"]
+  },
+  {
+    id: "structure",
+    label: "Structure",
+    tools: ["trendline", "ray", "horizontal", "vertical", "rectangle"]
+  },
+  {
+    id: "position",
+    label: "Position",
+    tools: ["longPosition", "shortPosition", "fibonacci"]
   }
 ];
 
@@ -1572,6 +1597,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     height: 0
   });
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("cursor");
+  const [hoveredDrawingTool, setHoveredDrawingTool] = useState<DrawingTool | null>(null);
   const [chartDrawingsByKey, setChartDrawingsByKey] = useState<Record<string, ChartDrawing[]>>({});
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
@@ -2345,6 +2371,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const activeDrawingToolConfig = useMemo(() => {
     return chartDrawingTools.find((tool) => tool.tool === activeDrawingTool) ?? chartDrawingTools[0];
   }, [activeDrawingTool]);
+  const hoveredDrawingToolConfig = useMemo(() => {
+    return hoveredDrawingTool
+      ? chartDrawingTools.find((tool) => tool.tool === hoveredDrawingTool) ?? null
+      : null;
+  }, [hoveredDrawingTool]);
+  const toolbarPreviewToolConfig = hoveredDrawingToolConfig ?? activeDrawingToolConfig;
   const canDrawOnChart = renderedSelectedCandles.length > 0;
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
@@ -5851,15 +5883,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return points.map((point, index) => (
-      <circle
-        key={`${drawing.id}-handle-${index}`}
-        cx={point.x}
-        cy={point.y}
-        r={3.8}
-        fill="#090d13"
-        stroke="#f6fbff"
-        strokeWidth={1.4}
-      />
+      <g key={`${drawing.id}-handle-${index}`} className="chart-drawing-handle">
+        <circle cx={point.x} cy={point.y} r={8.2} fill="rgba(158, 201, 255, 0.14)" />
+        <circle
+          cx={point.x}
+          cy={point.y}
+          r={4.4}
+          fill="#090d13"
+          stroke="#f6fbff"
+          strokeWidth={1.45}
+        />
+        <circle cx={point.x} cy={point.y} r={1.55} fill="#f6fbff" />
+      </g>
     ));
   };
 
@@ -5962,14 +5997,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const bottom = end.y;
       const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
       const fibStroke = isSelected ? "#f6fbff" : "#d9bf76";
+      const startPrice = drawing.points[0]?.price ?? 0;
+      const endPrice = drawing.points[1]?.price ?? 0;
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
           {ratios.map((ratio) => {
             const y = top + (bottom - top) * ratio;
+            const price = startPrice + (endPrice - startPrice) * ratio;
 
             return (
               <g key={`${drawing.id}-fib-${ratio}`}>
+                <line
+                  x1={left}
+                  y1={y}
+                  x2={left + width}
+                  y2={y}
+                  stroke="rgba(217, 191, 118, 0.2)"
+                  strokeWidth={ratio === 0 || ratio === 1 ? 6 : 4}
+                  opacity={opacity}
+                />
                 <line
                   x1={left}
                   y1={y}
@@ -5987,7 +6034,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
                   opacity={Math.max(0.72, opacity)}
                 >
-                  {ratio.toFixed(3)}
+                  {ratio.toFixed(3)}  {formatPriceByTick(price, selectedAsset.tickSize)}
                 </text>
               </g>
             );
@@ -6021,9 +6068,24 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const targetHeight = Math.abs(targetY - entryY);
       const targetFill = isSelected ? "rgba(72, 199, 142, 0.28)" : "rgba(38, 176, 118, 0.22)";
       const stopFill = isSelected ? "rgba(255, 111, 131, 0.24)" : "rgba(214, 74, 98, 0.18)";
+      const entryPrice = drawing.points[0]?.price ?? 0;
+      const stopPrice = drawing.points[1]?.price ?? entryPrice;
+      const riskDistance = Math.max(selectedAsset.tickSize, Math.abs(entryPrice - stopPrice));
+      const targetPrice = isLongPosition ? entryPrice + riskDistance * 2 : entryPrice - riskDistance * 2;
+      const riskPct = entryPrice > 0 ? (riskDistance / entryPrice) * 100 : 0;
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <rect
+            x={left}
+            y={Math.min(targetTop, stopTop) - 20}
+            width={Math.max(112, width)}
+            height={16}
+            rx={8}
+            fill="rgba(8, 13, 20, 0.84)"
+            stroke="rgba(255, 255, 255, 0.08)"
+            opacity={opacity}
+          />
           <rect
             x={left}
             y={targetTop}
@@ -6056,13 +6118,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           />
           <text
             x={left + 6}
-            y={entryY - 6}
+            y={Math.min(targetTop, stopTop) - 9}
             fill={stroke}
             fontSize="9"
             fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
             opacity={Math.max(0.78, opacity)}
           >
-            {isLongPosition ? "LONG" : "SHORT"}
+            {isLongPosition ? "LONG" : "SHORT"}  RR 2.00  RISK {riskPct.toFixed(2)}%
           </text>
           <text
             x={left + 6}
@@ -6072,7 +6134,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
             opacity={Math.max(0.74, opacity)}
           >
-            TP 2.0R
+            TP {formatPriceByTick(targetPrice, selectedAsset.tickSize)}
           </text>
           <text
             x={left + 6}
@@ -6082,7 +6144,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
             opacity={Math.max(0.74, opacity)}
           >
-            SL 1.0R
+            SL {formatPriceByTick(stopPrice, selectedAsset.tickSize)}
           </text>
           {!isDraft ? (
             <rect
@@ -6135,6 +6197,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return (
       <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+        <line
+          x1={start.x}
+          y1={start.y}
+          x2={lineEnd.x}
+          y2={lineEnd.y}
+          stroke="rgba(158, 201, 255, 0.2)"
+          strokeWidth={isSelected ? 7 : 5}
+          strokeLinecap="round"
+          opacity={opacity}
+        />
         <line
           x1={start.x}
           y1={start.y}
@@ -6377,31 +6449,57 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           </div>
           <div className="chart-stage">
             <div className="chart-drawing-toolbar" aria-label="Chart drawing tools">
-              <div className="chart-drawing-toolbar-group">
-                {chartDrawingTools.map((tool) => (
-                  <button
-                    key={tool.tool}
-                    type="button"
-                    className={`chart-drawing-tool-btn ${
-                      activeDrawingTool === tool.tool ? "active" : ""
-                    }`}
-                    title={`${tool.label} (${tool.shortcut})`}
-                    aria-label={`${tool.label} (${tool.shortcut})`}
-                    aria-pressed={activeDrawingTool === tool.tool}
-                    disabled={!canDrawOnChart && tool.tool !== "cursor"}
-                    onClick={() => {
-                      setActiveDrawingTool(tool.tool);
-                      setDrawingDraft(null);
-
-                      if (tool.tool === "cursor") {
-                        drawingDragStateRef.current = null;
-                      }
-                    }}
-                  >
-                    {renderDrawingToolIcon(tool.tool)}
-                  </button>
-                ))}
+              <div className="chart-drawing-toolbar-preview" aria-live="polite">
+                <strong>{toolbarPreviewToolConfig.label}</strong>
+                <span>{toolbarPreviewToolConfig.shortcut}</span>
               </div>
+              {chartDrawingToolGroups.map((group, groupIndex) => (
+                <div key={group.id} className="chart-drawing-toolbar-section">
+                  <span className="chart-drawing-toolbar-group-label">{group.label}</span>
+                  <div className="chart-drawing-toolbar-group">
+                    {group.tools.map((toolId) => {
+                      const tool = chartDrawingTools.find((entry) => entry.tool === toolId);
+
+                      if (!tool) {
+                        return null;
+                      }
+
+                      return (
+                        <button
+                          key={tool.tool}
+                          type="button"
+                          className={`chart-drawing-tool-btn ${
+                            activeDrawingTool === tool.tool ? "active" : ""
+                          }`}
+                          title={`${tool.label} (${tool.shortcut})`}
+                          aria-label={`${tool.label} (${tool.shortcut})`}
+                          aria-pressed={activeDrawingTool === tool.tool}
+                          data-tool-label={tool.label}
+                          data-tool-shortcut={tool.shortcut}
+                          disabled={!canDrawOnChart && tool.tool !== "cursor"}
+                          onMouseEnter={() => setHoveredDrawingTool(tool.tool)}
+                          onMouseLeave={() => setHoveredDrawingTool((current) => (current === tool.tool ? null : current))}
+                          onFocus={() => setHoveredDrawingTool(tool.tool)}
+                          onBlur={() => setHoveredDrawingTool((current) => (current === tool.tool ? null : current))}
+                          onClick={() => {
+                            setActiveDrawingTool(tool.tool);
+                            setDrawingDraft(null);
+
+                            if (tool.tool === "cursor") {
+                              drawingDragStateRef.current = null;
+                            }
+                          }}
+                        >
+                          {renderDrawingToolIcon(tool.tool)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {groupIndex < chartDrawingToolGroups.length - 1 ? (
+                    <div className="chart-drawing-toolbar-divider" aria-hidden="true" />
+                  ) : null}
+                </div>
+              ))}
               <div className="chart-drawing-toolbar-divider" aria-hidden="true" />
               <div className="chart-drawing-toolbar-group">
                 <button
@@ -6410,6 +6508,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   title="Delete selected drawing (Delete)"
                   aria-label="Delete selected drawing"
                   disabled={!selectedDrawingId}
+                  onMouseEnter={() => setHoveredDrawingTool(null)}
                   onClick={deleteSelectedDrawing}
                 >
                   {renderToolbarActionIcon("delete")}
@@ -6420,10 +6519,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   title="Clear all drawings for this chart"
                   aria-label="Clear all drawings"
                   disabled={currentChartDrawings.length === 0}
+                  onMouseEnter={() => setHoveredDrawingTool(null)}
                   onClick={clearCurrentDrawings}
                 >
                   {renderToolbarActionIcon("clear")}
                 </button>
+              </div>
+              <div className="chart-drawing-toolbar-tip" aria-hidden="true">
+                <strong>{toolbarPreviewToolConfig.label}</strong>
+                <span>{toolbarPreviewToolConfig.detail}</span>
+                <small>{toolbarPreviewToolConfig.shortcut}</small>
               </div>
             </div>
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />

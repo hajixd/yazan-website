@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import databento as db
-from databento_dbn import BBOMsg, ErrorMsg, MBP1Msg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
+from databento_dbn import BBOMsg, ErrorMsg, MBOMsg, MBP1Msg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -22,8 +22,9 @@ STREAM_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
-DEPTH_SCHEMAS = ("mbp-10", "mbp-1")
+DEPTH_SCHEMAS = ("mbp-10", "mbo", "mbp-1")
 LIVE_REPLAY_WINDOW = timedelta(seconds=90)
+MBO_SNAPSHOT_LEVEL_COUNT = 10
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
     "unauthorized",
@@ -96,6 +97,8 @@ def normalise_price(pretty_price: Any, raw_price: Any) -> float:
         pass
 
     try:
+        if raw_price == db.UNDEF_PRICE:
+            return 0.0
         return float(raw_price) / PRICE_SCALE
     except (TypeError, ValueError):
         return 0.0
@@ -113,6 +116,15 @@ def coerce_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def enum_code(value: Any) -> str:
+    resolved = getattr(value, "value", value)
+
+    if resolved is None:
+        return ""
+
+    return str(resolved).upper()
 
 
 def stop_live_client(client: db.Live | None) -> None:
@@ -197,6 +209,194 @@ def build_order_book_snapshot(record: MBP10Msg | MBP1Msg | BBOMsg) -> dict[str, 
     }
 
 
+def build_order_book_snapshot_from_price_levels(
+    bid_levels: list[tuple[int, int]],
+    ask_levels: list[tuple[int, int]],
+) -> dict[str, Any]:
+    normalized_bids = [
+        (normalise_price(None, price), size)
+        for price, size in bid_levels
+        if price != db.UNDEF_PRICE and size > 0
+    ]
+    normalized_asks = [
+        (normalise_price(None, price), size)
+        for price, size in ask_levels
+        if price != db.UNDEF_PRICE and size > 0
+    ]
+
+    if not normalized_bids and not normalized_asks:
+        return {
+            "levels": [],
+            "bestBid": 0,
+            "bestAsk": 0,
+            "spread": 0,
+            "bidTotal": 0,
+            "askTotal": 0,
+            "imbalance": 0,
+        }
+
+    level_count = max(len(normalized_bids), len(normalized_asks))
+    max_bid_size = max((size for _, size in normalized_bids), default=1)
+    max_ask_size = max((size for _, size in normalized_asks), default=1)
+    bid_total = sum(size for _, size in normalized_bids)
+    ask_total = sum(size for _, size in normalized_asks)
+    best_bid = normalized_bids[0][0] if normalized_bids else 0.0
+    best_ask = normalized_asks[0][0] if normalized_asks else 0.0
+    levels: list[dict[str, Any]] = []
+
+    for index in range(level_count):
+        bid_price, bid_size = normalized_bids[index] if index < len(normalized_bids) else (0.0, 0)
+        ask_price, ask_size = normalized_asks[index] if index < len(normalized_asks) else (0.0, 0)
+
+        if bid_price <= 0 and ask_price <= 0 and bid_size <= 0 and ask_size <= 0:
+            continue
+
+        levels.append(
+            {
+                "bidPrice": bid_price,
+                "askPrice": ask_price,
+                "bidSize": bid_size,
+                "askSize": ask_size,
+                "bidFillPct": (bid_size / max_bid_size) * 100 if max_bid_size else 0,
+                "askFillPct": (ask_size / max_ask_size) * 100 if max_ask_size else 0,
+            }
+        )
+
+    return {
+        "levels": levels,
+        "bestBid": best_bid,
+        "bestAsk": best_ask,
+        "spread": max(0.0, best_ask - best_bid) if best_bid > 0 and best_ask > 0 else 0.0,
+        "bidTotal": bid_total,
+        "askTotal": ask_total,
+        "imbalance": ((bid_total - ask_total) / (bid_total + ask_total) * 100)
+        if (bid_total + ask_total) > 0
+        else 0,
+    }
+
+
+class MBOBook:
+    def __init__(self) -> None:
+        self.orders_by_id: dict[int, tuple[str, int, int]] = {}
+        self.bids: dict[int, int] = {}
+        self.asks: dict[int, int] = {}
+
+    def _side_levels(self, side: str) -> dict[int, int]:
+        return self.asks if side == "A" else self.bids
+
+    def _set_level_size(self, side: str, price: int, size: int) -> None:
+        levels = self._side_levels(side)
+
+        if price == db.UNDEF_PRICE or size <= 0:
+            levels.pop(price, None)
+            return
+
+        levels[price] = size
+
+    def _adjust_level_size(self, side: str, price: int, delta: int) -> None:
+        levels = self._side_levels(side)
+        next_size = levels.get(price, 0) + delta
+
+        if price == db.UNDEF_PRICE or next_size <= 0:
+            levels.pop(price, None)
+            return
+
+        levels[price] = next_size
+
+    def clear(self) -> None:
+        self.orders_by_id.clear()
+        self.bids.clear()
+        self.asks.clear()
+
+    def apply(self, record: MBOMsg) -> None:
+        action = enum_code(getattr(record, "action", ""))
+
+        if action in ("T", "F", "N"):
+            return
+
+        if action == "R":
+            self.clear()
+            return
+
+        side = enum_code(getattr(record, "side", ""))
+
+        if side not in ("A", "B"):
+            return
+
+        flags = getattr(record, "flags", 0)
+        price = coerce_int(getattr(record, "price", 0))
+        size = max(0, coerce_int(getattr(record, "size", 0)))
+
+        if flags & db.RecordFlags.F_TOB:
+            levels = self._side_levels(side)
+            levels.clear()
+
+            if price != db.UNDEF_PRICE and size > 0 and action in ("A", "M"):
+                levels[price] = size
+
+            return
+
+        if flags & db.RecordFlags.F_MBP:
+            if action == "C":
+                self._set_level_size(side, price, 0)
+            elif action in ("A", "M"):
+                self._set_level_size(side, price, size)
+
+            return
+
+        order_id = coerce_int(getattr(record, "order_id", 0))
+
+        if action == "A":
+            existing = self.orders_by_id.get(order_id)
+
+            if existing:
+                old_side, old_price, old_size = existing
+                self._adjust_level_size(old_side, old_price, -old_size)
+
+            self.orders_by_id[order_id] = (side, price, size)
+            self._adjust_level_size(side, price, size)
+            return
+
+        if action == "C":
+            existing = self.orders_by_id.get(order_id)
+
+            if not existing:
+                return
+
+            old_side, old_price, old_size = existing
+            cancel_size = old_size if size <= 0 else min(old_size, size)
+            next_size = max(0, old_size - cancel_size)
+            self._adjust_level_size(old_side, old_price, -cancel_size)
+
+            if next_size == 0:
+                self.orders_by_id.pop(order_id, None)
+            else:
+                self.orders_by_id[order_id] = (old_side, old_price, next_size)
+
+            return
+
+        if action == "M":
+            existing = self.orders_by_id.get(order_id)
+
+            if not existing:
+                self.orders_by_id[order_id] = (side, price, size)
+                self._adjust_level_size(side, price, size)
+                return
+
+            old_side, old_price, old_size = existing
+            next_side = side if side in ("A", "B") else old_side
+            next_price = price if price != db.UNDEF_PRICE else old_price
+            next_size = size if size > 0 else old_size
+            self._adjust_level_size(old_side, old_price, -old_size)
+            self.orders_by_id[order_id] = (next_side, next_price, next_size)
+            self._adjust_level_size(next_side, next_price, next_size)
+
+    def build_snapshot(self, level_count: int = MBO_SNAPSHOT_LEVEL_COUNT) -> dict[str, Any]:
+        bid_levels = sorted(self.bids.items(), key=lambda item: item[0], reverse=True)[:level_count]
+        ask_levels = sorted(self.asks.items(), key=lambda item: item[0])[:level_count]
+        return build_order_book_snapshot_from_price_levels(bid_levels, ask_levels)
+
+
 def build_status_event(
     symbol: str,
     state: str,
@@ -236,17 +436,22 @@ def build_error_event(
 
 def is_depth_not_authorized(message: str) -> bool:
     lowered = message.lower()
-    return any(schema in lowered for schema in DEPTH_SCHEMAS) and any(
+    return any(token in lowered for token in ("mbp-10", "mbp-1", "mbo")) and any(
         phrase in lowered
         for phrase in ("not authorized", "not entitled", "permission", "license", "subscription")
     )
 
 
 def get_depth_schema_label(schema: str) -> str:
+    if schema == "mbo":
+        return "reconstructed full depth"
     return "top-of-book" if schema == "mbp-1" else "full depth"
 
 
 def get_depth_connected_message(schema: str) -> str:
+    if schema == "mbo":
+        return "Databento live reconstructed depth connected."
+
     if schema == "mbp-1":
         return "Databento live top-of-book quote connected."
 
@@ -397,6 +602,7 @@ def stream_depth_client(
         connected = False
         client: db.Live | None = None
         unauthorized = False
+        mbo_book = MBOBook() if depth_schema == "mbo" else None
 
         try:
             client = db.Live(
@@ -406,13 +612,19 @@ def stream_depth_client(
             )
             client_refs["depth"] = client
 
-            client.subscribe(
-                dataset=DATABENTO_DATASET,
-                schema=depth_schema,
-                symbols=[databento_symbol],
-                stype_in="continuous",
-                start=get_live_replay_start(),
-            )
+            subscribe_kwargs: dict[str, Any] = {
+                "dataset": DATABENTO_DATASET,
+                "schema": depth_schema,
+                "symbols": [databento_symbol],
+                "stype_in": "continuous",
+            }
+
+            if depth_schema == "mbo":
+                subscribe_kwargs["snapshot"] = True
+            else:
+                subscribe_kwargs["start"] = get_live_replay_start()
+
+            client.subscribe(**subscribe_kwargs)
 
             for record in client:
                 if stop_event.is_set():
@@ -496,6 +708,23 @@ def stream_depth_client(
                             "symbol": symbol,
                             "time": ns_to_ms(getattr(record, "ts_event", None)),
                             "snapshot": build_order_book_snapshot(record),
+                            "meta": build_meta(depth_schema, databento_symbol, resolved_symbol),
+                        }
+                    )
+                    continue
+
+                if isinstance(record, MBOMsg) and mbo_book is not None:
+                    mbo_book.apply(record)
+
+                    if not getattr(record, "flags", 0) & db.RecordFlags.F_LAST:
+                        continue
+
+                    enqueue(
+                        {
+                            "type": "book",
+                            "symbol": symbol,
+                            "time": ns_to_ms(getattr(record, "ts_event", None)),
+                            "snapshot": mbo_book.build_snapshot(),
                             "meta": build_meta(depth_schema, databento_symbol, resolved_symbol),
                         }
                     )
