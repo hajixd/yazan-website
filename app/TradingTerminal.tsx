@@ -1261,6 +1261,99 @@ const parseTimeFromCrosshair = (time: Time): number | null => {
   return null;
 };
 
+const CHART_TIME_ZONE = "America/New_York";
+const chartEasternTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHART_TIME_ZONE,
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true
+});
+const chartEasternDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHART_TIME_ZONE,
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true
+});
+const chartEasternMonthDayFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHART_TIME_ZONE,
+  month: "short",
+  day: "numeric"
+});
+const chartEasternMonthFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHART_TIME_ZONE,
+  month: "short"
+});
+const chartEasternPartsFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: CHART_TIME_ZONE,
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+  hour12: false
+});
+
+const getChartEasternParts = (timestampMs: number) => {
+  const parts = chartEasternPartsFormatter.formatToParts(new Date(timestampMs));
+  const readPart = (type: Intl.DateTimeFormatPartTypes) => {
+    const value = parts.find((part) => part.type === type)?.value ?? "0";
+    return Number(value);
+  };
+
+  return {
+    year: readPart("year"),
+    month: readPart("month"),
+    day: readPart("day"),
+    hour: readPart("hour"),
+    minute: readPart("minute"),
+    second: readPart("second")
+  };
+};
+
+const formatChartCrosshairTime = (time: Time): string => {
+  const timestampSeconds = parseTimeFromCrosshair(time);
+
+  if (timestampSeconds === null) {
+    return "";
+  }
+
+  return `${chartEasternDateTimeFormatter.format(new Date(timestampSeconds * 1000))} ET`;
+};
+
+const formatChartTickLabel = (time: Time): string | null => {
+  const timestampSeconds = parseTimeFromCrosshair(time);
+
+  if (timestampSeconds === null) {
+    return null;
+  }
+
+  const timestampMs = timestampSeconds * 1000;
+  const parts = getChartEasternParts(timestampMs);
+  const date = new Date(timestampMs);
+
+  if ((parts.hour === 0 || parts.hour === 24) && parts.minute === 0 && parts.second === 0) {
+    if (parts.month === 1 && parts.day === 1) {
+      return String(parts.year);
+    }
+
+    if (parts.day === 1) {
+      return chartEasternMonthFormatter.format(date);
+    }
+
+    return chartEasternMonthDayFormatter.format(date);
+  }
+
+  return chartEasternTimeFormatter.format(date);
+};
+
+const formatChartBadgeTime = (timestampMs: number): string => {
+  return chartEasternTimeFormatter.format(new Date(timestampMs));
+};
+
 const fetchFuturesCandles = async (
   symbol: string,
   timeframe: Timeframe,
@@ -4492,7 +4585,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           textColor: "#7f889d"
         },
         localization: {
-          priceFormatter: (price: number) => formatPrice(price)
+          priceFormatter: (price: number) => formatPrice(price),
+          timeFormatter: formatChartCrosshairTime
         },
         grid: {
           vertLines: { visible: false },
@@ -4510,6 +4604,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           borderColor: "#182131",
           timeVisible: true,
           secondsVisible: false,
+          tickMarkFormatter: formatChartTickLabel,
           rightOffset: 3
         },
         crosshair: {
@@ -6760,7 +6855,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           {renderDrawingBadge(
             Math.max(6, Math.min(point.x - 48, chartViewportSize.width - 100)),
             8,
-            `TIME  ${formatClock(drawing.points[0]?.time ?? 0).slice(0, 5)}`,
+            `TIME  ${formatChartBadgeTime(drawing.points[0]?.time ?? 0)}`,
             "neutral"
           )}
           {renderDrawingHandles(drawing, [point])}
