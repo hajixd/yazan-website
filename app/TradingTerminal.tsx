@@ -9,6 +9,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CandlestickData,
+  type Coordinate,
   type ColorType,
   type CrosshairMode,
   type IChartApi,
@@ -203,10 +204,13 @@ type AssetDropPlacement = "before" | "after";
 type DrawingTool =
   | "cursor"
   | "trendline"
+  | "arrow"
   | "ray"
   | "horizontal"
   | "vertical"
   | "rectangle"
+  | "ellipse"
+  | "measure"
   | "longPosition"
   | "shortPosition"
   | "fibonacci";
@@ -225,7 +229,18 @@ type ChartDrawing = {
 };
 
 type DrawingDraft = {
-  tool: Extract<DrawingTool, "trendline" | "ray" | "rectangle" | "longPosition" | "shortPosition" | "fibonacci">;
+  tool: Extract<
+    DrawingTool,
+    | "trendline"
+    | "arrow"
+    | "ray"
+    | "rectangle"
+    | "ellipse"
+    | "measure"
+    | "longPosition"
+    | "shortPosition"
+    | "fibonacci"
+  >;
   start: DrawingPoint;
   current: DrawingPoint;
 };
@@ -233,6 +248,13 @@ type DrawingDraft = {
 type ChartViewportSize = {
   width: number;
   height: number;
+};
+
+type DrawingDragBounds = {
+  minTime: number;
+  maxTime: number;
+  minPrice: number;
+  maxPrice: number;
 };
 
 type OrderBookSnapshot = DatabentoOrderBookSnapshot;
@@ -643,6 +665,41 @@ const formatDepthSize = (value: number): string => {
   });
 };
 
+const formatSignedPriceDelta = (value: number, tickSize: number): string => {
+  const sign = value >= 0 ? "+" : "-";
+  return `${sign}${formatPriceByTick(Math.abs(value), tickSize)}`;
+};
+
+const formatSignedPercent = (value: number): string => {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+};
+
+const getDrawingLineMetrics = (start: DrawingPoint, end: DrawingPoint, timeframe: Timeframe) => {
+  const priceDelta = end.price - start.price;
+  const percentDelta = start.price > 0 ? (priceDelta / start.price) * 100 : 0;
+  const timeDeltaMs = end.time - start.time;
+  const bars = Math.max(1, Math.round(Math.abs(timeDeltaMs) / Math.max(60_000, getTimeframeMs(timeframe))));
+
+  return {
+    priceDelta,
+    percentDelta,
+    bars
+  };
+};
+
+const getDrawingRangeLabel = (
+  start: DrawingPoint,
+  end: DrawingPoint,
+  tickSize: number,
+  timeframe: Timeframe
+) => {
+  const priceDelta = end.price - start.price;
+  const percentDelta = start.price > 0 ? (priceDelta / start.price) * 100 : 0;
+  const barCount = Math.max(1, Math.round(Math.abs(end.time - start.time) / getTimeframeMs(timeframe)));
+
+  return `${formatSignedPriceDelta(priceDelta, tickSize)}  ${formatSignedPercent(percentDelta)}  ${barCount} bars`;
+};
+
 const expandOrderBookSnapshot = (
   snapshot: OrderBookSnapshot,
   tickSize: number,
@@ -797,6 +854,51 @@ const shiftChartDrawing = (
   };
 };
 
+const buildDrawingDragBoundsFromCandles = (
+  candles: Candle[],
+  tickSize: number
+): DrawingDragBounds | null => {
+  if (candles.length === 0) {
+    return null;
+  }
+
+  const minTime = candles[0]?.time ?? 0;
+  const maxTime = candles[candles.length - 1]?.time ?? minTime;
+  const candleLow = Math.min(...candles.map((candle) => candle.low));
+  const candleHigh = Math.max(...candles.map((candle) => candle.high));
+  const pricePadding = Math.max(tickSize * 8, (candleHigh - candleLow) * 0.18, tickSize);
+
+  return {
+    minTime,
+    maxTime,
+    minPrice: Math.max(tickSize, candleLow - pricePadding),
+    maxPrice: candleHigh + pricePadding
+  };
+};
+
+const shiftChartDrawingWithinBounds = (
+  drawing: ChartDrawing,
+  deltaTimeMs: number,
+  deltaPrice: number,
+  bounds: DrawingDragBounds | null,
+  timeframe: Timeframe,
+  tickSize: number
+): ChartDrawing => {
+  if (drawing.points.length === 0 || !bounds) {
+    return drawing;
+  }
+
+  const { minTime, maxTime, minPrice, maxPrice } = bounds;
+  const minPointTime = Math.min(...drawing.points.map((point) => point.time));
+  const maxPointTime = Math.max(...drawing.points.map((point) => point.time));
+  const timeShift = clamp(deltaTimeMs, minTime - minPointTime, maxTime - maxPointTime);
+  const minPointPrice = Math.min(...drawing.points.map((point) => point.price));
+  const maxPointPrice = Math.max(...drawing.points.map((point) => point.price));
+  const priceShift = clamp(deltaPrice, minPrice - minPointPrice, maxPrice - maxPointPrice);
+
+  return shiftChartDrawing(drawing, timeShift, priceShift, timeframe, tickSize);
+};
+
 const chartDrawingTools: Array<{
   tool: DrawingTool;
   label: string;
@@ -814,6 +916,12 @@ const chartDrawingTools: Array<{
     label: "Trend Line",
     shortcut: "T",
     detail: "Click once to anchor and once to finish."
+  },
+  {
+    tool: "arrow",
+    label: "Arrow",
+    shortcut: "G",
+    detail: "Draw a directional move with an arrow head and delta tag."
   },
   {
     tool: "ray",
@@ -838,6 +946,18 @@ const chartDrawingTools: Array<{
     label: "Range Box",
     shortcut: "R",
     detail: "Click two corners to frame a zone."
+  },
+  {
+    tool: "ellipse",
+    label: "Ellipse",
+    shortcut: "O",
+    detail: "Circle a reaction area with a soft highlighted ellipse."
+  },
+  {
+    tool: "measure",
+    label: "Measure",
+    shortcut: "M",
+    detail: "Measure price, percent, and bar distance between two points."
   },
   {
     tool: "longPosition",
@@ -872,12 +992,12 @@ const chartDrawingToolGroups: Array<{
   {
     id: "structure",
     label: "Structure",
-    tools: ["trendline", "ray", "horizontal", "vertical", "rectangle"]
+    tools: ["trendline", "arrow", "ray", "horizontal", "vertical", "rectangle", "ellipse"]
   },
   {
     id: "position",
     label: "Position",
-    tools: ["longPosition", "shortPosition", "fibonacci"]
+    tools: ["longPosition", "shortPosition", "fibonacci", "measure"]
   }
 ];
 
@@ -901,6 +1021,19 @@ const renderDrawingToolIcon = (tool: DrawingTool) => {
           <circle cx="5" cy="14.5" r="1.6" fill="currentColor" />
           <circle cx="14.5" cy="5.5" r="1.6" fill="currentColor" />
           <path d="M5.9 13.6 13.6 5.9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        </svg>
+      );
+    case "arrow":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path
+            d="M4.8 14.4 14.8 5.6m0 0H11m3.8 0v3.8"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       );
     case "ray":
@@ -946,6 +1079,27 @@ const renderDrawingToolIcon = (tool: DrawingTool) => {
             stroke="currentColor"
             strokeWidth="1.4"
           />
+        </svg>
+      );
+    case "ellipse":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <ellipse
+            cx="10"
+            cy="10"
+            rx="6"
+            ry="4.2"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+          />
+        </svg>
+      );
+    case "measure":
+      return (
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4.4 15.2 15.6 4.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M5.8 4.8v3.4M9.4 4.8v3.4M13 4.8v3.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
         </svg>
       );
     case "longPosition":
@@ -2729,25 +2883,76 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     (point: DrawingPoint) => {
       const chart = chartRef.current;
       const candleSeries = candleSeriesRef.current;
+      const viewportWidth = Math.max(1, chartViewportSize.width);
+      const viewportHeight = Math.max(1, chartViewportSize.height);
 
       if (!chart || !candleSeries) {
         return null;
       }
 
-      const x = chart.timeScale().timeToCoordinate(toUtcTimestamp(point.time));
-      const y = candleSeries.priceToCoordinate(point.price);
+      let x = chart.timeScale().timeToCoordinate(toUtcTimestamp(point.time));
+      let y = candleSeries.priceToCoordinate(point.price);
+
+      if ((x === null || !Number.isFinite(x)) && renderedSelectedCandles.length > 0) {
+        const firstTime = renderedSelectedCandles[0]?.time ?? point.time;
+        const lastTime = renderedSelectedCandles[renderedSelectedCandles.length - 1]?.time ?? point.time;
+        x =
+          point.time <= firstTime
+            ? (0 as Coordinate)
+            : point.time >= lastTime
+              ? (viewportWidth as Coordinate)
+              : null;
+      }
+
+      if ((y === null || !Number.isFinite(y)) && renderedSelectedCandles.length > 0) {
+        const minPrice = Math.min(...renderedSelectedCandles.map((candle) => candle.low));
+        const maxPrice = Math.max(...renderedSelectedCandles.map((candle) => candle.high));
+        y =
+          point.price >= maxPrice
+            ? (0 as Coordinate)
+            : point.price <= minPrice
+              ? (viewportHeight as Coordinate)
+              : null;
+      }
 
       if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)) {
         return null;
       }
 
       return {
-        x,
-        y
+        x: clamp(x, 0, viewportWidth),
+        y: clamp(y, 0, viewportHeight)
       };
     },
-    []
+    [chartViewportSize.height, chartViewportSize.width, renderedSelectedCandles]
   );
+
+  const getVisibleDrawingDragBounds = useCallback((): DrawingDragBounds | null => {
+    const container = chartContainerRef.current;
+
+    if (!container) {
+      return buildDrawingDragBoundsFromCandles(renderedSelectedCandles, selectedAsset.tickSize);
+    }
+
+    const rect = container.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2;
+    const centerX = rect.left + rect.width / 2;
+    const leftPoint = getDrawingPointFromClientPosition(rect.left, centerY);
+    const rightPoint = getDrawingPointFromClientPosition(rect.right, centerY);
+    const topPoint = getDrawingPointFromClientPosition(centerX, rect.top);
+    const bottomPoint = getDrawingPointFromClientPosition(centerX, rect.bottom);
+
+    if (leftPoint && rightPoint && topPoint && bottomPoint) {
+      return {
+        minTime: Math.min(leftPoint.time, rightPoint.time),
+        maxTime: Math.max(leftPoint.time, rightPoint.time),
+        minPrice: Math.min(topPoint.price, bottomPoint.price),
+        maxPrice: Math.max(topPoint.price, bottomPoint.price)
+      };
+    }
+
+    return buildDrawingDragBoundsFromCandles(renderedSelectedCandles, selectedAsset.tickSize);
+  }, [getDrawingPointFromClientPosition, renderedSelectedCandles, selectedAsset.tickSize]);
 
   const startDrawingDrag = useCallback(
     (drawing: ChartDrawing, event: ReactPointerEvent<SVGGElement>) => {
@@ -2863,14 +3068,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         const { drawingId, pointerStart, originalDrawing } = drawingDragStateRef.current;
         const deltaTimeMs = point.time - pointerStart.time;
         const deltaPrice = point.price - pointerStart.price;
+        const dragBounds = getVisibleDrawingDragBounds();
 
         updateChartDrawings((current) =>
           current.map((drawing) =>
             drawing.id === drawingId
-              ? shiftChartDrawing(
+              ? shiftChartDrawingWithinBounds(
                   originalDrawing,
                   deltaTimeMs,
                   deltaPrice,
+                  dragBounds,
                   selectedTimeframe,
                   selectedAsset.tickSize
                 )
@@ -2888,6 +3095,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       activeDrawingDraft,
       canDrawOnChart,
       getDrawingPointFromClientPosition,
+      getVisibleDrawingDragBounds,
       selectedAsset.tickSize,
       selectedTimeframe,
       updateChartDrawings
@@ -2922,14 +3130,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const { drawingId, pointerStart, originalDrawing } = drawingDragStateRef.current;
       const deltaTimeMs = point.time - pointerStart.time;
       const deltaPrice = point.price - pointerStart.price;
+      const dragBounds = getVisibleDrawingDragBounds();
 
       updateChartDrawings((current) =>
         current.map((drawing) =>
           drawing.id === drawingId
-            ? shiftChartDrawing(
+            ? shiftChartDrawingWithinBounds(
                 originalDrawing,
                 deltaTimeMs,
                 deltaPrice,
+                dragBounds,
                 selectedTimeframe,
                 selectedAsset.tickSize
               )
@@ -2943,7 +3153,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
     };
-  }, [getDrawingPointFromClientPosition, selectedAsset.tickSize, selectedTimeframe, updateChartDrawings]);
+  }, [
+    getDrawingPointFromClientPosition,
+    getVisibleDrawingDragBounds,
+    selectedAsset.tickSize,
+    selectedTimeframe,
+    updateChartDrawings
+  ]);
 
   useEffect(() => {
     setLiveQuoteSnapshot(null);
@@ -4835,6 +5051,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         event.preventDefault();
         setActiveDrawingTool("trendline");
         setDrawingDraft(null);
+      } else if (shortcut === "g") {
+        event.preventDefault();
+        setActiveDrawingTool("arrow");
+        setDrawingDraft(null);
       } else if (shortcut === "a") {
         event.preventDefault();
         setActiveDrawingTool("ray");
@@ -4850,6 +5070,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       } else if (shortcut === "r" && !event.altKey) {
         event.preventDefault();
         setActiveDrawingTool("rectangle");
+        setDrawingDraft(null);
+      } else if (shortcut === "o") {
+        event.preventDefault();
+        setActiveDrawingTool("ellipse");
+        setDrawingDraft(null);
+      } else if (shortcut === "m") {
+        event.preventDefault();
+        setActiveDrawingTool("measure");
         setDrawingDraft(null);
       } else if (shortcut === "l") {
         event.preventDefault();
@@ -6350,6 +6578,102 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     ));
   };
 
+  const renderDrawingBadge = (
+    x: number,
+    y: number,
+    label: string,
+    tone: "neutral" | "up" | "down" | "accent" = "neutral",
+    anchor: "start" | "center" = "start"
+  ) => {
+    const width = Math.max(66, label.length * 5.8 + 16);
+    const height = 16;
+    const badgeX = anchor === "center" ? x - width / 2 : x;
+    const palette =
+      tone === "up"
+        ? {
+            fill: "rgba(14, 36, 28, 0.92)",
+            stroke: "rgba(85, 226, 154, 0.4)",
+            text: "#bff5db"
+          }
+        : tone === "down"
+          ? {
+              fill: "rgba(40, 14, 18, 0.92)",
+              stroke: "rgba(255, 129, 149, 0.38)",
+              text: "#ffd1d8"
+            }
+          : tone === "accent"
+            ? {
+                fill: "rgba(17, 28, 44, 0.92)",
+                stroke: "rgba(127, 183, 255, 0.38)",
+                text: "#dcedff"
+              }
+            : {
+                fill: "rgba(8, 13, 20, 0.88)",
+                stroke: "rgba(255, 255, 255, 0.1)",
+                text: "#dbe7f5"
+              };
+
+    return (
+      <g pointerEvents="none">
+        <rect
+          x={badgeX}
+          y={y}
+          width={width}
+          height={height}
+          rx={4}
+          fill={palette.fill}
+          stroke={palette.stroke}
+        />
+        <text
+          x={badgeX + 8}
+          y={y + 10.8}
+          fill={palette.text}
+          fontSize="8.2"
+          fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
+          letterSpacing="0.02em"
+        >
+          {label}
+        </text>
+      </g>
+    );
+  };
+
+  const renderArrowHead = (
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    stroke: string,
+    opacity: number
+  ) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+
+    if (!Number.isFinite(length) || length < 4) {
+      return null;
+    }
+
+    const ux = dx / length;
+    const uy = dy / length;
+    const headLength = 12;
+    const headWidth = 5.8;
+    const leftX = end.x - ux * headLength + -uy * headWidth;
+    const leftY = end.y - uy * headLength + ux * headWidth;
+    const rightX = end.x - ux * headLength - -uy * headWidth;
+    const rightY = end.y - uy * headLength - ux * headWidth;
+
+    return (
+      <path
+        d={`M ${leftX} ${leftY} L ${end.x} ${end.y} L ${rightX} ${rightY}`}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={opacity}
+      />
+    );
+  };
+
   const renderChartDrawing = (drawing: ChartDrawing) => {
     const isDraft = drawing.id === "draft-drawing";
     const isSelected = selectedDrawingId === drawing.id;
@@ -6380,6 +6704,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={chartViewportSize.width}
             y1={point.y}
             y2={point.y}
+            stroke="rgba(158, 201, 255, 0.18)"
+            strokeWidth={6}
+            opacity={opacity}
+          />
+          <line
+            x1={0}
+            x2={chartViewportSize.width}
+            y1={point.y}
+            y2={point.y}
             stroke={stroke}
             strokeWidth={isSelected ? 2.2 : 1.55}
             strokeDasharray="6 4"
@@ -6395,6 +6728,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               strokeWidth={14}
             />
           ) : null}
+          {renderDrawingBadge(
+            chartViewportSize.width - 108,
+            point.y - 8,
+            `LEVEL  ${formatPriceByTick(drawing.points[0]?.price ?? 0, selectedAsset.tickSize)}`,
+            "accent"
+          )}
           {renderDrawingHandles(drawing, [point])}
         </g>
       );
@@ -6409,6 +6748,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <line
+            x1={point.x}
+            x2={point.x}
+            y1={0}
+            y2={chartViewportSize.height}
+            stroke="rgba(158, 201, 255, 0.16)"
+            strokeWidth={6}
+            opacity={opacity}
+          />
           <line
             x1={point.x}
             x2={point.x}
@@ -6429,6 +6777,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               strokeWidth={14}
             />
           ) : null}
+          {renderDrawingBadge(
+            Math.max(6, Math.min(point.x - 48, chartViewportSize.width - 100)),
+            8,
+            `TIME  ${formatClock(drawing.points[0]?.time ?? 0).slice(0, 5)}`,
+            "neutral"
+          )}
           {renderDrawingHandles(drawing, [point])}
         </g>
       );
@@ -6439,6 +6793,146 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     if (!start || !end) {
       return null;
+    }
+
+    const lineMetrics = getDrawingLineMetrics(
+      drawing.points[0],
+      drawing.points[1],
+      selectedTimeframe
+    );
+
+    if (drawing.tool === "ellipse") {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const width = Math.max(30, Math.abs(end.x - start.x));
+      const height = Math.max(24, Math.abs(end.y - start.y));
+      const cx = x + width / 2;
+      const cy = y + height / 2;
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <ellipse
+            cx={cx}
+            cy={cy}
+            rx={width / 2}
+            ry={height / 2}
+            fill={isSelected ? "rgba(158, 201, 255, 0.16)" : "rgba(115, 170, 245, 0.11)"}
+            stroke="rgba(158, 201, 255, 0.18)"
+            strokeWidth={7}
+            opacity={opacity}
+          />
+          <ellipse
+            cx={cx}
+            cy={cy}
+            rx={width / 2}
+            ry={height / 2}
+            fill="transparent"
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.2 : 1.5}
+            opacity={opacity}
+          />
+          <line
+            x1={cx}
+            y1={y}
+            x2={cx}
+            y2={y + height}
+            stroke="rgba(210, 226, 245, 0.2)"
+            strokeDasharray="4 4"
+            strokeWidth={1}
+            opacity={opacity}
+          />
+          <line
+            x1={x}
+            y1={cy}
+            x2={x + width}
+            y2={cy}
+            stroke="rgba(210, 226, 245, 0.2)"
+            strokeDasharray="4 4"
+            strokeWidth={1}
+            opacity={opacity}
+          />
+          {renderDrawingBadge(x, y - 20, `ELLIPSE  ${getDrawingRangeLabel(drawing.points[0], drawing.points[1], selectedAsset.tickSize, selectedTimeframe)}`, "accent")}
+          {!isDraft ? (
+            <ellipse
+              cx={cx}
+              cy={cy}
+              rx={Math.max(width / 2, 14)}
+              ry={Math.max(height / 2, 14)}
+              fill="transparent"
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [start, end])}
+        </g>
+      );
+    }
+
+    if (drawing.tool === "measure") {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const width = Math.max(18, Math.abs(end.x - start.x));
+      const height = Math.max(18, Math.abs(end.y - start.y));
+      const midX = x + width / 2;
+      const midY = y + height / 2;
+      const label = getDrawingRangeLabel(
+        drawing.points[0],
+        drawing.points[1],
+        selectedAsset.tickSize,
+        selectedTimeframe
+      );
+
+      return (
+        <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <rect
+            x={x}
+            y={y}
+            width={width}
+            height={height}
+            fill="rgba(95, 163, 255, 0.06)"
+            stroke="rgba(95, 163, 255, 0.55)"
+            strokeWidth={isSelected ? 1.8 : 1.2}
+            strokeDasharray="4 4"
+            opacity={opacity}
+          />
+          <line
+            x1={start.x}
+            y1={start.y}
+            x2={end.x}
+            y2={end.y}
+            stroke={stroke}
+            strokeWidth={isSelected ? 2.1 : 1.4}
+            opacity={opacity}
+          />
+          <line
+            x1={x}
+            y1={midY}
+            x2={x + width}
+            y2={midY}
+            stroke="rgba(214, 227, 244, 0.18)"
+            strokeWidth={1}
+            opacity={opacity}
+          />
+          <line
+            x1={midX}
+            y1={y}
+            x2={midX}
+            y2={y + height}
+            stroke="rgba(214, 227, 244, 0.18)"
+            strokeWidth={1}
+            opacity={opacity}
+          />
+          {renderDrawingBadge(midX, y - 20, label, lineMetrics.priceDelta >= 0 ? "up" : "down", "center")}
+          {!isDraft ? (
+            <rect
+              x={x}
+              y={y}
+              width={Math.max(width, 14)}
+              height={Math.max(height, 14)}
+              fill="transparent"
+            />
+          ) : null}
+          {renderDrawingHandles(drawing, [start, end])}
+        </g>
+      );
     }
 
     if (drawing.tool === "fibonacci") {
@@ -6454,6 +6948,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
+          <rect
+            x={left}
+            y={Math.min(top, bottom)}
+            width={width}
+            height={Math.abs(bottom - top)}
+            fill="rgba(217, 191, 118, 0.04)"
+            opacity={opacity}
+          />
           {ratios.map((ratio) => {
             const y = top + (bottom - top) * ratio;
             const price = startPrice + (endPrice - startPrice) * ratio;
@@ -6491,6 +6993,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               </g>
             );
           })}
+          {renderDrawingBadge(
+            left,
+            Math.min(top, bottom) - 20,
+            `FIB  ${getDrawingRangeLabel(drawing.points[0], drawing.points[1], selectedAsset.tickSize, selectedTimeframe)}`,
+            "neutral"
+          )}
           {!isDraft ? (
             <rect
               x={left}
@@ -6525,6 +7033,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const riskDistance = Math.max(selectedAsset.tickSize, Math.abs(entryPrice - stopPrice));
       const targetPrice = isLongPosition ? entryPrice + riskDistance * 2 : entryPrice - riskDistance * 2;
       const riskPct = entryPrice > 0 ? (riskDistance / entryPrice) * 100 : 0;
+      const targetBadgeY = isLongPosition ? targetTop + 8 : targetTop + targetHeight - 8;
+      const stopBadgeY = isLongPosition ? stopTop + stopHeight - 8 : stopTop + 8;
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
@@ -6533,7 +7043,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y={Math.min(targetTop, stopTop) - 20}
             width={Math.max(112, width)}
             height={16}
-            rx={8}
+            rx={4}
             fill="rgba(8, 13, 20, 0.84)"
             stroke="rgba(255, 255, 255, 0.08)"
             opacity={opacity}
@@ -6578,26 +7088,24 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           >
             {isLongPosition ? "LONG" : "SHORT"}  RR 2.00  RISK {riskPct.toFixed(2)}%
           </text>
-          <text
-            x={left + 6}
-            y={targetTop + 12}
-            fill="#b8f3d7"
-            fontSize="8.5"
-            fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
-            opacity={Math.max(0.74, opacity)}
-          >
-            TP {formatPriceByTick(targetPrice, selectedAsset.tickSize)}
-          </text>
-          <text
-            x={left + 6}
-            y={stopTop + 12}
-            fill="#ffc2cb"
-            fontSize="8.5"
-            fontFamily="IBM Plex Mono, SFMono-Regular, Menlo, Monaco, monospace"
-            opacity={Math.max(0.74, opacity)}
-          >
-            SL {formatPriceByTick(stopPrice, selectedAsset.tickSize)}
-          </text>
+          {renderDrawingBadge(
+            left + 6,
+            targetBadgeY,
+            `TP ${formatPriceByTick(targetPrice, selectedAsset.tickSize)}`,
+            "up"
+          )}
+          {renderDrawingBadge(
+            left + 6,
+            stopBadgeY,
+            `SL ${formatPriceByTick(stopPrice, selectedAsset.tickSize)}`,
+            "down"
+          )}
+          {renderDrawingBadge(
+            left + width - 98,
+            entryY - 8,
+            `ENTRY ${formatPriceByTick(entryPrice, selectedAsset.tickSize)}`,
+            "accent"
+          )}
           {!isDraft ? (
             <rect
               x={left}
@@ -6617,6 +7125,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const y = Math.min(start.y, end.y);
       const width = Math.abs(end.x - start.x);
       const height = Math.abs(end.y - start.y);
+      const label = getDrawingRangeLabel(
+        drawing.points[0],
+        drawing.points[1],
+        selectedAsset.tickSize,
+        selectedTimeframe
+      );
 
       return (
         <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
@@ -6631,6 +7145,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             rx={7}
             opacity={opacity}
           />
+          {renderDrawingBadge(x, y - 20, `ZONE  ${label}`, "accent")}
           {!isDraft ? (
             <rect
               x={x}
@@ -6646,6 +7161,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     const lineEnd = drawing.tool === "ray" ? getRayScreenEndpoint(start, end) : end;
+    const lineLabelPrefix =
+      drawing.tool === "arrow"
+        ? "ARROW"
+        : drawing.tool === "ray"
+          ? "RAY"
+          : "TREND";
+    const lineLabel = `${lineLabelPrefix}  ${formatSignedPriceDelta(
+      lineMetrics.priceDelta,
+      selectedAsset.tickSize
+    )}  ${formatSignedPercent(lineMetrics.percentDelta)}`;
+    const labelX = (start.x + lineEnd.x) / 2;
+    const labelY = (start.y + lineEnd.y) / 2 - 18;
 
     return (
       <g key={drawing.id} className="chart-drawing-shape" data-tool={drawing.tool} {...groupProps}>
@@ -6669,6 +7196,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           strokeLinecap="round"
           opacity={opacity}
         />
+        {drawing.tool === "arrow" ? renderArrowHead(start, lineEnd, stroke, opacity) : null}
+        <circle cx={start.x} cy={start.y} r={3.2} fill={stroke} opacity={opacity} />
+        {drawing.tool !== "ray" ? <circle cx={lineEnd.x} cy={lineEnd.y} r={3.2} fill={stroke} opacity={opacity} /> : null}
+        {renderDrawingBadge(
+          labelX,
+          labelY,
+          lineLabel,
+          lineMetrics.priceDelta >= 0 ? "up" : "down",
+          "center"
+        )}
         {!isDraft ? (
           <line
             x1={start.x}

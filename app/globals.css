@@ -560,7 +560,7 @@ button {
   justify-content: center;
   min-width: 64px;
   height: 30px;
-  border-radius: 999px;
+  border-radius: 7px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   padding: 0 0.7rem;
   font-size: 0.56rem;
@@ -589,7 +589,7 @@ button {
 .account-switch-btn {
   height: 30px;
   border: 1px solid #273247;
-  border-radius: 999px;
+  border-radius: 7px;
   background: #101726;
   color: #c4cee2;
   padding: 0 0.72rem;
@@ -615,7 +615,7 @@ button {
   width: 30px;
   height: 30px;
   border: 1px solid #273247;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #101726;
   color: #c4cee2;
   display: grid;
@@ -864,8 +864,10 @@ button {
   display: grid;
   gap: 9px;
   width: var(--chart-left-rail-width);
+  max-height: calc(100% - (var(--chart-top-rail-top) * 2));
+  overflow-y: auto;
   padding: 10px 8px;
-  border-radius: 20px;
+  border-radius: 7px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   background:
     linear-gradient(180deg, rgba(21, 29, 40, 0.94), rgba(8, 12, 19, 0.94)),
@@ -875,6 +877,11 @@ button {
     0 18px 32px rgba(0, 0, 0, 0.36);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  scrollbar-width: none;
+}
+
+.chart-drawing-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .chart-drawing-toolbar-group-label {
@@ -911,7 +918,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 13px;
+  border-radius: 6px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)),
     rgba(255, 255, 255, 0.02);
