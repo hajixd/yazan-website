@@ -72,12 +72,14 @@ type Candle = {
 
 type TradeResult = "Win" | "Loss";
 type TradeSide = "Long" | "Short";
+type TradeLifecycleStatus = "open" | "closed";
 
 type HistoryItem = {
   id: string;
   symbol: string;
   side: TradeSide;
   result: TradeResult;
+  status: TradeLifecycleStatus;
   pnlPct: number;
   pnlUsd: number;
   time: string;
@@ -382,6 +384,39 @@ const INTERNAL_SIMULATION_MODEL: ModelProfile = {
   rrMax: 2.8,
   longBias: 0.54,
   winRate: 0.58
+};
+
+const buildSimulationProfileFromConnection = (connection: SavedAccountSync): ModelProfile => {
+  const identity =
+    connection.providerConnectionId ||
+    connection.providerAccountId ||
+    connection.providerAccountNumber ||
+    connection.accountNumber ||
+    connection.providerUserName ||
+    connection.username ||
+    connection.connectionLabel ||
+    "connected-account";
+  const seed = hashString(`connection-sim-${identity}`);
+  const rand = createSeededRng(seed);
+  const preferredName =
+    connection.providerAccountName ||
+    connection.accountLabel ||
+    connection.connectionLabel ||
+    getSyncProviderLabel(connection.provider);
+
+  return {
+    id: `connection-sim-${identity}`,
+    name: preferredName,
+    kind: "Model",
+    accountNumber:
+      connection.providerAccountNumber || connection.accountNumber || connection.providerAccountId || undefined,
+    riskMin: 0.28 + rand() * 0.26,
+    riskMax: 0.84 + rand() * 0.52,
+    rrMin: 1.2 + rand() * 0.45,
+    rrMax: 2.05 + rand() * 0.9,
+    longBias: 0.38 + rand() * 0.28,
+    winRate: 0.46 + rand() * 0.18
+  };
 };
 
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
@@ -1446,6 +1481,7 @@ const buildHistoryRowsFromCandles = (
       symbol: blueprint.symbol,
       side: blueprint.side,
       result,
+      status: "closed",
       pnlPct,
       pnlUsd,
       entryTime: toUtcTimestamp(candles[entryIndex].time),
@@ -1462,6 +1498,94 @@ const buildHistoryRowsFromCandles = (
   }
 
   return rows;
+};
+
+const buildActiveTradeFromCandles = (
+  candles: Candle[],
+  tradeBlueprints: TradeBlueprint[],
+  projectedNowMs: number
+): HistoryItem | null => {
+  if (candles.length < 24 || tradeBlueprints.length === 0) {
+    return null;
+  }
+
+  const blueprint = tradeBlueprints[0];
+
+  if (!blueprint) {
+    return null;
+  }
+
+  const entryIndex = findCandleIndexAtOrBefore(candles, blueprint.entryMs);
+  const projectedIndex = findCandleIndexAtOrBefore(candles, projectedNowMs);
+  const currentIndex = Math.min(
+    candles.length - 1,
+    Math.max(entryIndex + 1, projectedIndex >= 0 ? projectedIndex : candles.length - 1)
+  );
+
+  if (entryIndex < 0 || currentIndex <= entryIndex) {
+    return null;
+  }
+
+  const rand = createSeededRng(hashString(`active-${blueprint.id}-${candles[currentIndex]?.time ?? 0}`));
+  const entryPrice = candles[entryIndex]?.close ?? 0;
+  const currentPrice = Math.max(0.000001, candles[currentIndex]?.close ?? entryPrice);
+
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(currentPrice)) {
+    return null;
+  }
+
+  let atr = 0;
+  let atrCount = 0;
+
+  for (let i = Math.max(1, entryIndex - 20); i <= currentIndex; i += 1) {
+    atr += candles[i].high - candles[i].low;
+    atrCount += 1;
+  }
+
+  atr /= Math.max(1, atrCount);
+
+  const riskPerUnit = Math.max(
+    entryPrice * blueprint.riskPct,
+    atr * (0.58 + rand() * 0.54),
+    entryPrice * 0.0009
+  );
+  const stopPrice =
+    blueprint.side === "Long"
+      ? Math.max(0.000001, entryPrice - riskPerUnit)
+      : entryPrice + riskPerUnit;
+  const targetPrice =
+    blueprint.side === "Long"
+      ? entryPrice + riskPerUnit * blueprint.rr
+      : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
+  const pnlPct =
+    blueprint.side === "Long"
+      ? ((currentPrice - entryPrice) / entryPrice) * 100
+      : ((entryPrice - currentPrice) / entryPrice) * 100;
+  const pnlUsd =
+    blueprint.side === "Long"
+      ? (currentPrice - entryPrice) * blueprint.units
+      : (entryPrice - currentPrice) * blueprint.units;
+  const result: TradeResult = pnlUsd >= 0 ? "Win" : "Loss";
+
+  return {
+    id: `active-${blueprint.id}`,
+    symbol: blueprint.symbol,
+    side: blueprint.side,
+    result,
+    status: "open",
+    pnlPct,
+    pnlUsd,
+    entryTime: toUtcTimestamp(candles[entryIndex].time),
+    exitTime: toUtcTimestamp(candles[currentIndex].time),
+    entryPrice,
+    targetPrice,
+    stopPrice,
+    outcomePrice: currentPrice,
+    units: blueprint.units,
+    entryAt: formatDateTime(candles[entryIndex].time),
+    exitAt: "Open",
+    time: formatDateTime(candles[entryIndex].time)
+  };
 };
 
 const MobileWorkspaceTabIcon = ({ tab }: { tab: MobileWorkspaceTab }) => {
@@ -1617,7 +1741,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     height: 0
   });
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("cursor");
-  const [hoveredDrawingTool, setHoveredDrawingTool] = useState<DrawingTool | null>(null);
   const [chartDrawingsByKey, setChartDrawingsByKey] = useState<Record<string, ChartDrawing[]>>({});
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
@@ -1829,6 +1952,21 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedModelId]);
   const hasWorkspaceProfiles = modelProfiles.length > 0;
   const hasYazanProfile = modelProfiles.some((model) => model.id === "yazan");
+  const selectedTradeOwnerModel = useMemo(() => {
+    if (showcaseMode) {
+      return selectedModel ?? INTERNAL_SIMULATION_MODEL;
+    }
+
+    if (hasWorkspaceProfiles) {
+      return selectedModel;
+    }
+
+    if (yazanAccount) {
+      return buildSimulationProfileFromConnection(yazanAccount);
+    }
+
+    return null;
+  }, [hasWorkspaceProfiles, selectedModel, showcaseMode, yazanAccount]);
 
   const syncMarketClock = useCallback((marketTimeMs: number) => {
     if (!Number.isFinite(marketTimeMs) || marketTimeMs <= 0) {
@@ -2391,15 +2529,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     simulationFallback,
     projectedMarketNowMs
   ]);
-  const activeDrawingToolConfig = useMemo(() => {
-    return chartDrawingTools.find((tool) => tool.tool === activeDrawingTool) ?? chartDrawingTools[0];
-  }, [activeDrawingTool]);
-  const hoveredDrawingToolConfig = useMemo(() => {
-    return hoveredDrawingTool
-      ? chartDrawingTools.find((tool) => tool.tool === hoveredDrawingTool) ?? null
-      : null;
-  }, [hoveredDrawingTool]);
-  const toolbarPreviewToolConfig = hoveredDrawingToolConfig ?? activeDrawingToolConfig;
   const canDrawOnChart = renderedSelectedCandles.length > 0;
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
@@ -3404,7 +3533,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return [];
     }
 
-    if (!selectedModel) {
+    if (!selectedTradeOwnerModel) {
       return [];
     }
 
@@ -3418,7 +3547,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       const tradeBlueprints = generateTradeBlueprintsFromCandles(
-        selectedModel,
+        selectedTradeOwnerModel,
         asset.symbol,
         list,
         showcaseMode ? 42 : 54
@@ -3461,15 +3590,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [chartSimulationEnabled, historyCandlesBySymbol, selectedModel, showcaseMode]);
-
-  const selectedHistoryTrade = useMemo(() => {
-    if (!selectedHistoryId) {
-      return null;
-    }
-
-    return historyRows.find((row) => row.id === selectedHistoryId) ?? null;
-  }, [historyRows, selectedHistoryId]);
+  }, [chartSimulationEnabled, historyCandlesBySymbol, selectedTradeOwnerModel, showcaseMode]);
 
   const currentSymbolHistoryRows = useMemo(() => {
     return historyRows.filter((row) => row.symbol === selectedSymbol);
@@ -3480,8 +3601,53 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return [];
     }
 
-    return historyRows.slice(0, 12);
-  }, [chartSimulationEnabled, historyRows]);
+    if (!selectedTradeOwnerModel) {
+      return [];
+    }
+
+    const rows: HistoryItem[] = [];
+
+    for (const asset of futuresAssets) {
+      const list = historyCandlesBySymbol[asset.symbol] ?? [];
+
+      if (list.length < 40) {
+        continue;
+      }
+
+      const tradeBlueprints = generateTradeBlueprintsFromCandles(
+        selectedTradeOwnerModel,
+        asset.symbol,
+        list,
+        1
+      );
+      const trade = buildActiveTradeFromCandles(list, tradeBlueprints, projectedMarketNowMs);
+
+      if (trade) {
+        rows.push(trade);
+      }
+    }
+
+    return rows
+      .sort((a, b) => Number(b.entryTime) - Number(a.entryTime))
+      .slice(0, Math.min(12, futuresAssets.length));
+  }, [
+    chartSimulationEnabled,
+    historyCandlesBySymbol,
+    projectedMarketNowMs,
+    selectedTradeOwnerModel
+  ]);
+
+  const selectedHistoryTrade = useMemo(() => {
+    if (!selectedHistoryId) {
+      return null;
+    }
+
+    return (
+      historyRows.find((row) => row.id === selectedHistoryId) ??
+      activeTrades.find((row) => row.id === selectedHistoryId) ??
+      null
+    );
+  }, [activeTrades, historyRows, selectedHistoryId]);
 
   const activeTrade = useMemo(() => {
     if (activeTrades.length === 0) {
@@ -3504,8 +3670,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return null;
     }
 
-    return formatElapsed(Number(activeTrade.entryTime), Number(activeTrade.exitTime));
-  }, [activeTrade]);
+    return formatElapsed(Number(activeTrade.entryTime), Math.floor(projectedMarketNowMs / 1000));
+  }, [activeTrade, projectedMarketNowMs]);
 
   const activeTradeRiskReward = useMemo(() => {
     if (!activeTrade) {
@@ -3530,8 +3696,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return null;
     }
 
-    return formatElapsed(Number(mobileDisplayTrade.entryTime), Number(mobileDisplayTrade.exitTime));
-  }, [mobileDisplayTrade]);
+    return formatElapsed(Number(mobileDisplayTrade.entryTime), Math.floor(projectedMarketNowMs / 1000));
+  }, [mobileDisplayTrade, projectedMarketNowMs]);
   const mobileDisplayTradeRiskReward = useMemo(() => {
     if (!mobileDisplayTrade) {
       return null;
@@ -3905,10 +4071,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
-    if (!historyRows.some((row) => row.id === selectedHistoryId)) {
+    if (
+      !historyRows.some((row) => row.id === selectedHistoryId) &&
+      !activeTrades.some((row) => row.id === selectedHistoryId)
+    ) {
       setSelectedHistoryId(null);
     }
-  }, [historyRows, selectedHistoryId]);
+  }, [activeTrades, historyRows, selectedHistoryId]);
 
   useEffect(() => {
     if (activeTrades.length === 0) {
@@ -4984,7 +5153,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     renderSingleTrade({
       side: selectedHistoryTrade.side,
-      status: "closed",
+      status: selectedHistoryTrade.status === "open" ? "pending" : "closed",
       result: selectedHistoryTrade.result,
       entryTime: selectedHistoryTrade.entryTime,
       exitTime: selectedHistoryTrade.exitTime,
@@ -5047,6 +5216,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
+  const canManageConnections = activeAccountRole !== null;
   const legacyYazanAccountSummary = yazanAccount
     ? yazanAccount.provider === "tradovate"
       ? [
@@ -5097,6 +5267,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           .filter(Boolean)
           .join(" • ")
     : null;
+
+  const selectedTradeOwnerLabel = hasWorkspaceProfiles
+    ? selectedModel?.name ?? null
+    : yazanAccount
+      ? yazanAccount.providerAccountName ||
+        yazanAccount.accountLabel ||
+        yazanAccount.connectionLabel ||
+        getSyncProviderLabel(yazanAccount.provider)
+      : showcaseMode
+        ? INTERNAL_SIMULATION_MODEL.name
+        : null;
 
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
     setYazanSyncError(null);
@@ -5151,7 +5332,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     mode: "add" | "edit" = "edit",
     provider: SyncProvider = yazanAccount?.provider ?? "tradovate"
   ) => {
-    if (!isAdmin) {
+    if (!canManageConnections) {
       return;
     }
 
@@ -5646,7 +5827,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <>
                     <div className="mobile-phone-card-head">
                       <div className="mobile-phone-card-copy">
-                        <span className="mobile-phone-card-kicker">Simulation Desk</span>
+                        <span className="mobile-phone-card-kicker">
+                          {selectedTradeOwnerLabel ?? "Simulation Desk"}
+                        </span>
                         <h2>Active Trades</h2>
                       </div>
                       <span className="mobile-phone-count-chip">
@@ -5678,9 +5861,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 </span>
                               </span>
                               <span className="mobile-phone-active-row-meta">
-                                <span className={trade.result === "Win" ? "up" : "down"}>
-                                  {trade.result}
-                                </span>
+                                <em className="mobile-phone-side-pill">Open</em>
                                 <span>{trade.time}</span>
                               </span>
                             </span>
@@ -5813,7 +5994,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           <strong>{formatPrice(mobileDisplayTrade.entryPrice)}</strong>
                         </div>
                         <div className="mobile-phone-detail-row">
-                          <span>Exit Price</span>
+                          <span>Live Mark</span>
                           <strong>{formatPrice(mobileDisplayTrade.outcomePrice)}</strong>
                         </div>
                         <div className="mobile-phone-detail-row">
@@ -5825,10 +6006,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           <strong className="down">{formatPrice(mobileDisplayTrade.stopPrice)}</strong>
                         </div>
                         <div className="mobile-phone-detail-row">
-                          <span>Result</span>
-                          <strong className={mobileDisplayTrade.result === "Win" ? "up" : "down"}>
-                            {mobileDisplayTrade.result}
-                          </strong>
+                          <span>Status</span>
+                          <strong>Open</strong>
+                        </div>
+                        <div className="mobile-phone-detail-row">
+                          <span>Side</span>
+                          <strong>{mobileDisplayTrade.side === "Long" ? "Buy" : "Sell"}</strong>
                         </div>
                         <div className="mobile-phone-detail-row">
                           <span>Duration</span>
@@ -5847,9 +6030,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   </>
                 ) : (
                   <div className="mobile-phone-empty-state">
-                    <span className="mobile-phone-card-kicker">Simulation Desk</span>
+                    <span className="mobile-phone-card-kicker">
+                      {selectedTradeOwnerLabel ?? "Simulation Desk"}
+                    </span>
                     <h2>No active trades</h2>
-                    <p>Turn simulation on to populate the active blotter and inspect trade details.</p>
+                    <p>
+                      {chartSimulationEnabled
+                        ? selectedTradeOwnerLabel
+                          ? "Only open trades for the current model or connected account will appear here."
+                          : "Add or select a model/account to populate the active blotter."
+                        : "Turn simulation on to populate the active blotter and inspect trade details."}
+                    </p>
                   </div>
                 )}
               </section>
@@ -5869,7 +6060,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">History</span>
                     <h2>No trades yet</h2>
-                    <p>As new simulated trades close, they will appear here.</p>
+                    <p>
+                      {chartSimulationEnabled
+                        ? selectedTradeOwnerLabel
+                          ? "Only closed trades for the current model or connected account will appear here."
+                          : "Add or select a model/account to populate the history."
+                        : "Turn simulation on to populate the history."}
+                    </p>
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
@@ -6557,12 +6754,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               );
             })()}
           </div>
-          <div className="chart-stage">
+            <div className="chart-stage">
             <div className="chart-drawing-toolbar" aria-label="Chart drawing tools">
-              <div className="chart-drawing-toolbar-preview" aria-live="polite">
-                <strong>{toolbarPreviewToolConfig.label}</strong>
-                <span>{toolbarPreviewToolConfig.shortcut}</span>
-              </div>
               {chartDrawingToolGroups.map((group, groupIndex) => (
                 <div key={group.id} className="chart-drawing-toolbar-section">
                   <span className="chart-drawing-toolbar-group-label">{group.label}</span>
@@ -6587,10 +6780,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           data-tool-label={tool.label}
                           data-tool-shortcut={tool.shortcut}
                           disabled={!canDrawOnChart && tool.tool !== "cursor"}
-                          onMouseEnter={() => setHoveredDrawingTool(tool.tool)}
-                          onMouseLeave={() => setHoveredDrawingTool((current) => (current === tool.tool ? null : current))}
-                          onFocus={() => setHoveredDrawingTool(tool.tool)}
-                          onBlur={() => setHoveredDrawingTool((current) => (current === tool.tool ? null : current))}
                           onClick={() => {
                             setActiveDrawingTool(tool.tool);
                             setDrawingDraft(null);
@@ -6618,7 +6807,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   title="Delete selected drawing (Delete)"
                   aria-label="Delete selected drawing"
                   disabled={!selectedDrawingId}
-                  onMouseEnter={() => setHoveredDrawingTool(null)}
                   onClick={deleteSelectedDrawing}
                 >
                   {renderToolbarActionIcon("delete")}
@@ -6629,16 +6817,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   title="Clear all drawings for this chart"
                   aria-label="Clear all drawings"
                   disabled={currentChartDrawings.length === 0}
-                  onMouseEnter={() => setHoveredDrawingTool(null)}
                   onClick={clearCurrentDrawings}
                 >
                   {renderToolbarActionIcon("clear")}
                 </button>
-              </div>
-              <div className="chart-drawing-toolbar-tip" aria-hidden="true">
-                <strong>{toolbarPreviewToolConfig.label}</strong>
-                <span>{toolbarPreviewToolConfig.detail}</span>
-                <small>{toolbarPreviewToolConfig.shortcut}</small>
               </div>
             </div>
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
@@ -6903,12 +7085,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                     {trade.side === "Long" ? "Buy" : "Sell"}
                                   </span>
                                 </span>
-                                <span
-                                  className={`active-trade-result ${
-                                    trade.result === "Win" ? "up" : "down"
-                                  }`}
+                              <span
+                                  className="active-live-tag"
                                 >
-                                  {trade.result}
+                                  Open
                                 </span>
                               </span>
                               <span className="active-trade-row-meta">
@@ -6961,7 +7141,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <strong>{formatPrice(activeTrade.entryPrice)}</strong>
                           </div>
                           <div className="active-metric">
-                            <span>Exit</span>
+                            <span>Mark</span>
                             <strong>{formatPrice(activeTrade.outcomePrice)}</strong>
                           </div>
                           <div className="active-metric">
@@ -6987,14 +7167,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <strong>{activeTrade.entryAt}</strong>
                           </div>
                           <div className="active-metric">
-                            <span>Closed</span>
-                            <strong>{activeTrade.exitAt}</strong>
+                            <span>Status</span>
+                            <strong>Open</strong>
                           </div>
                           <div className="active-metric">
-                            <span>Result</span>
-                            <strong className={activeTrade.result === "Win" ? "up" : "down"}>
-                              {activeTrade.result}
-                            </strong>
+                            <span>Side</span>
+                            <strong>{activeTrade.side === "Long" ? "Buy" : "Sell"}</strong>
                           </div>
                           <div className="active-metric">
                             <span>Duration</span>
@@ -7007,7 +7185,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <div className="ai-placeholder">
                       <p>
                         {chartSimulationEnabled
-                          ? "No replay trades are available for the active blotter yet."
+                          ? selectedTradeOwnerLabel
+                            ? "No open trades are available for the current model or connected account."
+                            : "Add or select a model/account to populate the active blotter."
                           : "Trade simulation is turned off."}
                       </p>
                     </div>
@@ -7067,12 +7247,28 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             </small>
                           </span>
 
-                          <span className="num-col">
+                          <span
+                            className={`num-col ${
+                              row.change === null
+                                ? "neutral"
+                                : row.change > 0
+                                  ? "up"
+                                  : row.change < 0
+                                    ? "down"
+                                    : "neutral"
+                            }`}
+                          >
                             {row.lastPrice === null ? "--" : formatPrice(row.lastPrice)}
                           </span>
                           <span
                             className={`num-col ${
-                              row.change === null ? "" : row.change >= 0 ? "up" : "down"
+                              row.change === null
+                                ? "neutral"
+                                : row.change > 0
+                                  ? "up"
+                                  : row.change < 0
+                                    ? "down"
+                                    : "neutral"
                             }`}
                           >
                             {row.change === null
@@ -7770,20 +7966,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     </>
                   ) : (
                     <>
-                      <div className={`watchlist-head ${isAdmin ? "with-action" : ""}`}>
+                      <div className={`watchlist-head ${canManageConnections ? "with-action" : ""}`}>
                         <div>
                           <h2>Models / People</h2>
-                          <p>
-                            {hasWorkspaceProfiles
-                              ? isAdmin
-                                ? "Add a Tradovate or Trade Syncer setup for Yazan."
-                                : "Profiles in the current workspace."
-                              : isAdmin
-                                ? "No profiles in the current workspace. Add a connection to keep the desk wired."
-                                : "No profiles in the current workspace."}
-                          </p>
+                          {hasWorkspaceProfiles ? <p>Profiles in the current workspace.</p> : null}
                         </div>
-                        {isAdmin ? (
+                        {canManageConnections ? (
                           <button
                             type="button"
                             className="panel-action-btn"
@@ -7857,8 +8045,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           })}
                         </ul>
                       ) : (
-                        <div className="ai-placeholder">
-                          <p>The current ICT and Yazan profiles have been removed from this workspace.</p>
+                        <div className="model-empty-actions">
+                          <button
+                            type="button"
+                            className="panel-action-btn model-empty-add-btn"
+                            onClick={() => openYazanSyncDraft("add")}
+                          >
+                            Add
+                          </button>
+                          <div className="model-empty-provider-row">
+                            <button
+                              type="button"
+                              className="model-empty-provider-btn"
+                              onClick={() => openYazanSyncDraft("add", "tradovate")}
+                            >
+                              Tradovate
+                            </button>
+                            <button
+                              type="button"
+                              className="model-empty-provider-btn"
+                              onClick={() => openYazanSyncDraft("add", "tradesyncer")}
+                            >
+                              Trade Syncer
+                            </button>
+                          </div>
                         </div>
                       )}
                     </>
@@ -7946,7 +8156,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <div className="ai-placeholder">
                       <p>
                         {chartSimulationEnabled
-                          ? "No replay trades are available for the current futures slice."
+                          ? selectedTradeOwnerLabel
+                            ? "No closed trades are available for the current model or connected account."
+                            : "Add or select a model/account to populate the history."
                           : "History simulation is turned off."}
                       </p>
                     </div>
