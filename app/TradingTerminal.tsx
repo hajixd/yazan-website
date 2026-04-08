@@ -3826,6 +3826,82 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : null;
 
+  const projectedOrderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
+    const quoteMidPrice =
+      liveQuoteSnapshot && liveQuoteSnapshot.bestBid > 0 && liveQuoteSnapshot.bestAsk > 0
+        ? (liveQuoteSnapshot.bestBid + liveQuoteSnapshot.bestAsk) / 2
+        : null;
+    const referencePrice = quoteMidPrice ?? latestCandle?.close ?? selectedAsset.basePrice;
+
+    if (!Number.isFinite(referencePrice) || referencePrice <= 0) {
+      return null;
+    }
+
+    const tickSize = selectedAsset.tickSize;
+    const midPrice = roundToTick(referencePrice, tickSize);
+    const seed = hashString(
+      `${selectedAsset.symbol}-${selectedTimeframe}-${latestCandle?.time ?? referenceNowMs}-${midPrice}`
+    );
+    const rand = createSeededRng(seed);
+    const levelCount = 10;
+    const spreadTicks = Math.max(
+      1,
+      quoteChange !== null && Math.abs(quoteChange) > 0.3 ? 2 : 1
+    );
+    const bestBid = roundToTick(midPrice - spreadTicks * tickSize, tickSize);
+    const bestAsk = roundToTick(midPrice + spreadTicks * tickSize, tickSize);
+    const sizeBaseline = Math.max(
+      18,
+      Math.round((Math.log10(Math.max(referencePrice, 1)) + 1) * 34)
+    );
+    const rawLevels = Array.from({ length: levelCount }, (_, index) => {
+      const distanceWeight = 1 - index / (levelCount * 1.3);
+      const bidSize = Math.max(
+        1,
+        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
+      );
+      const askSize = Math.max(
+        1,
+        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
+      );
+
+      return {
+        bidPrice: roundToTick(bestBid - index * tickSize, tickSize),
+        askPrice: roundToTick(bestAsk + index * tickSize, tickSize),
+        bidSize,
+        askSize
+      };
+    });
+    const maxBidSize = Math.max(...rawLevels.map((level) => level.bidSize), 1);
+    const maxAskSize = Math.max(...rawLevels.map((level) => level.askSize), 1);
+    const bidTotal = rawLevels.reduce((sum, level) => sum + level.bidSize, 0);
+    const askTotal = rawLevels.reduce((sum, level) => sum + level.askSize, 0);
+
+    return {
+      levels: rawLevels.map((level) => ({
+        ...level,
+        bidFillPct: (level.bidSize / maxBidSize) * 100,
+        askFillPct: (level.askSize / maxAskSize) * 100
+      })),
+      bestBid,
+      bestAsk,
+      spread: Math.max(tickSize, bestAsk - bestBid),
+      bidTotal,
+      askTotal,
+      imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
+    };
+  }, [
+    latestCandle?.close,
+    latestCandle?.time,
+    liveQuoteSnapshot,
+    quoteChange,
+    referenceNowMs,
+    selectedAsset.basePrice,
+    selectedAsset.symbol,
+    selectedAsset.tickSize,
+    selectedTimeframe
+  ]);
+
   const quoteSnapshot = useMemo<OrderBookSnapshot | null>(() => {
     if (liveQuoteSnapshot) {
       return liveQuoteSnapshot;
@@ -3843,8 +3919,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return liveOrderBookSnapshot;
     }
 
-    return null;
-  }, [liveOrderBookSnapshot]);
+    return projectedOrderBookSnapshot;
+  }, [liveOrderBookSnapshot, projectedOrderBookSnapshot]);
 
   const quoteOverlaySourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
@@ -3884,8 +3960,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return isTopOfBookSchema(liveDepthSchema) ? "Live top of book" : "Live depth";
     }
 
-    if (liveQuoteSnapshot) {
-      return "Top of book only";
+    if (projectedOrderBookSnapshot) {
+      return showcaseMode || simulationFallback ? "Simulation" : "Projected";
     }
 
     if (liveDepthMessage || marketError) {
@@ -3896,9 +3972,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [
     liveDepthMessage,
     liveDepthSchema,
-    liveQuoteSnapshot,
     liveOrderBookSnapshot,
     marketError,
+    projectedOrderBookSnapshot,
     showcaseMode,
     simulationFallback
   ]);
