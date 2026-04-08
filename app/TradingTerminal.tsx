@@ -266,6 +266,27 @@ const formatLiveDepthStatusMessage = (message: string, schema?: string) => {
   return message || "Live order book is currently unavailable.";
 };
 
+const getLiveBookSchemaRank = (schema?: string | null) => {
+  switch (schema) {
+    case "mbp-10":
+      return 3;
+    case "mbp-1":
+      return 2;
+    case "bbo-1s":
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+const isTopOfBookSchema = (schema?: string | null) => {
+  return schema === "mbp-1" || schema === "bbo-1s";
+};
+
+const isOrderBookDepthSchema = (schema?: string | null) => {
+  return schema === "mbp-10" || schema === "mbp-1";
+};
+
 const isLikelyLocalHostname = (hostname: string) => {
   const normalized = hostname.toLowerCase();
 
@@ -1516,6 +1537,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
   const [simulationFallback, setSimulationFallback] = useState(false);
+  const [liveQuoteSnapshot, setLiveQuoteSnapshot] = useState<OrderBookSnapshot | null>(null);
+  const [liveQuoteSchema, setLiveQuoteSchema] = useState<string | null>(null);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [liveDepthMessage, setLiveDepthMessage] = useState<string | null>(null);
   const [liveDepthSchema, setLiveDepthSchema] = useState<string | null>(null);
@@ -2601,6 +2624,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [getDrawingPointFromClientPosition, selectedAsset.tickSize, selectedTimeframe, updateChartDrawings]);
 
   useEffect(() => {
+    setLiveQuoteSnapshot(null);
+    setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
@@ -2648,6 +2673,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           };
         });
 
+        setLiveQuoteSnapshot(null);
+        setLiveQuoteSchema(null);
         setLiveOrderBookSnapshot(null);
         setMarketFeedMeta(createSimulationMarketMeta(selectedSymbol, selectedTimeframe, tickTimestampMs));
       };
@@ -2687,7 +2714,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     let tradeFlushTimeoutId: number | null = null;
     let pendingTrade: LiveTradeResponse | null = null;
     let bookFlushTimeoutId: number | null = null;
-    let pendingBook: OrderBookSnapshot | null = null;
+    let pendingQuoteBook: { snapshot: OrderBookSnapshot; schema: string | null } | null = null;
+    let pendingDepthBook: { snapshot: OrderBookSnapshot; schema: string } | null = null;
+    let activeDepthSchema: string | null = null;
 
     const syncMarketFeedMeta = (meta?: LiveTradeResponse["meta"]) => {
       if (!meta) {
@@ -2762,17 +2791,45 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const flushPendingBook = () => {
       bookFlushTimeoutId = null;
 
-      if (!pendingBook || cancelled) {
+      if (cancelled) {
         return;
       }
 
-      const nextBook = pendingBook;
-      pendingBook = null;
-      setLiveOrderBookSnapshot(nextBook);
+      if (pendingQuoteBook) {
+        setLiveQuoteSnapshot(pendingQuoteBook.snapshot);
+        setLiveQuoteSchema(pendingQuoteBook.schema);
+        pendingQuoteBook = null;
+      }
+
+      if (!pendingDepthBook) {
+        return;
+      }
+
+      const nextDepthBook = pendingDepthBook;
+      pendingDepthBook = null;
+      activeDepthSchema = nextDepthBook.schema;
+      setLiveOrderBookSnapshot(nextDepthBook.snapshot);
+      setLiveDepthSchema(nextDepthBook.schema);
     };
 
-    const queueOrderBook = (snapshot: OrderBookSnapshot) => {
-      pendingBook = snapshot;
+    const queueOrderBook = (snapshot: OrderBookSnapshot, schema?: string | null) => {
+      pendingQuoteBook = {
+        snapshot,
+        schema: schema ?? null
+      };
+
+      if (isOrderBookDepthSchema(schema)) {
+        const incomingRank = getLiveBookSchemaRank(schema);
+        const pendingRank = getLiveBookSchemaRank(pendingDepthBook?.schema ?? null);
+        const activeRank = getLiveBookSchemaRank(activeDepthSchema);
+
+        if (incomingRank >= Math.max(pendingRank, activeRank)) {
+          pendingDepthBook = {
+            snapshot,
+            schema
+          };
+        }
+      }
 
       if (bookFlushTimeoutId !== null) {
         return;
@@ -2887,6 +2944,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }, usesHostedLiveBackend ? HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS : LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS);
     };
 
+    setLiveQuoteSnapshot(null);
+    setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
@@ -2929,20 +2988,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       if (payload.type === "book") {
         markStreamAsLive();
         setLiveDepthMessage(null);
-        setLiveDepthSchema(payload.meta?.schema ?? "mbp-10");
-        queueOrderBook(payload.snapshot);
+        queueOrderBook(payload.snapshot, payload.meta?.schema ?? null);
         syncMarketFeedMeta(payload.meta);
         return;
       }
 
       if (payload.type === "status") {
-        if (isLiveDepthSchemaMessage(payload.message, payload.meta?.schema)) {
+        if (isOrderBookDepthSchema(payload.meta?.schema)) {
           setLiveDepthSchema(payload.meta?.schema ?? null);
 
           if (payload.state === "connected") {
             setLiveDepthMessage(null);
           } else if (payload.state === "stopped") {
             setLiveOrderBookSnapshot(null);
+            activeDepthSchema = null;
             setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message, payload.meta?.schema));
           }
 
@@ -2957,8 +3016,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
-      if (isLiveDepthSchemaMessage(payload.message, payload.meta?.schema)) {
+      if (isOrderBookDepthSchema(payload.meta?.schema)) {
         setLiveOrderBookSnapshot(null);
+        activeDepthSchema = null;
         setLiveDepthSchema(payload.meta?.schema ?? null);
         setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message, payload.meta?.schema));
         return;
@@ -3019,7 +3079,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       pendingTrade = null;
-      pendingBook = null;
+      pendingQuoteBook = null;
+      pendingDepthBook = null;
       eventSource?.close();
       stopFallbackPolling();
     };
@@ -3098,11 +3159,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : null;
 
-  const orderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
-    if (liveOrderBookSnapshot) {
-      return liveOrderBookSnapshot;
-    }
-
+  const simulatedOrderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
     if (!showcaseMode && !simulationFallback) {
       return null;
     }
@@ -3162,7 +3219,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
     };
   }, [
-    liveOrderBookSnapshot,
     latestCandle?.close,
     latestCandle?.time,
     quoteChange,
@@ -3175,25 +3231,43 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     simulationFallback
   ]);
 
+  const quoteSnapshot = useMemo<OrderBookSnapshot | null>(() => {
+    if (liveQuoteSnapshot) {
+      return liveQuoteSnapshot;
+    }
+
+    if (liveOrderBookSnapshot) {
+      return liveOrderBookSnapshot;
+    }
+
+    return simulatedOrderBookSnapshot;
+  }, [liveOrderBookSnapshot, liveQuoteSnapshot, simulatedOrderBookSnapshot]);
+
+  const orderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
+    if (liveOrderBookSnapshot) {
+      return liveOrderBookSnapshot;
+    }
+
+    return simulatedOrderBookSnapshot;
+  }, [liveOrderBookSnapshot, simulatedOrderBookSnapshot]);
+
   const quoteOverlaySourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
       return "Simulation";
     }
 
-    if (liveOrderBookSnapshot) {
-      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
-        ? "Live top of book"
-        : "Live depth";
+    if (quoteSnapshot) {
+      return isTopOfBookSchema(liveQuoteSchema) ? "Live top of book" : "Live depth";
     }
 
     if (liveDepthMessage) {
-      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+      return isTopOfBookSchema(liveDepthSchema)
         ? "Top of book unavailable"
         : "Trade only";
     }
 
     return "Waiting for depth";
-  }, [liveDepthMessage, liveDepthSchema, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+  }, [liveDepthMessage, liveDepthSchema, liveQuoteSchema, quoteSnapshot, showcaseMode, simulationFallback]);
 
   const orderBookSourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
@@ -3201,7 +3275,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+      return isTopOfBookSchema(liveDepthSchema)
         ? "Top of book"
         : "Live depth";
     }
@@ -3212,6 +3286,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return "Waiting";
   }, [liveDepthMessage, liveDepthSchema, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+
+  const visibleOrderBookLevels = useMemo(() => {
+    return orderBookSnapshot?.levels.slice(0, 10) ?? [];
+  }, [orderBookSnapshot]);
 
   const watchlistRows = useMemo(() => {
     return orderedAssets.map((asset) => {
@@ -6174,46 +6252,46 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <strong>Live Quote</strong>
                   <span>{quoteOverlaySourceLabel}</span>
                 </div>
-                {orderBookSnapshot ? (
+                {quoteSnapshot ? (
                   <div className="quote-overlay-grid">
                     <div className="quote-overlay-item">
                       <span>Bid</span>
                       <strong className="up">
-                        {formatPriceByTick(orderBookSnapshot.bestBid, selectedAsset.tickSize)}
+                        {formatPriceByTick(quoteSnapshot.bestBid, selectedAsset.tickSize)}
                       </strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Ask</span>
                       <strong className="down">
-                        {formatPriceByTick(orderBookSnapshot.bestAsk, selectedAsset.tickSize)}
+                        {formatPriceByTick(quoteSnapshot.bestAsk, selectedAsset.tickSize)}
                       </strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Spread</span>
                       <strong className="neutral">
-                        {formatPriceByTick(orderBookSnapshot.spread, selectedAsset.tickSize)}
+                        {formatPriceByTick(quoteSnapshot.spread, selectedAsset.tickSize)}
                       </strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Bid Depth</span>
-                      <strong className="up">{formatDepthSize(orderBookSnapshot.bidTotal)}</strong>
+                      <strong className="up">{formatDepthSize(quoteSnapshot.bidTotal)}</strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Ask Depth</span>
-                      <strong className="down">{formatDepthSize(orderBookSnapshot.askTotal)}</strong>
+                      <strong className="down">{formatDepthSize(quoteSnapshot.askTotal)}</strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Imbalance</span>
-                      <strong className={orderBookSnapshot.imbalance >= 0 ? "up" : "down"}>
-                        {orderBookSnapshot.imbalance >= 0 ? "+" : ""}
-                        {orderBookSnapshot.imbalance.toFixed(1)}%
+                      <strong className={quoteSnapshot.imbalance >= 0 ? "up" : "down"}>
+                        {quoteSnapshot.imbalance >= 0 ? "+" : ""}
+                        {quoteSnapshot.imbalance.toFixed(1)}%
                       </strong>
                     </div>
                   </div>
                 ) : (
                   <p className="quote-overlay-empty">
                     {liveDepthMessage ??
-                      (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+                      (isTopOfBookSchema(liveQuoteSchema ?? liveDepthSchema)
                         ? "Waiting for real Databento top-of-book."
                         : "Waiting for real Databento depth.")}
                   </p>
@@ -6225,7 +6303,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   <span>{orderBookSourceLabel}</span>
                 </div>
                 {liveOrderBookSnapshot &&
-                (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s") ? (
+                isTopOfBookSchema(liveDepthSchema) ? (
                   <p className="order-book-empty">Real-time top of book only. Full 10-level depth is not enabled.</p>
                 ) : null}
                 {orderBookSnapshot ? (
@@ -6237,7 +6315,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <span>Ask Size</span>
                     </div>
                     <div className="order-book-rows">
-                      {orderBookSnapshot.levels.map((level) => (
+                      {visibleOrderBookLevels.map((level) => (
                         <div
                           key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`}
                           className="order-book-row"
@@ -6273,7 +6351,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 ) : (
                   <p className="order-book-empty">
                     {liveDepthMessage ??
-                      (liveDepthSchema === "mbp-1" || liveDepthSchema === "bbo-1s"
+                      (isTopOfBookSchema(liveDepthSchema)
                         ? "Waiting for real Databento top-of-book."
                         : "Waiting for real Databento depth.")}
                   </p>

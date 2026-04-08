@@ -850,13 +850,16 @@ button {
   min-height: 0;
   height: 100%;
   position: relative;
+  --chart-left-rail-left: 10px;
+  --chart-left-rail-width: 54px;
+  --chart-left-rail-gap: 12px;
+  --chart-top-rail-top: 10px;
 }
 
 .chart-drawing-toolbar {
   position: absolute;
-  top: 50%;
-  left: 10px;
-  transform: translateY(-50%);
+  top: var(--chart-top-rail-top);
+  left: var(--chart-left-rail-left);
   z-index: 11;
   display: grid;
   gap: 10px;
@@ -1091,10 +1094,13 @@ button {
 
 .chart-overlay-stack {
   position: absolute;
-  top: 14px;
-  left: 12px;
+  top: var(--chart-top-rail-top);
+  left: calc(var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap));
   z-index: 9;
-  width: min(238px, calc(100% - 20px));
+  width: min(
+    238px,
+    calc(100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) + 12px))
+  );
   display: grid;
   gap: 5px;
   pointer-events: none;
@@ -2325,16 +2331,27 @@ button {
     flex: 1 1 auto;
   }
 
+.chart-stage {
+  --chart-left-rail-left: 8px;
+  --chart-left-rail-width: 50px;
+  --chart-left-rail-gap: 10px;
+  --chart-top-rail-top: 8px;
+}
+
 .chart-overlay-stack {
-  width: min(220px, calc(100% - 16px));
-  top: 10px;
-  left: 8px;
+  width: min(
+    220px,
+    calc(100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) + 8px))
+  );
+  top: var(--chart-top-rail-top);
+  left: calc(var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap));
 }
 
 .chart-drawing-toolbar {
-  left: 8px;
-  transform: translateY(-50%) scale(0.92);
-  transform-origin: left center;
+  top: var(--chart-top-rail-top);
+  left: var(--chart-left-rail-left);
+  transform: scale(0.92);
+  transform-origin: top left;
 }
 
 .chart-drawing-status {
