@@ -549,6 +549,7 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 20_000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
+const CHART_CANDLE_REFRESH_INTERVAL_MS = 30_000;
 const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 80;
 const LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 4_000;
@@ -2574,6 +2575,92 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [seriesMap]);
 
   useEffect(() => {
+    if (showcaseMode || simulationFallback) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+    let activeController: AbortController | null = null;
+
+    const refreshChartCandles = async () => {
+      if (refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+
+      try {
+        const payload = await fetchFuturesCandles(
+          selectedSymbol,
+          selectedTimeframe,
+          candleHistoryCountByTimeframe[selectedTimeframe],
+          { signal: controller.signal }
+        );
+
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        const nextCandles = Array.isArray(payload.candles) ? payload.candles : [];
+
+        if (nextCandles.length === 0) {
+          return;
+        }
+
+        setSeriesMap((prev) => {
+          const existing = prev[selectedKey] ?? [];
+          const merged =
+            existing.length > 0
+              ? mergeCandles(existing, nextCandles).slice(-MAX_CHART_CANDLE_COUNT)
+              : nextCandles;
+
+          return {
+            ...prev,
+            [selectedKey]: merged
+          };
+        });
+
+        const latestLoadedCandle = nextCandles[nextCandles.length - 1];
+
+        if (payload.meta?.provider !== "Simulation" && latestLoadedCandle) {
+          syncMarketClock(latestLoadedCandle.time + getTimeframeMs(selectedTimeframe) - 1);
+        }
+
+        setSimulationFallback(payload.meta?.provider === "Simulation");
+        setMarketFeedMeta(payload.meta ?? null);
+      } catch {
+        // Keep the current delayed series if a refresh misses.
+      } finally {
+        if (activeController === controller) {
+          activeController = null;
+        }
+
+        refreshInFlight = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void refreshChartCandles();
+    }, CHART_CANDLE_REFRESH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      activeController?.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [
+    selectedKey,
+    selectedSymbol,
+    selectedTimeframe,
+    showcaseMode,
+    simulationFallback,
+    syncMarketClock
+  ]);
+
+  useEffect(() => {
     watchlistSeriesMapRef.current = watchlistSeriesMap;
   }, [watchlistSeriesMap]);
 
@@ -2877,49 +2964,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
   const projectedMarketNowMs = getProjectedMarketNowMs();
-  const renderedSelectedCandles = useMemo(() => {
-    if (selectedCandles.length === 0 || showcaseMode || simulationFallback) {
-      return selectedCandles;
-    }
-
-    const lastCandle = selectedCandles[selectedCandles.length - 1];
-
-    if (!lastCandle) {
-      return selectedCandles;
-    }
-
-    if (!Number.isFinite(projectedMarketNowMs)) {
-      return selectedCandles;
-    }
-
-    const timeframeMs = getTimeframeMs(selectedTimeframe);
-    const projectedBucketTime = floorToTimeframe(projectedMarketNowMs, selectedTimeframe);
-    const nextBucketTime = lastCandle.time + timeframeMs;
-
-    if (projectedBucketTime < nextBucketTime) {
-      return selectedCandles;
-    }
-
-    const projectedPrice = roundToTick(lastCandle.close, selectedAsset.tickSize);
-
-    return [
-      ...selectedCandles,
-      {
-        time: nextBucketTime,
-        open: projectedPrice,
-        high: projectedPrice,
-        low: projectedPrice,
-        close: projectedPrice
-      }
-    ];
-  }, [
-    selectedAsset.tickSize,
-    selectedCandles,
-    selectedTimeframe,
-    showcaseMode,
-    simulationFallback,
-    projectedMarketNowMs
-  ]);
+  const renderedSelectedCandles = useMemo(() => selectedCandles, [selectedCandles]);
   const canDrawOnChart = renderedSelectedCandles.length > 0;
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
@@ -3491,33 +3536,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     };
 
     const applyLiveTrade = (payload: LiveTradeResponse) => {
-      syncMarketClock(payload.time);
-
-      setSeriesMap((prev) => {
-        const activeSeries = prev[selectedKey];
-
-        if (!activeSeries || activeSeries.length === 0) {
-          return prev;
-        }
-
-        const nextSeries = applyLiveTradeToCandles(
-          activeSeries,
-          payload.price,
-          payload.time,
-          selectedTimeframe
-        );
-
-        if (!nextSeries) {
-          return prev;
-        }
-
-        return {
-          ...prev,
-          [selectedKey]: nextSeries
-        };
-      });
-
-      syncMarketFeedMeta(payload.meta);
+      // Keep the chart aligned to fetched OHLC bars instead of mutating
+      // candle bodies forward with individual real-time trades.
+      void payload;
     };
 
     const flushPendingTrade = () => {
