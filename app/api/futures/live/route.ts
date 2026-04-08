@@ -22,6 +22,11 @@ const proxyHostedLiveStream = async (request: Request, symbol: string) => {
     /\/+$/,
     ""
   );
+
+  if (!configuredBackendBase && !process.env.VERCEL) {
+    return null;
+  }
+
   const backendStreamUrl = configuredBackendBase
     ? new URL(`${configuredBackendBase}/futures/live`)
     : new URL("/api/backend/futures/live", request.url);

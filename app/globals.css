@@ -906,6 +906,60 @@ button {
   gap: 6px;
 }
 
+.chart-drawing-color-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.chart-drawing-color-swatch {
+  width: 100%;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--drawing-swatch-color);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 4px 10px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition:
+    transform 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.chart-drawing-color-swatch:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.chart-drawing-color-swatch.active {
+  border-color: rgba(246, 251, 255, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(9, 13, 19, 0.55),
+    0 0 0 1px rgba(246, 251, 255, 0.22);
+}
+
+.chart-drawing-custom-color {
+  display: grid;
+}
+
+.chart-drawing-custom-color input[type="color"] {
+  width: 100%;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.chart-drawing-custom-color input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.chart-drawing-custom-color input[type="color"]::-webkit-color-swatch {
+  border: 0;
+}
+
 .chart-drawing-toolbar-divider {
   width: 100%;
   height: 1px;
@@ -1487,10 +1541,11 @@ button {
 
 .rail-label {
   font-size: 0.48rem;
-  line-height: 1;
+  line-height: 1.08;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   opacity: 0.72;
 }
 
@@ -2433,6 +2488,445 @@ button {
   text-transform: none;
 }
 
+.market-maker-tab {
+  background:
+    linear-gradient(180deg, rgba(9, 12, 18, 0.98) 0%, rgba(5, 8, 14, 1) 100%);
+}
+
+.market-maker-shell {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.8rem 0.7rem 1rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.market-maker-ladder-card {
+  border: 1px solid rgba(63, 81, 121, 0.38);
+  background:
+    linear-gradient(180deg, rgba(17, 17, 24, 0.98) 0%, rgba(6, 8, 14, 1) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 42px rgba(0, 0, 0, 0.42);
+  padding: 0.78rem 0.62rem 0.62rem;
+}
+
+.market-maker-ladder-head,
+.market-maker-ladder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(88px, 0.82fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.market-maker-ladder-head {
+  padding: 0 0.12rem 0.44rem;
+  border-bottom: 1px solid rgba(83, 95, 124, 0.24);
+  color: rgba(170, 184, 212, 0.58);
+  font-size: 0.5rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.market-maker-ladder-head span:nth-child(2) {
+  text-align: center;
+}
+
+.market-maker-ladder-head span:last-child {
+  text-align: right;
+}
+
+.market-maker-ladder-stack {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.market-maker-ladder-stack.ask {
+  padding: 0.52rem 0 0.44rem;
+}
+
+.market-maker-ladder-stack.bid {
+  padding: 0.52rem 0 0;
+}
+
+.market-maker-ladder-row {
+  min-height: 34px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.market-maker-ladder-row.ask {
+  border-bottom: 1px solid rgba(74, 33, 41, 0.14);
+}
+
+.market-maker-ladder-row.bid {
+  border-bottom: 1px solid rgba(28, 56, 49, 0.14);
+}
+
+.market-maker-ladder-row.edge {
+  border-bottom-color: transparent;
+}
+
+.market-maker-ladder-price {
+  font-size: 0.95rem;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.market-maker-ladder-price.ask {
+  color: rgba(250, 112, 135, 0.94);
+}
+
+.market-maker-ladder-row.ask.inside .market-maker-ladder-price {
+  color: #f4e3a6;
+}
+
+.market-maker-ladder-price.bid {
+  color: rgba(116, 221, 171, 0.94);
+}
+
+.market-maker-depth-cell {
+  position: relative;
+  min-height: 28px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.market-maker-depth-cell.bid {
+  padding-right: 0.3rem;
+}
+
+.market-maker-depth-cell.ask {
+  padding-left: 0.3rem;
+}
+
+.market-maker-depth-fill {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  opacity: 0.9;
+}
+
+.market-maker-depth-fill.bid {
+  right: 4px;
+  background: linear-gradient(90deg, rgba(26, 79, 62, 0.68), rgba(73, 212, 146, 0.88));
+}
+
+.market-maker-depth-fill.ask {
+  left: 4px;
+  background: linear-gradient(90deg, rgba(214, 76, 102, 0.92), rgba(109, 23, 36, 0.68));
+}
+
+.market-maker-depth-value {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 0.44rem;
+  color: rgba(241, 246, 255, 0.96);
+  font-size: 0.82rem;
+}
+
+.market-maker-depth-cell.ask .market-maker-depth-value {
+  justify-content: flex-end;
+}
+
+.market-maker-depth-cell.bid .market-maker-depth-value {
+  justify-content: flex-start;
+}
+
+.market-maker-depth-ghost {
+  min-height: 28px;
+}
+
+.market-maker-mm-badge {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(95, 132, 221, 0.6);
+  background: rgba(32, 53, 110, 0.72);
+  color: #d5e2ff;
+  font-size: 0.46rem;
+  letter-spacing: 0.08em;
+  padding: 0.08rem 0.22rem;
+  text-transform: uppercase;
+}
+
+.market-maker-depth-cell.bid .market-maker-mm-badge {
+  left: 6px;
+  right: auto;
+}
+
+.market-maker-spread-band {
+  margin: 0.14rem 0 0.16rem;
+  border-top: 1px solid rgba(144, 48, 68, 0.46);
+  border-bottom: 1px solid rgba(144, 48, 68, 0.46);
+  background: linear-gradient(90deg, rgba(88, 17, 30, 0.88), rgba(128, 30, 47, 0.78), rgba(88, 17, 30, 0.88));
+  color: #c8a279;
+  text-align: center;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.market-maker-dashboard {
+  border-top: 1px solid rgba(44, 58, 88, 0.3);
+  padding-top: 0.4rem;
+}
+
+.market-maker-dashboard-title {
+  text-align: center;
+  color: #88a6ee;
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  padding: 0.72rem 0 0.86rem;
+}
+
+.market-maker-stats-grid {
+  display: grid;
+  grid-template-columns: 0.88fr 1.35fr 0.88fr;
+  gap: 0.9rem;
+  padding-top: 0.18rem;
+  border-top: 1px solid rgba(46, 59, 88, 0.36);
+}
+
+.market-maker-stat-card {
+  display: grid;
+  gap: 0.38rem;
+  align-content: start;
+  min-height: 112px;
+}
+
+.market-maker-stat-card strong {
+  font-size: 2rem;
+  line-height: 0.92;
+  font-weight: 600;
+}
+
+.market-maker-stat-card small {
+  color: rgba(182, 194, 221, 0.62);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.market-maker-stat-card.exposure {
+  text-align: center;
+}
+
+.market-maker-stat-card.pnl {
+  text-align: right;
+}
+
+.market-maker-stat-card.pnl strong {
+  font-size: 1.72rem;
+}
+
+.market-maker-stat-label {
+  color: rgba(178, 189, 216, 0.5);
+  font-size: 0.53rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.market-maker-exposure-bar {
+  position: relative;
+  min-height: 30px;
+  border: 1px solid rgba(255, 219, 104, 0.16);
+  background: rgba(65, 69, 79, 0.66);
+  overflow: hidden;
+}
+
+.market-maker-exposure-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(185, 161, 52, 0.92), rgba(227, 207, 99, 0.86));
+  box-shadow: 0 0 24px rgba(221, 187, 74, 0.18);
+}
+
+.market-maker-recent-strip {
+  margin-top: 0.9rem;
+  padding-top: 0.82rem;
+  border-top: 1px solid rgba(46, 59, 88, 0.36);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem 1.1rem;
+  color: rgba(164, 177, 205, 0.62);
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.market-maker-recent-item.up {
+  color: rgba(84, 219, 161, 0.86);
+}
+
+.market-maker-recent-item.down {
+  color: rgba(229, 97, 120, 0.82);
+}
+
+.order-flow-tab {
+  background:
+    linear-gradient(180deg, rgba(11, 13, 17, 0.99) 0%, rgba(7, 9, 13, 1) 100%);
+}
+
+.order-flow-shell {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  padding: 0.72rem 0.58rem 0.84rem;
+}
+
+.order-flow-panel {
+  min-height: 0;
+  width: 100%;
+  border: 1px solid rgba(89, 94, 104, 0.28);
+  background:
+    linear-gradient(180deg, rgba(31, 30, 28, 0.98) 0%, rgba(18, 19, 20, 0.99) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.02),
+    0 18px 44px rgba(0, 0, 0, 0.38);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.order-flow-panel-empty {
+  justify-content: flex-start;
+}
+
+.order-flow-title {
+  padding: 0.72rem 0.78rem 0.56rem;
+  color: rgba(241, 243, 236, 0.92);
+  font-size: 0.84rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.order-flow-header,
+.order-flow-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.82fr) minmax(0, 0.46fr);
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.order-flow-header {
+  margin: 0 0.78rem;
+  padding: 0.24rem 0 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(196, 203, 212, 0.16);
+  color: rgba(226, 231, 234, 0.76);
+  font-size: 0.52rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.order-flow-header span:last-child {
+  text-align: right;
+}
+
+.order-flow-header-center {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.34rem;
+}
+
+.order-flow-header-arrow {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 6px solid rgba(232, 238, 245, 0.6);
+  transform: translateY(-1px);
+}
+
+.order-flow-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.18rem 0.42rem 0.56rem 0.78rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(198, 206, 216, 0.34) transparent;
+}
+
+.order-flow-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.order-flow-list::-webkit-scrollbar-thumb {
+  background: rgba(198, 206, 216, 0.26);
+}
+
+.order-flow-row {
+  min-height: 33px;
+  padding: 0.06rem 0.28rem 0.06rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.order-flow-time {
+  color: rgba(237, 240, 242, 0.86);
+  font-size: 0.88rem;
+  letter-spacing: 0.02em;
+}
+
+.order-flow-price,
+.order-flow-size {
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.order-flow-price {
+  text-align: center;
+}
+
+.order-flow-size {
+  text-align: right;
+}
+
+.order-flow-price.up,
+.order-flow-size.up {
+  color: #74f097;
+  text-shadow: 0 0 10px rgba(77, 218, 136, 0.18);
+}
+
+.order-flow-price.down,
+.order-flow-size.down {
+  color: #ff5f67;
+  text-shadow: 0 0 10px rgba(255, 82, 93, 0.16);
+}
+
+.order-flow-price.neutral,
+.order-flow-size.neutral {
+  color: #f0d57d;
+}
+
+.order-flow-empty {
+  margin: 0;
+  padding: 0.72rem 0.78rem 0.9rem;
+  color: rgba(214, 220, 229, 0.68);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .ai-tab {
   justify-content: flex-start;
 }
@@ -2542,6 +3036,47 @@ button {
     border-left: 0;
     border-top: 1px solid var(--line-soft);
     flex: 1 1 auto;
+  }
+
+  .market-maker-shell {
+    padding: 0.72rem 0.62rem 0.84rem;
+    gap: 0.82rem;
+  }
+
+  .market-maker-ladder-head,
+  .market-maker-ladder-row {
+    grid-template-columns: minmax(0, 1.05fr) minmax(72px, 0.72fr) minmax(0, 1.05fr);
+    gap: 0.26rem;
+  }
+
+  .market-maker-ladder-price {
+    font-size: 0.82rem;
+  }
+
+  .market-maker-depth-value {
+    font-size: 0.72rem;
+    padding: 0 0.32rem;
+  }
+
+  .market-maker-stats-grid {
+    grid-template-columns: 1fr;
+    gap: 0.72rem;
+  }
+
+  .market-maker-stat-card,
+  .market-maker-stat-card.pnl,
+  .market-maker-stat-card.exposure {
+    text-align: left;
+    min-height: 0;
+  }
+
+  .market-maker-stat-card strong,
+  .market-maker-stat-card.pnl strong {
+    font-size: 1.5rem;
+  }
+
+  .market-maker-dashboard-title {
+    padding-bottom: 0.76rem;
   }
 
 .chart-stage {

@@ -33,6 +33,8 @@ export type DatabentoLiveTradeEvent = {
   symbol: string;
   price: number;
   size: number;
+  side?: "A" | "B" | "N";
+  sequence?: number;
   time: number;
   meta: DatabentoLiveMeta;
 };

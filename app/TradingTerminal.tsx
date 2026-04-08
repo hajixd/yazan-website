@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import type {
+  CSSProperties,
   DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent
@@ -59,7 +60,14 @@ import {
 } from "../lib/brokerSync";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type PanelTab = "active" | "assets" | "models" | "history" | "actions";
+type PanelTab =
+  | "active"
+  | "assets"
+  | "models"
+  | "history"
+  | "actions"
+  | "marketMaker"
+  | "orderFlow";
 type AccountRole = "Admin" | "User";
 type MobileWorkspaceTab = "trade" | "history";
 
@@ -103,6 +111,20 @@ type ActionItem = {
   details: string;
   time: string;
   timestamp: UTCTimestamp;
+};
+
+type OrderFlowTone = "up" | "down" | "neutral";
+type OrderFlowSide = "A" | "B" | "N";
+
+type OrderFlowRow = {
+  id: string;
+  symbol: string;
+  timeMs: number;
+  price: number;
+  size: number;
+  tone: OrderFlowTone;
+  side: OrderFlowSide;
+  sequence: number;
 };
 
 type NotificationTone = "up" | "down" | "neutral";
@@ -325,6 +347,69 @@ const isOrderBookDepthSchema = (schema?: string | null) => {
   return schema === "mbo" || schema === "mbp-10" || schema === "mbp-1";
 };
 
+const getOrderFlowTone = (
+  side: string | null | undefined,
+  price: number,
+  previousPrice: number | null
+): OrderFlowTone => {
+  if (side === "B") {
+    return "up";
+  }
+
+  if (side === "A") {
+    return "down";
+  }
+
+  if (previousPrice !== null) {
+    if (price > previousPrice) {
+      return "up";
+    }
+
+    if (price < previousPrice) {
+      return "down";
+    }
+  }
+
+  return "neutral";
+};
+
+const buildSimulatedOrderFlowRow = ({
+  symbol,
+  price,
+  previousPrice,
+  tickSize,
+  timeMs
+}: {
+  symbol: string;
+  price: number;
+  previousPrice: number | null;
+  tickSize: number;
+  timeMs: number;
+}): OrderFlowRow => {
+  const seed = hashString(`${symbol}-${timeMs}-${Math.round(price / Math.max(tickSize, 0.000001))}`);
+  const side: OrderFlowSide =
+    price > (previousPrice ?? price)
+      ? "B"
+      : price < (previousPrice ?? price)
+        ? "A"
+        : seed % 3 === 0
+          ? "N"
+          : seed % 2 === 0
+            ? "B"
+            : "A";
+
+  return {
+    id: `${symbol}-sim-${timeMs}-${price}`,
+    symbol,
+    timeMs,
+    price,
+    size: 1 + (seed % 12),
+    tone: getOrderFlowTone(side, price, previousPrice),
+    side,
+    sequence: timeMs
+  };
+};
+
 const isLikelyLocalHostname = (hostname: string) => {
   const normalized = hostname.toLowerCase();
 
@@ -446,24 +531,26 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "assets", label: "Assets" },
   { id: "models", label: "Models" },
   { id: "history", label: "History" },
-  { id: "actions", label: "Action" }
+  { id: "actions", label: "Action" },
+  { id: "marketMaker", label: "Market Maker" },
+  { id: "orderFlow", label: "Order Flow" }
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 1440,
-  "5m": 1000,
-  "15m": 500,
-  "1H": 360,
-  "4H": 320,
-  "1D": 320,
-  "1W": 208
+  "1m": 10_080,
+  "5m": 8_640,
+  "15m": 5_760,
+  "1H": 4_320,
+  "4H": 3_000,
+  "1D": 3_000,
+  "1W": 1_040
 };
 
-const MAX_CHART_CANDLE_COUNT = 5000;
+const MAX_CHART_CANDLE_COUNT = 20_000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
 const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
-const LIVE_STREAM_FLUSH_INTERVAL_MS = 250;
+const LIVE_STREAM_FLUSH_INTERVAL_MS = 80;
 const LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 4_000;
 const HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 12_000;
 const LIVE_STREAM_RECONNECT_GRACE_MS = 8_000;
@@ -477,6 +564,16 @@ const YAZAN_ACCOUNT_MENU_WIDTH = 188;
 const YAZAN_ACCOUNT_MENU_HEIGHT = 118;
 const CHART_DRAWINGS_STORAGE_KEY = "roman-chart-drawings-v1";
 const CHART_DRAWING_COLOR = "#9ec9ff";
+const CHART_DRAWING_COLOR_PALETTE = [
+  "#9ec9ff",
+  "#69f0b3",
+  "#ffd66b",
+  "#ff8aa3",
+  "#d8a3ff",
+  "#f6fbff",
+  "#ff934f",
+  "#59d8ff"
+] as const;
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1m": 4,
@@ -623,6 +720,15 @@ const formatClock = (timestampMs: number): string => {
     hour12: false,
     timeZone: "UTC"
   });
+};
+
+const formatClockMillis = (timestampMs: number): string => {
+  const date = new Date(timestampMs);
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+  const milliseconds = String(date.getUTCMilliseconds()).padStart(3, "0");
+  return `${hours}:${minutes}:${seconds}.${milliseconds}`;
 };
 
 const getTickPrecision = (tickSize: number): number => {
@@ -1925,6 +2031,28 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
     );
   }
 
+  if (tab === "marketMaker") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <path d="M5.5 6.5h13" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M5.5 17.5h13" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M12 6.5v11" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M7 10h3.2M13.8 10H17M7 14h2.2M14.8 14H17" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (tab === "orderFlow") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <path d="M4.8 6.5h14.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M4.8 12h14.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M4.8 17.5h14.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8 5v14M15.4 5v14" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.72" />
+      </svg>
+    );
+  }
+
   return (
     <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
       <path
@@ -1987,6 +2115,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [liveQuoteSnapshot, setLiveQuoteSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [liveQuoteSchema, setLiveQuoteSchema] = useState<string | null>(null);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
+  const [orderFlowRows, setOrderFlowRows] = useState<OrderFlowRow[]>([]);
   const [liveDepthMessage, setLiveDepthMessage] = useState<string | null>(null);
   const [liveDepthSchema, setLiveDepthSchema] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
@@ -1996,6 +2125,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     height: 0
   });
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("cursor");
+  const [activeDrawingColor, setActiveDrawingColor] = useState(CHART_DRAWING_COLOR);
   const [chartDrawingsByKey, setChartDrawingsByKey] = useState<Record<string, ChartDrawing[]>>({});
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
@@ -2032,6 +2162,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const yazanAccountMenuRef = useRef<HTMLDivElement | null>(null);
   const adminCodeInputRef = useRef<HTMLInputElement | null>(null);
+  const seriesMapRef = useRef<Record<string, Candle[]>>({});
   const watchlistSeriesMapRef = useRef<Record<string, Candle[]>>({});
   const watchlistFetchMetaRef = useRef<Record<string, WatchlistFetchMeta>>({});
   const deliveredNotificationIdsRef = useRef<Set<string>>(new Set());
@@ -2402,7 +2533,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           clearMarketClock();
         }
 
-        setSimulationFallback(false);
+        setSimulationFallback(payload.meta?.provider === "Simulation");
         setMarketFeedMeta(payload.meta ?? null);
         setMarketStatus("ready");
         setMarketError(null);
@@ -2436,6 +2567,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     syncMarketClock,
     showcaseMode
   ]);
+
+  useEffect(() => {
+    seriesMapRef.current = seriesMap;
+  }, [seriesMap]);
 
   useEffect(() => {
     watchlistSeriesMapRef.current = watchlistSeriesMap;
@@ -2788,6 +2923,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
   }, [currentChartDrawings, selectedDrawingId]);
+  const activeDrawingColorValue = selectedDrawing?.color ?? activeDrawingColor;
 
   const updateChartDrawings = useCallback(
     (updater: (current: ChartDrawing[]) => ChartDrawing[]) => {
@@ -2807,6 +2943,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       });
     },
     [selectedKey]
+  );
+
+  const applyDrawingColor = useCallback(
+    (nextColor: string) => {
+      setActiveDrawingColor(nextColor);
+
+      if (!selectedDrawingId) {
+        return;
+      }
+
+      updateChartDrawings((current) =>
+        current.map((drawing) =>
+          drawing.id === selectedDrawingId ? { ...drawing, color: nextColor } : drawing
+        )
+      );
+    },
+    [selectedDrawingId, updateChartDrawings]
   );
 
   const deleteSelectedDrawing = useCallback(() => {
@@ -2844,11 +2997,22 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const parsedTime = rawTime ? parseTimeFromCrosshair(rawTime) : null;
       const rawPrice = candleSeries.coordinateToPrice(relativeY);
 
-      if (parsedTime === null || rawPrice === null || !Number.isFinite(rawPrice)) {
+      if (rawPrice === null || !Number.isFinite(rawPrice)) {
         return null;
       }
 
-      let snappedTimeMs = parsedTime * 1000;
+      let snappedTimeMs =
+        parsedTime !== null
+          ? parsedTime * 1000
+          : relativeX <= 0
+            ? (renderedSelectedCandles[0]?.time ?? 0)
+            : relativeX >= rect.width
+              ? (renderedSelectedCandles[renderedSelectedCandles.length - 1]?.time ?? 0)
+              : 0;
+
+      if (!Number.isFinite(snappedTimeMs) || snappedTimeMs <= 0) {
+        return null;
+      }
 
       if (renderedSelectedCandles.length > 0) {
         let nearestTime = renderedSelectedCandles[0].time;
@@ -2890,12 +3054,21 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return null;
       }
 
+      const visibleRange = chart.timeScale().getVisibleLogicalRange();
+      const visibleCandles =
+        visibleRange && renderedSelectedCandles.length > 0
+          ? renderedSelectedCandles.slice(
+              clamp(Math.floor(visibleRange.from), 0, renderedSelectedCandles.length - 1),
+              clamp(Math.ceil(visibleRange.to) + 1, 1, renderedSelectedCandles.length)
+            )
+          : renderedSelectedCandles;
+
       let x = chart.timeScale().timeToCoordinate(toUtcTimestamp(point.time));
       let y = candleSeries.priceToCoordinate(point.price);
 
-      if ((x === null || !Number.isFinite(x)) && renderedSelectedCandles.length > 0) {
-        const firstTime = renderedSelectedCandles[0]?.time ?? point.time;
-        const lastTime = renderedSelectedCandles[renderedSelectedCandles.length - 1]?.time ?? point.time;
+      if ((x === null || !Number.isFinite(x)) && visibleCandles.length > 0) {
+        const firstTime = visibleCandles[0]?.time ?? point.time;
+        const lastTime = visibleCandles[visibleCandles.length - 1]?.time ?? point.time;
         x =
           point.time <= firstTime
             ? (0 as Coordinate)
@@ -2904,9 +3077,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               : null;
       }
 
-      if ((y === null || !Number.isFinite(y)) && renderedSelectedCandles.length > 0) {
-        const minPrice = Math.min(...renderedSelectedCandles.map((candle) => candle.low));
-        const maxPrice = Math.max(...renderedSelectedCandles.map((candle) => candle.high));
+      if ((y === null || !Number.isFinite(y)) && visibleCandles.length > 0) {
+        const minPrice = Math.min(...visibleCandles.map((candle) => candle.low));
+        const maxPrice = Math.max(...visibleCandles.map((candle) => candle.high));
         y =
           point.price >= maxPrice
             ? (0 as Coordinate)
@@ -2998,7 +3171,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           id: createDrawingId(),
           tool: "horizontal",
           points: [point],
-          color: CHART_DRAWING_COLOR,
+          color: activeDrawingColor,
           createdAt: Date.now()
         };
 
@@ -3012,7 +3185,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           id: createDrawingId(),
           tool: "vertical",
           points: [point],
-          color: CHART_DRAWING_COLOR,
+          color: activeDrawingColor,
           createdAt: Date.now()
         };
 
@@ -3035,7 +3208,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         id: createDrawingId(),
         tool: activeDrawingDraft.tool,
         points: [activeDrawingDraft.start, point],
-        color: CHART_DRAWING_COLOR,
+        color: activeDrawingColor,
         createdAt: Date.now()
       };
 
@@ -3045,6 +3218,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     },
     [
       activeDrawingDraft,
+      activeDrawingColor,
       activeDrawingTool,
       canDrawOnChart,
       getDrawingPointFromClientPosition,
@@ -3165,9 +3339,49 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setLiveQuoteSnapshot(null);
     setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
+    setOrderFlowRows([]);
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
   }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (!simulationFallback || showcaseMode || marketStatus !== "ready") {
+      return;
+    }
+
+    let lastSimulationOrderFlowPrice =
+      seriesMapRef.current[selectedKey]?.[seriesMapRef.current[selectedKey].length - 1]?.close ?? null;
+
+    const emitSimulationOrderFlowRow = () => {
+      const latestSeries = seriesMapRef.current[selectedKey];
+      const latestPrice = latestSeries?.[latestSeries.length - 1]?.close ?? selectedAsset.basePrice;
+      const nextRow = buildSimulatedOrderFlowRow({
+        symbol: selectedSymbol,
+        price: latestPrice,
+        previousPrice: lastSimulationOrderFlowPrice,
+        tickSize: selectedAsset.tickSize,
+        timeMs: Date.now()
+      });
+
+      lastSimulationOrderFlowPrice = nextRow.price;
+      setOrderFlowRows((current) => [nextRow, ...current].slice(0, 160));
+    };
+
+    emitSimulationOrderFlowRow();
+    const intervalId = window.setInterval(emitSimulationOrderFlowRow, SIMULATION_TICK_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [
+    marketStatus,
+    selectedAsset.basePrice,
+    selectedAsset.tickSize,
+    selectedKey,
+    selectedSymbol,
+    showcaseMode,
+    simulationFallback
+  ]);
 
   useEffect(() => {
     if (showcaseMode || marketStatus !== "ready" || selectedCandles.length === 0) {
@@ -3251,6 +3465,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     let tradeFlushTimeoutId: number | null = null;
     let pendingTrade: LiveTradeResponse | null = null;
+    let orderFlowFlushTimeoutId: number | null = null;
+    let pendingOrderFlowRows: OrderFlowRow[] = [];
+    let lastOrderFlowPrice: number | null = null;
     let bookFlushTimeoutId: number | null = null;
     let pendingQuoteBook: { snapshot: OrderBookSnapshot; schema: string | null } | null = null;
     let pendingDepthBook: { snapshot: OrderBookSnapshot; schema: string } | null = null;
@@ -3323,6 +3540,51 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       tradeFlushTimeoutId = window.setTimeout(() => {
         flushPendingTrade();
+      }, LIVE_STREAM_FLUSH_INTERVAL_MS);
+    };
+
+    const flushPendingOrderFlow = () => {
+      orderFlowFlushTimeoutId = null;
+
+      if (cancelled || pendingOrderFlowRows.length === 0) {
+        pendingOrderFlowRows = [];
+        return;
+      }
+
+      const nextRows = [...pendingOrderFlowRows].sort((left, right) => {
+        if (left.timeMs !== right.timeMs) {
+          return right.timeMs - left.timeMs;
+        }
+
+        return right.sequence - left.sequence;
+      });
+
+      pendingOrderFlowRows = [];
+      setOrderFlowRows((current) => [...nextRows, ...current].slice(0, 160));
+    };
+
+    const queueOrderFlow = (payload: Extract<DatabentoLiveEvent, { type: "trade" }>) => {
+      const side: OrderFlowSide =
+        payload.side === "A" || payload.side === "B" || payload.side === "N" ? payload.side : "N";
+      const tone = getOrderFlowTone(side, payload.price, lastOrderFlowPrice);
+      lastOrderFlowPrice = payload.price;
+      pendingOrderFlowRows.push({
+        id: `${payload.symbol}-${payload.time}-${payload.sequence ?? pendingOrderFlowRows.length}-${payload.price}`,
+        symbol: payload.symbol,
+        timeMs: payload.time,
+        price: payload.price,
+        size: payload.size,
+        tone,
+        side,
+        sequence: payload.sequence ?? 0
+      });
+
+      if (orderFlowFlushTimeoutId !== null) {
+        return;
+      }
+
+      orderFlowFlushTimeoutId = window.setTimeout(() => {
+        flushPendingOrderFlow();
       }, LIVE_STREAM_FLUSH_INTERVAL_MS);
     };
 
@@ -3485,6 +3747,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setLiveQuoteSnapshot(null);
     setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
+    setOrderFlowRows([]);
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
 
@@ -3514,6 +3777,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       if (payload.type === "trade") {
         markStreamAsLive();
+        queueOrderFlow(payload);
         queueTrade({
           symbol: payload.symbol,
           price: payload.price,
@@ -3612,11 +3876,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         window.clearTimeout(tradeFlushTimeoutId);
       }
 
+      if (orderFlowFlushTimeoutId !== null) {
+        window.clearTimeout(orderFlowFlushTimeoutId);
+      }
+
       if (bookFlushTimeoutId !== null) {
         window.clearTimeout(bookFlushTimeoutId);
       }
 
       pendingTrade = null;
+      pendingOrderFlowRows = [];
       pendingQuoteBook = null;
       pendingDepthBook = null;
       eventSource?.close();
@@ -3872,6 +4141,93 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const visibleOrderBookLevels = useMemo(() => {
     return orderBookSnapshot?.levels.slice(0, 10) ?? [];
   }, [orderBookSnapshot]);
+
+  const marketMakerAskRows = useMemo(() => {
+    return visibleOrderBookLevels
+      .slice(0, 6)
+      .map((level, index, rows) => ({
+        price: level.askPrice,
+        size: level.askSize,
+        fillPct: level.askFillPct,
+        isInside: index === 0,
+        isEdge: index === rows.length - 1
+      }))
+      .reverse();
+  }, [visibleOrderBookLevels]);
+
+  const marketMakerBidRows = useMemo(() => {
+    return visibleOrderBookLevels.slice(0, 6).map((level, index) => ({
+      price: level.bidPrice,
+      size: level.bidSize,
+      fillPct: level.bidFillPct,
+      isInside: index === 0
+    }));
+  }, [visibleOrderBookLevels]);
+
+  const marketMakerInventoryLots = useMemo(() => {
+    if (!quoteSnapshot) {
+      return 0;
+    }
+
+    const totalDepth = Math.max(1, quoteSnapshot.bidTotal + quoteSnapshot.askTotal);
+    const imbalanceLots = ((quoteSnapshot.bidTotal - quoteSnapshot.askTotal) / totalDepth) * 22;
+    return Math.round(clamp(imbalanceLots, -9, 9));
+  }, [quoteSnapshot]);
+
+  const marketMakerDeltaExposurePct = useMemo(() => {
+    if (!quoteSnapshot) {
+      return 35;
+    }
+
+    return clamp(Math.abs(quoteSnapshot.imbalance) * 3.4 + 18, 12, 92);
+  }, [quoteSnapshot]);
+
+  const marketMakerSpreadPnl = useMemo(() => {
+    if (!orderBookSnapshot) {
+      return 0;
+    }
+
+    const depthWeight = clamp((orderBookSnapshot.bidTotal + orderBookSnapshot.askTotal) / 180, 0.12, 1.1);
+    const directionalWeight = 0.55 + Math.abs(orderBookSnapshot.imbalance) / 260;
+
+    return orderBookSnapshot.spread * depthWeight * directionalWeight;
+  }, [orderBookSnapshot]);
+
+  const marketMakerHedgeLabel = useMemo(() => {
+    const roundedExposure = Math.round(marketMakerDeltaExposurePct);
+
+    if (roundedExposure >= 68) {
+      return `${roundedExposure}% - Hedging...`;
+    }
+
+    if (marketMakerInventoryLots === 0) {
+      return `${roundedExposure}% - Balanced`;
+    }
+
+    return `${roundedExposure}% - Passive quoting`;
+  }, [marketMakerDeltaExposurePct, marketMakerInventoryLots]);
+
+  const marketMakerRecentFlow = useMemo(() => {
+    if (visibleOrderBookLevels.length === 0) {
+      return [];
+    }
+
+    const firstAsk = visibleOrderBookLevels[0];
+    const secondAsk = visibleOrderBookLevels[1] ?? firstAsk;
+    const firstBid = visibleOrderBookLevels[0];
+    const maxVisibleSize = Math.max(
+      1,
+      ...visibleOrderBookLevels.slice(0, 4).flatMap((level) => [level.bidSize, level.askSize])
+    );
+    const normalize = (value: number) =>
+      Math.max(1, Math.min(9, Math.round((value / maxVisibleSize) * 4) + 1));
+
+    return [
+      { id: "recent-sell-1", label: "Sold", quantity: normalize(firstAsk.askSize), tone: "down" as const },
+      { id: "recent-sell-2", label: "Sold", quantity: normalize(secondAsk.askSize), tone: "down" as const },
+      { id: "recent-buy-1", label: "Bought", quantity: normalize(firstBid.bidSize), tone: "up" as const }
+    ];
+  }, [visibleOrderBookLevels]);
 
   const watchlistRows = useMemo(() => {
     return orderedAssets.map((asset) => {
@@ -6514,7 +6870,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           id: "draft-drawing",
           tool: activeDrawingDraft.tool,
           points: [activeDrawingDraft.start, activeDrawingDraft.current],
-          color: CHART_DRAWING_COLOR,
+          color: activeDrawingColor,
           createdAt: Date.now()
         } satisfies ChartDrawing
       ]
@@ -6677,7 +7033,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const renderChartDrawing = (drawing: ChartDrawing) => {
     const isDraft = drawing.id === "draft-drawing";
     const isSelected = selectedDrawingId === drawing.id;
-    const stroke = isSelected ? "#f6fbff" : drawing.color;
+    const stroke = drawing.color || CHART_DRAWING_COLOR;
     const opacity = isDraft ? 0.76 : 1;
     const groupProps =
       !isDraft && activeDrawingTool === "cursor"
@@ -7481,6 +7837,33 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   ) : null}
                 </div>
               ))}
+              <div className="chart-drawing-toolbar-divider" aria-hidden="true" />
+              <div className="chart-drawing-toolbar-section">
+                <span className="chart-drawing-toolbar-group-label">Color</span>
+                <div className="chart-drawing-color-grid">
+                  {CHART_DRAWING_COLOR_PALETTE.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className={`chart-drawing-color-swatch ${
+                        activeDrawingColorValue.toLowerCase() === color.toLowerCase() ? "active" : ""
+                      }`}
+                      style={{ "--drawing-swatch-color": color } as CSSProperties}
+                      title={selectedDrawing ? `Set selected drawing color to ${color}` : `Set drawing color to ${color}`}
+                      aria-label={selectedDrawing ? `Set selected drawing color to ${color}` : `Set drawing color to ${color}`}
+                      onClick={() => applyDrawingColor(color)}
+                    />
+                  ))}
+                </div>
+                <label className="chart-drawing-custom-color">
+                  <input
+                    type="color"
+                    value={activeDrawingColorValue}
+                    aria-label={selectedDrawing ? "Selected drawing color" : "Drawing color"}
+                    onChange={(event) => applyDrawingColor(event.target.value)}
+                  />
+                </label>
+              </div>
               <div className="chart-drawing-toolbar-divider" aria-hidden="true" />
               <div className="chart-drawing-toolbar-group">
                 <button
@@ -8875,6 +9258,198 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           ? "No order actions are available for the current replay."
                           : "Action simulation is turned off."}
                       </p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {activePanelTab === "marketMaker" ? (
+                <div className="tab-view market-maker-tab">
+                  <div className="watchlist-head">
+                    <h2>Market Maker</h2>
+                    <p>{selectedAsset.symbol} live ladder and internal quoting dashboard.</p>
+                  </div>
+
+                  {orderBookSnapshot ? (
+                    <div className="market-maker-shell">
+                      <div className="market-maker-ladder-card">
+                        <div className="market-maker-ladder-head">
+                          <span>Bid Size</span>
+                          <span>Price</span>
+                          <span>Ask Size</span>
+                        </div>
+
+                        <div className="market-maker-ladder-stack ask">
+                          {marketMakerAskRows.map((row) => (
+                            <div
+                              key={`${selectedAsset.symbol}-mm-ask-${row.price}`}
+                              className={`market-maker-ladder-row ask${
+                                row.isInside ? " inside" : ""
+                              }${row.isEdge ? " edge" : ""}`}
+                            >
+                              <span className="market-maker-depth-ghost" aria-hidden />
+                              <span className="market-maker-ladder-price ask">
+                                ${formatPriceByTick(row.price, selectedAsset.tickSize)}
+                              </span>
+                              <span className="market-maker-depth-cell ask">
+                                <span
+                                  className="market-maker-depth-fill ask"
+                                  style={{ width: `${row.fillPct}%` }}
+                                />
+                                <span className="market-maker-depth-value">
+                                  {formatDepthSize(row.size)}
+                                </span>
+                                {row.isInside ? <span className="market-maker-mm-badge">MM</span> : null}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="market-maker-spread-band">
+                          <span>Spread: ${formatPriceByTick(orderBookSnapshot.spread, selectedAsset.tickSize)}</span>
+                        </div>
+
+                        <div className="market-maker-ladder-stack bid">
+                          {marketMakerBidRows.map((row) => (
+                            <div
+                              key={`${selectedAsset.symbol}-mm-bid-${row.price}`}
+                              className={`market-maker-ladder-row bid${row.isInside ? " inside" : ""}`}
+                            >
+                              <span className="market-maker-depth-cell bid">
+                                <span
+                                  className="market-maker-depth-fill bid"
+                                  style={{ width: `${row.fillPct}%` }}
+                                />
+                                <span className="market-maker-depth-value">
+                                  {formatDepthSize(row.size)}
+                                </span>
+                                {row.isInside ? <span className="market-maker-mm-badge">MM</span> : null}
+                              </span>
+                              <span className="market-maker-ladder-price bid">
+                                ${formatPriceByTick(row.price, selectedAsset.tickSize)}
+                              </span>
+                              <span className="market-maker-depth-ghost" aria-hidden />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="market-maker-dashboard">
+                        <div className="market-maker-dashboard-title">Market Maker Dashboard</div>
+
+                        <div className="market-maker-stats-grid">
+                          <div className="market-maker-stat-card inventory">
+                            <span className="market-maker-stat-label">Inventory</span>
+                            <strong className={marketMakerInventoryLots >= 0 ? "up" : "down"}>
+                              {marketMakerInventoryLots >= 0 ? "+" : ""}
+                              {marketMakerInventoryLots}
+                            </strong>
+                            <small>Lots</small>
+                          </div>
+
+                          <div className="market-maker-stat-card exposure">
+                            <span className="market-maker-stat-label">Delta Exposure</span>
+                            <div className="market-maker-exposure-bar">
+                              <span
+                                className="market-maker-exposure-fill"
+                                style={{ width: `${marketMakerDeltaExposurePct}%` }}
+                              />
+                            </div>
+                            <small>{marketMakerHedgeLabel}</small>
+                          </div>
+
+                          <div className="market-maker-stat-card pnl">
+                            <span className="market-maker-stat-label">Spread P&amp;L</span>
+                            <strong className="up">
+                              {formatSignedUsd(marketMakerSpreadPnl)}
+                            </strong>
+                            <small>earned</small>
+                          </div>
+                        </div>
+
+                        <div className="market-maker-recent-strip">
+                          <span className="market-maker-recent-label">Recent:</span>
+                          {marketMakerRecentFlow.map((event) => (
+                            <span
+                              key={event.id}
+                              className={`market-maker-recent-item ${event.tone}`}
+                            >
+                              {event.label} {event.quantity}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="ai-placeholder">
+                      <p>
+                        {liveDepthMessage ??
+                          (isTopOfBookSchema(liveDepthSchema)
+                            ? "Waiting for real Databento top-of-book."
+                            : "Waiting for real Databento depth.")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {activePanelTab === "orderFlow" ? (
+                <div className="tab-view order-flow-tab">
+                  {orderFlowRows.length > 0 ? (
+                    <div className="order-flow-shell">
+                      <div className="order-flow-panel">
+                        <div className="order-flow-title">Order Flow</div>
+
+                        <div className="order-flow-header">
+                          <span>Time</span>
+                          <span className="order-flow-header-center">
+                            <span className="order-flow-header-arrow" aria-hidden />
+                            Price
+                            <span className="order-flow-header-arrow" aria-hidden />
+                          </span>
+                          <span>Size</span>
+                        </div>
+
+                        <div className="order-flow-list" role="list">
+                          {orderFlowRows.map((row) => (
+                            <div key={row.id} className="order-flow-row" role="listitem">
+                              <span className="order-flow-time">{formatClockMillis(row.timeMs)}</span>
+                              <span className={`order-flow-price ${row.tone}`}>
+                                {formatPriceByTick(row.price, selectedAsset.tickSize)}
+                              </span>
+                              <span className={`order-flow-size ${row.tone}`}>
+                                {row.tone === "down"
+                                  ? `-${formatDepthSize(row.size)}`
+                                  : row.tone === "up"
+                                    ? `+${formatDepthSize(row.size)}`
+                                    : formatDepthSize(row.size)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="order-flow-shell">
+                      <div className="order-flow-panel order-flow-panel-empty">
+                        <div className="order-flow-title">Order Flow</div>
+                        <div className="order-flow-header">
+                          <span>Time</span>
+                          <span className="order-flow-header-center">
+                            <span className="order-flow-header-arrow" aria-hidden />
+                            Price
+                            <span className="order-flow-header-arrow" aria-hidden />
+                          </span>
+                          <span>Size</span>
+                        </div>
+                        <p className="order-flow-empty">
+                          {simulationFallback || showcaseMode
+                            ? "Order flow is not available while simulation is driving the chart."
+                            : marketError
+                              ? "Waiting for the live Databento trades stream."
+                              : "Waiting for live trade prints."}
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>

@@ -55,10 +55,36 @@ type CandlesCacheEntry = {
   cachedAt: number;
 };
 
+type DatabentoDatasetRangeResponse = {
+  start?: string;
+  end?: string;
+  schema?: Record<
+    string,
+    | {
+        start?: string;
+        end?: string;
+      }
+    | undefined
+  >;
+};
+
+type DatasetRangeWindow = {
+  startMs: number;
+  endMs: number;
+};
+
+type DatasetRangeCacheEntry = {
+  overall: DatasetRangeWindow | null;
+  schema: Record<string, DatasetRangeWindow>;
+  cachedAt: number;
+};
+
 const DATABENTO_HISTORICAL_URL = "https://hist.databento.com/v0/timeseries.get_range";
+const DATABENTO_DATASET_RANGE_URL = "https://hist.databento.com/v0/metadata.get_dataset_range";
 const DATABENTO_DATASET = "GLBX.MDP3";
-const MAX_TARGET_COUNT = 2000;
-const CANDLES_CACHE_LIMIT = 5000;
+const MAX_TARGET_COUNT = 15_000;
+const CANDLES_CACHE_LIMIT = 25_000;
+const DATASET_RANGE_CACHE_TTL_MS = 5 * 60_000;
 const DATABENTO_RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const TIMEFRAME_SET = new Set<Timeframe>(["1m", "5m", "15m", "1H", "4H", "1D", "1W"]);
 
@@ -85,15 +111,35 @@ const timeframeStepMs: Record<"1m" | "1H" | "1D", number> = {
   "1D": 24 * 60 * 60_000
 };
 
+const RAW_FETCH_PADDING_BARS: Record<"1m" | "1H" | "1D", number> = {
+  "1m": 180,
+  "1H": 24,
+  "1D": 8
+};
+
+const MAX_RAW_FETCH_BARS: Record<"1m" | "1H" | "1D", number> = {
+  "1m": 12_000,
+  "1H": 4_000,
+  "1D": 2_500
+};
+
 const globalForDatabentoCandlesCache = globalThis as typeof globalThis & {
   __romanDatabentoCandlesCache?: Map<string, CandlesCacheEntry>;
+  __romanDatabentoDatasetRangeCache?: Map<string, DatasetRangeCacheEntry>;
 };
 
 const databentoCandlesCache =
   globalForDatabentoCandlesCache.__romanDatabentoCandlesCache ?? new Map<string, CandlesCacheEntry>();
+const databentoDatasetRangeCache =
+  globalForDatabentoCandlesCache.__romanDatabentoDatasetRangeCache ??
+  new Map<string, DatasetRangeCacheEntry>();
 
 if (!globalForDatabentoCandlesCache.__romanDatabentoCandlesCache) {
   globalForDatabentoCandlesCache.__romanDatabentoCandlesCache = databentoCandlesCache;
+}
+
+if (!globalForDatabentoCandlesCache.__romanDatabentoDatasetRangeCache) {
+  globalForDatabentoCandlesCache.__romanDatabentoDatasetRangeCache = databentoDatasetRangeCache;
 }
 
 const parsePositiveInt = (value: string | null, fallback: number): number => {
@@ -120,6 +166,15 @@ const parseTimestampMs = (value: string | null): number | null => {
 const normalizeNumber = (value: string | number | undefined): number => {
   const next = typeof value === "number" ? value : Number(value);
   return Number.isFinite(next) ? next : NaN;
+};
+
+const parseIsoTimestamp = (value: string | undefined): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const getWeekBucketUtc = (timestampMs: number): number => {
@@ -315,6 +370,20 @@ const buildDatabentoMeta = (
   };
 };
 
+const parseRangeWindow = (value: { start?: string; end?: string } | undefined): DatasetRangeWindow | null => {
+  const startMs = parseIsoTimestamp(value?.start);
+  const endMs = parseIsoTimestamp(value?.end);
+
+  if (startMs === null || endMs === null || endMs <= startMs) {
+    return null;
+  }
+
+  return {
+    startMs,
+    endMs
+  };
+};
+
 const buildSimulationCandlesPayload = (
   asset: FutureAsset,
   timeframe: Timeframe,
@@ -449,6 +518,44 @@ const fetchDatabentoText = async (
   throw (lastError instanceof Error ? lastError : new Error("Databento request failed."));
 };
 
+const fetchDatabentoDatasetRange = async (
+  authHeaders: { Authorization: string; Accept: string }
+): Promise<DatasetRangeCacheEntry> => {
+  const cached = databentoDatasetRangeCache.get(DATABENTO_DATASET);
+
+  if (cached && Date.now() - cached.cachedAt < DATASET_RANGE_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  const url = new URL(DATABENTO_DATASET_RANGE_URL);
+  url.searchParams.set("dataset", DATABENTO_DATASET);
+
+  const response = await fetch(url, {
+    headers: authHeaders,
+    cache: "no-store"
+  });
+
+  const payload = (await response.json()) as DatabentoDatasetRangeResponse;
+
+  if (!response.ok) {
+    throw new Error("Databento dataset range lookup failed.");
+  }
+
+  const nextEntry: DatasetRangeCacheEntry = {
+    overall: parseRangeWindow(payload),
+    schema: Object.fromEntries(
+      Object.entries(payload.schema ?? {})
+        .map(([schema, value]) => [schema, parseRangeWindow(value)])
+        .filter((entry): entry is [string, DatasetRangeWindow] => entry[1] !== null)
+    ),
+    cachedAt: Date.now()
+  };
+
+  databentoDatasetRangeCache.set(DATABENTO_DATASET, nextEntry);
+
+  return nextEntry;
+};
+
 const fetchDatabentoCandles = async (
   databentoSymbol: string,
   timeframe: Timeframe,
@@ -458,7 +565,8 @@ const fetchDatabentoCandles = async (
 ): Promise<Candle[]> => {
   const source = targetSourceMap[timeframe];
   const stepMs = timeframeStepMs[source.sourceTimeframe];
-  const rawBars = Math.max(120, Math.ceil(targetCount * source.aggregateFactor * 2.4));
+  const rawPaddingBars = RAW_FETCH_PADDING_BARS[source.sourceTimeframe];
+  const maxRawFetchBars = MAX_RAW_FETCH_BARS[source.sourceTimeframe];
   const authHeaders = {
     Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
     Accept: "application/json"
@@ -467,39 +575,71 @@ const fetchDatabentoCandles = async (
     typeof beforeMs === "number" && Number.isFinite(beforeMs)
       ? Math.max(stepMs, beforeMs - 1)
       : Date.now();
-  let endMs = requestedEndMs;
-  let startMs = endMs - rawBars * stepMs;
-  let { response, payload } = await fetchDatabentoText(
-    buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs),
-    authHeaders
-  );
+  const datasetRange = await fetchDatabentoDatasetRange(authHeaders).catch(() => null);
+  const schemaRange = datasetRange?.schema[source.schema] ?? datasetRange?.overall ?? null;
 
-  if (!response.ok) {
-    const availableEndMs = parseAvailableEndMs(payload);
+  let endMs = schemaRange ? Math.min(requestedEndMs, schemaRange.endMs) : requestedEndMs;
 
-    if (availableEndMs !== null && endMs > availableEndMs) {
-      endMs = availableEndMs;
-      startMs = endMs - rawBars * stepMs;
-      ({ response, payload } = await fetchDatabentoText(
-        buildDatabentoUrl(databentoSymbol, source.schema, startMs, endMs),
-        authHeaders
-      ));
+  if (schemaRange && endMs <= schemaRange.startMs) {
+    return [];
+  }
+
+  let cursorEndMs = endMs;
+  let rawCandles: Candle[] = [];
+  let aggregated: Candle[] = [];
+
+  while (cursorEndMs > stepMs && aggregated.length < targetCount) {
+    const remainingCandles = targetCount - aggregated.length;
+    const chunkRawBars = Math.min(
+      maxRawFetchBars,
+      Math.max(240, remainingCandles * source.aggregateFactor + rawPaddingBars)
+    );
+    const chunkStartMs = Math.max(
+      schemaRange?.startMs ?? stepMs,
+      cursorEndMs - chunkRawBars * stepMs
+    );
+
+    if (chunkStartMs >= cursorEndMs) {
+      break;
     }
+
+    let { response, payload } = await fetchDatabentoText(
+      buildDatabentoUrl(databentoSymbol, source.schema, chunkStartMs, cursorEndMs),
+      authHeaders
+    );
+
+    if (!response.ok) {
+      const availableEndMs = parseAvailableEndMs(payload);
+
+      if (availableEndMs !== null && cursorEndMs > availableEndMs) {
+        cursorEndMs = availableEndMs;
+        continue;
+      }
+
+      logDatabentoApiKeyFailure("databento:candles", {
+        symbol: databentoSymbol,
+        status: response.status,
+        message: payload
+      });
+
+      throw new Error(payload.slice(0, 240) || `Databento request failed with ${response.status}`);
+    }
+
+    const nextChunk = parseDatabentoCandles(payload);
+
+    if (nextChunk.length > 0) {
+      rawCandles = mergeCandles(nextChunk, rawCandles);
+      aggregated = aggregateCandles(rawCandles, timeframe).slice(-targetCount);
+    }
+
+    if (chunkStartMs <= (schemaRange?.startMs ?? stepMs)) {
+      break;
+    }
+
+    cursorEndMs = chunkStartMs;
   }
 
-  if (!response.ok) {
-    logDatabentoApiKeyFailure("databento:candles", {
-      symbol: databentoSymbol,
-      status: response.status,
-      message: payload
-    });
-
-    throw new Error(payload.slice(0, 240) || `Databento request failed with ${response.status}`);
-  }
-
-  const rawCandles = parseDatabentoCandles(payload);
-  const aggregated = aggregateCandles(rawCandles, timeframe);
-  return aggregated.slice(-targetCount);
+  return aggregated;
 };
 
 export async function GET(request: Request) {

@@ -23,7 +23,9 @@ STREAM_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 DEPTH_SCHEMAS = ("mbp-10", "mbo", "mbp-1")
-LIVE_REPLAY_WINDOW = timedelta(seconds=90)
+# Keep a tiny replay window so reconnects can bridge brief gaps without making
+# the UI chew through a long backlog before it feels live again.
+LIVE_REPLAY_WINDOW = timedelta(seconds=5)
 MBO_SNAPSHOT_LEVEL_COUNT = 10
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
@@ -568,6 +570,8 @@ def stream_trades_client(
                             getattr(record, "pretty_price", None), getattr(record, "price", None)
                         ),
                         "size": coerce_int(getattr(record, "size", 0)),
+                        "side": enum_code(getattr(record, "side", "")) or "N",
+                        "sequence": coerce_int(getattr(record, "sequence", 0)),
                         "time": ns_to_ms(getattr(record, "ts_event", None)),
                         "meta": build_meta("trades", databento_symbol, resolved_symbol),
                     }
@@ -902,6 +906,8 @@ def stream_bbo_client(
                             "symbol": symbol,
                             "price": last_sale,
                             "size": coerce_int(getattr(record, "size", 0)),
+                            "side": enum_code(getattr(record, "side", "")) or "N",
+                            "sequence": coerce_int(getattr(record, "sequence", 0)),
                             "time": ns_to_ms(getattr(record, "ts_event", None)),
                             "meta": build_meta("bbo-1s", databento_symbol, resolved_symbol),
                         }
