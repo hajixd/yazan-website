@@ -50,10 +50,10 @@ const proxyHostedLiveStream = async (request: Request, symbol: string) => {
         return null;
       }
 
-      return Response.json(
-        {
-          error: "Databento live stream backend is unavailable. Use trade polling fallback."
-        },
+        return Response.json(
+          {
+            error: "Databento live stream backend is unavailable."
+          },
         {
           status: upstream.status,
           headers: {
@@ -166,7 +166,7 @@ export async function GET(request: Request) {
   if (process.env.VERCEL) {
     return Response.json(
       {
-        error: "Databento live stream backend is unavailable. Use trade polling fallback."
+        error: "Databento live stream backend is unavailable."
       },
       {
         status: 503,

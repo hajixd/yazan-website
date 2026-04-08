@@ -373,43 +373,6 @@ const getOrderFlowTone = (
   return "neutral";
 };
 
-const buildSimulatedOrderFlowRow = ({
-  symbol,
-  price,
-  previousPrice,
-  tickSize,
-  timeMs
-}: {
-  symbol: string;
-  price: number;
-  previousPrice: number | null;
-  tickSize: number;
-  timeMs: number;
-}): OrderFlowRow => {
-  const seed = hashString(`${symbol}-${timeMs}-${Math.round(price / Math.max(tickSize, 0.000001))}`);
-  const side: OrderFlowSide =
-    price > (previousPrice ?? price)
-      ? "B"
-      : price < (previousPrice ?? price)
-        ? "A"
-        : seed % 3 === 0
-          ? "N"
-          : seed % 2 === 0
-            ? "B"
-            : "A";
-
-  return {
-    id: `${symbol}-sim-${timeMs}-${price}`,
-    symbol,
-    timeMs,
-    price,
-    size: 1 + (seed % 12),
-    tone: getOrderFlowTone(side, price, previousPrice),
-    side,
-    sequence: timeMs
-  };
-};
-
 const isLikelyLocalHostname = (hostname: string) => {
   const normalized = hostname.toLowerCase();
 
@@ -549,7 +512,6 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
 const MAX_CHART_CANDLE_COUNT = 20_000;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
-const LIVE_PRICE_REFRESH_INTERVAL_MS = 1_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 80;
 const LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 4_000;
 const HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS = 12_000;
@@ -1293,26 +1255,6 @@ const fetchFuturesCandles = async (
   return payload;
 };
 
-const fetchLatestFuturesTrade = async (
-  symbol: string,
-  options: { signal?: AbortSignal } = {}
-): Promise<LiveTradeResponse> => {
-  const params = new URLSearchParams({
-    symbol
-  });
-  const response = await fetch(`/api/futures/last?${params.toString()}`, {
-    cache: "no-store",
-    signal: options.signal
-  });
-  const payload = (await response.json()) as LiveTradeResponse;
-
-  if (!response.ok) {
-    throw new Error(payload.error || "Failed to load the latest futures trade.");
-  }
-
-  return payload;
-};
-
 const createSimulationMarketMeta = (
   symbol: string,
   timeframe: Timeframe,
@@ -1324,33 +1266,6 @@ const createSimulationMarketMeta = (
   databentoSymbol: symbol,
   updatedAt: new Date(timestampMs).toISOString()
 });
-
-const buildSimulationTradePrice = ({
-  currentPrice,
-  symbol,
-  timeframe,
-  tickSize,
-  basePrice,
-  timestampMs
-}: {
-  currentPrice: number;
-  symbol: string;
-  timeframe: Timeframe;
-  tickSize: number;
-  basePrice: number;
-  timestampMs: number;
-}) => {
-  const seed = hashString(`${symbol}-${timeframe}-${Math.floor(timestampMs / 1000)}`);
-  const rand = createSeededRng(seed);
-  const priceRangeMin = basePrice * 0.72;
-  const priceRangeMax = basePrice * 1.34;
-  const microMove = Math.max(tickSize, currentPrice * timeframeVolatility[timeframe] * 0.015);
-  const wave = Math.sin(timestampMs / 19_000 + seed * 0.0001) * microMove * 0.6;
-  const noise = (rand() - 0.5) * microMove * 1.9;
-  const nextPrice = clamp(currentPrice + wave + noise, priceRangeMin, priceRangeMax);
-
-  return roundToTick(nextPrice, tickSize);
-};
 
 const applyLiveTradeToCandles = (
   activeSeries: Candle[],
@@ -2010,7 +1925,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
-  const [simulationFallback, setSimulationFallback] = useState(false);
   const [liveQuoteSnapshot, setLiveQuoteSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [liveQuoteSchema, setLiveQuoteSchema] = useState<string | null>(null);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
@@ -2274,10 +2188,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return referenceNowMs;
     }
 
-    if (simulationFallback) {
-      return Date.now();
-    }
-
     const anchor = marketClockAnchorRef.current;
 
     if (!anchor) {
@@ -2285,7 +2195,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return Date.now() - (anchor.capturedAtMs - anchor.marketTimeMs);
-  }, [referenceNowMs, showcaseMode, simulationFallback]);
+  }, [referenceNowMs, showcaseMode]);
 
   useEffect(() => {
     clearMarketClock();
@@ -2431,7 +2341,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           clearMarketClock();
         }
 
-        setSimulationFallback(false);
         setMarketFeedMeta(payload.meta ?? null);
         setMarketStatus("ready");
         setMarketError(null);
@@ -2444,7 +2353,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         const errorMessage =
           error instanceof Error ? error.message : "Failed to load market candles.";
 
-        setSimulationFallback(false);
         clearMarketClock();
         setMarketStatus("error");
         setMarketError(errorMessage);
@@ -2461,7 +2369,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedKey,
     selectedSymbol,
     selectedTimeframe,
-    simulationFallback,
     syncMarketClock,
     showcaseMode
   ]);
@@ -2703,7 +2610,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       activeControllers.forEach((controller) => controller.abort());
       activeControllers.clear();
     };
-  }, [referenceNowMs, selectedTimeframe, simulationFallback, showcaseMode]);
+  }, [referenceNowMs, selectedTimeframe, showcaseMode]);
 
   useEffect(() => {
     if (showcaseMode) {
@@ -2769,7 +2676,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       cancelled = true;
       controller.abort();
     };
-  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, simulationFallback, showcaseMode]);
+  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, showcaseMode]);
 
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
@@ -3200,106 +3107,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedSymbol]);
 
   useEffect(() => {
-    if (!simulationFallback || showcaseMode || marketStatus !== "ready") {
-      return;
-    }
-
-    let lastSimulationOrderFlowPrice =
-      seriesMapRef.current[selectedKey]?.[seriesMapRef.current[selectedKey].length - 1]?.close ?? null;
-
-    const emitSimulationOrderFlowRow = () => {
-      const latestSeries = seriesMapRef.current[selectedKey];
-      const latestPrice = latestSeries?.[latestSeries.length - 1]?.close ?? selectedAsset.basePrice;
-      const nextRow = buildSimulatedOrderFlowRow({
-        symbol: selectedSymbol,
-        price: latestPrice,
-        previousPrice: lastSimulationOrderFlowPrice,
-        tickSize: selectedAsset.tickSize,
-        timeMs: Date.now()
-      });
-
-      lastSimulationOrderFlowPrice = nextRow.price;
-      setOrderFlowRows((current) => [nextRow, ...current].slice(0, 160));
-    };
-
-    emitSimulationOrderFlowRow();
-    const intervalId = window.setInterval(emitSimulationOrderFlowRow, SIMULATION_TICK_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    marketStatus,
-    selectedAsset.basePrice,
-    selectedAsset.tickSize,
-    selectedKey,
-    selectedSymbol,
-    showcaseMode,
-    simulationFallback
-  ]);
-
-  useEffect(() => {
     if (showcaseMode || marketStatus !== "ready" || selectedCandles.length === 0) {
       return;
     }
 
-    if (simulationFallback) {
-      const runSimulationTick = () => {
-        const tickTimestampMs = Date.now();
-
-        setSeriesMap((prev) => {
-          const activeSeries = prev[selectedKey];
-
-          if (!activeSeries || activeSeries.length === 0) {
-            return prev;
-          }
-
-          const latestSeriesCandle = activeSeries[activeSeries.length - 1];
-          const nextPrice = buildSimulationTradePrice({
-            currentPrice: latestSeriesCandle.close,
-            symbol: selectedSymbol,
-            timeframe: selectedTimeframe,
-            tickSize: selectedAsset.tickSize,
-            basePrice: selectedAsset.basePrice,
-            timestampMs: tickTimestampMs
-          });
-          const nextSeries = applyLiveTradeToCandles(
-            activeSeries,
-            nextPrice,
-            tickTimestampMs,
-            selectedTimeframe
-          );
-
-          if (!nextSeries) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            [selectedKey]: nextSeries
-          };
-        });
-
-        setLiveQuoteSnapshot(null);
-        setLiveQuoteSchema(null);
-        setLiveOrderBookSnapshot(null);
-        setMarketFeedMeta(createSimulationMarketMeta(selectedSymbol, selectedTimeframe, tickTimestampMs));
-      };
-
-      runSimulationTick();
-      const simulationIntervalId = window.setInterval(() => {
-        runSimulationTick();
-      }, SIMULATION_TICK_INTERVAL_MS);
-
-      return () => {
-        window.clearInterval(simulationIntervalId);
-      };
-    }
-
     let cancelled = false;
-    let fallbackRefreshInFlight = false;
-    let fallbackController: AbortController | null = null;
-    let fallbackIntervalId: number | null = null;
     let eventSource: EventSource | null = null;
     let streamOpened = false;
     let streamHasDeliveredData = false;
@@ -3495,17 +3307,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }, LIVE_STREAM_FLUSH_INTERVAL_MS);
     };
 
-    const stopFallbackPolling = () => {
-      if (fallbackIntervalId !== null) {
-        window.clearInterval(fallbackIntervalId);
-        fallbackIntervalId = null;
-      }
-
-      fallbackController?.abort();
-      fallbackController = null;
-      fallbackRefreshInFlight = false;
-    };
-
     const clearStreamBootstrapTimeout = () => {
       if (streamBootstrapTimeoutId !== null) {
         window.clearTimeout(streamBootstrapTimeoutId);
@@ -3520,10 +3321,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
     };
 
-    const disableStreamAndUsePolling = (
-      message?: string,
-      options: { usePolling?: boolean } = {}
-    ) => {
+    const disableLiveStream = (message?: string) => {
       if (streamDisabled || cancelled) {
         return;
       }
@@ -3537,59 +3335,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       if (message) {
         setMarketError(message);
       }
-
-      if (options.usePolling ?? true) {
-        startFallbackPolling();
-      }
-    };
-
-    const refreshLatestTrade = async () => {
-      if (cancelled || fallbackRefreshInFlight) {
-        return;
-      }
-
-      fallbackRefreshInFlight = true;
-      const controller = new AbortController();
-      fallbackController = controller;
-
-      try {
-        const payload = await fetchLatestFuturesTrade(selectedSymbol, {
-          signal: controller.signal
-        });
-
-        if (cancelled || controller.signal.aborted) {
-          return;
-        }
-
-        applyLiveTrade(payload);
-        setMarketError(null);
-      } catch {
-        // Keep the last known candle if a fallback patch misses.
-      } finally {
-        if (fallbackController === controller) {
-          fallbackController = null;
-        }
-
-        fallbackRefreshInFlight = false;
-      }
-    };
-
-    const startFallbackPolling = () => {
-      if (cancelled || fallbackIntervalId !== null) {
-        return;
-      }
-
-      void refreshLatestTrade();
-      fallbackIntervalId = window.setInterval(() => {
-        void refreshLatestTrade();
-      }, LIVE_PRICE_REFRESH_INTERVAL_MS);
     };
 
     const markStreamAsLive = () => {
       streamHasDeliveredData = true;
       clearStreamBootstrapTimeout();
       clearStreamReconnectTimeout();
-      stopFallbackPolling();
       setMarketError(null);
     };
 
@@ -3600,7 +3351,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           return;
         }
 
-        disableStreamAndUsePolling("Live stream unavailable. Using Databento trade polling.");
+        disableLiveStream("Live stream unavailable.");
       }, usesHostedLiveBackend ? HOSTED_LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS : LIVE_STREAM_BOOTSTRAP_TIMEOUT_MS);
     };
 
@@ -3690,7 +3441,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       if (!payload.retrying) {
         terminalStreamFailure = true;
-        disableStreamAndUsePolling(payload.message, { usePolling: false });
+        disableLiveStream(payload.message);
       }
     };
 
@@ -3711,19 +3462,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               return;
             }
 
-            disableStreamAndUsePolling("Live stream unavailable. Using Databento trade polling.");
+            disableLiveStream("Live stream unavailable.");
           }, LIVE_STREAM_RECONNECT_GRACE_MS);
         }
 
         return;
       }
 
-      disableStreamAndUsePolling(
+      disableLiveStream(
         terminalStreamFailure
-          ? "Live stream stopped. Using Databento trade polling."
+          ? "Live stream stopped."
           : streamOpened
-            ? "Live stream disconnected. Using Databento trade polling."
-            : "Live stream unavailable. Using Databento trade polling."
+            ? "Live stream disconnected."
+            : "Live stream unavailable."
       );
     };
 
@@ -3749,7 +3500,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       pendingQuoteBook = null;
       pendingDepthBook = null;
       eventSource?.close();
-      stopFallbackPolling();
     };
   }, [
     marketStatus,
@@ -3760,7 +3510,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     selectedSymbol,
     selectedTimeframe,
     showcaseMode,
-    simulationFallback,
     syncMarketClock
   ]);
 
@@ -3826,82 +3575,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : null;
 
-  const projectedOrderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
-    const quoteMidPrice =
-      liveQuoteSnapshot && liveQuoteSnapshot.bestBid > 0 && liveQuoteSnapshot.bestAsk > 0
-        ? (liveQuoteSnapshot.bestBid + liveQuoteSnapshot.bestAsk) / 2
-        : null;
-    const referencePrice = quoteMidPrice ?? latestCandle?.close ?? selectedAsset.basePrice;
-
-    if (!Number.isFinite(referencePrice) || referencePrice <= 0) {
-      return null;
-    }
-
-    const tickSize = selectedAsset.tickSize;
-    const midPrice = roundToTick(referencePrice, tickSize);
-    const seed = hashString(
-      `${selectedAsset.symbol}-${selectedTimeframe}-${latestCandle?.time ?? referenceNowMs}-${midPrice}`
-    );
-    const rand = createSeededRng(seed);
-    const levelCount = 10;
-    const spreadTicks = Math.max(
-      1,
-      quoteChange !== null && Math.abs(quoteChange) > 0.3 ? 2 : 1
-    );
-    const bestBid = roundToTick(midPrice - spreadTicks * tickSize, tickSize);
-    const bestAsk = roundToTick(midPrice + spreadTicks * tickSize, tickSize);
-    const sizeBaseline = Math.max(
-      18,
-      Math.round((Math.log10(Math.max(referencePrice, 1)) + 1) * 34)
-    );
-    const rawLevels = Array.from({ length: levelCount }, (_, index) => {
-      const distanceWeight = 1 - index / (levelCount * 1.3);
-      const bidSize = Math.max(
-        1,
-        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
-      );
-      const askSize = Math.max(
-        1,
-        Math.round(sizeBaseline * (0.88 + rand() * 1.75) * (0.82 + distanceWeight))
-      );
-
-      return {
-        bidPrice: roundToTick(bestBid - index * tickSize, tickSize),
-        askPrice: roundToTick(bestAsk + index * tickSize, tickSize),
-        bidSize,
-        askSize
-      };
-    });
-    const maxBidSize = Math.max(...rawLevels.map((level) => level.bidSize), 1);
-    const maxAskSize = Math.max(...rawLevels.map((level) => level.askSize), 1);
-    const bidTotal = rawLevels.reduce((sum, level) => sum + level.bidSize, 0);
-    const askTotal = rawLevels.reduce((sum, level) => sum + level.askSize, 0);
-
-    return {
-      levels: rawLevels.map((level) => ({
-        ...level,
-        bidFillPct: (level.bidSize / maxBidSize) * 100,
-        askFillPct: (level.askSize / maxAskSize) * 100
-      })),
-      bestBid,
-      bestAsk,
-      spread: Math.max(tickSize, bestAsk - bestBid),
-      bidTotal,
-      askTotal,
-      imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
-    };
-  }, [
-    latestCandle?.close,
-    latestCandle?.time,
-    liveQuoteSnapshot,
-    quoteChange,
-    referenceNowMs,
-    selectedAsset.basePrice,
-    selectedAsset.symbol,
-    selectedAsset.tickSize,
-    selectedTimeframe
-  ]);
-
   const quoteSnapshot = useMemo<OrderBookSnapshot | null>(() => {
     if (liveQuoteSnapshot) {
       return liveQuoteSnapshot;
@@ -3919,11 +3592,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return liveOrderBookSnapshot;
     }
 
-    return projectedOrderBookSnapshot;
-  }, [liveOrderBookSnapshot, projectedOrderBookSnapshot]);
+    return null;
+  }, [liveOrderBookSnapshot]);
 
   const quoteOverlaySourceLabel = useMemo(() => {
-    if (showcaseMode || simulationFallback) {
+    if (showcaseMode) {
       return "Simulation";
     }
 
@@ -3947,12 +3620,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     liveQuoteSchema,
     liveQuoteSnapshot,
     quoteSnapshot,
-    showcaseMode,
-    simulationFallback
+    showcaseMode
   ]);
 
   const orderBookSourceLabel = useMemo(() => {
-    if (showcaseMode || simulationFallback) {
+    if (showcaseMode) {
       return "Simulation";
     }
 
@@ -3960,8 +3632,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return isTopOfBookSchema(liveDepthSchema) ? "Live top of book" : "Live depth";
     }
 
-    if (projectedOrderBookSnapshot) {
-      return showcaseMode || simulationFallback ? "Simulation" : "Projected";
+    if (liveQuoteSnapshot) {
+      return "Top of book only";
     }
 
     if (liveDepthMessage || marketError) {
@@ -3972,11 +3644,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [
     liveDepthMessage,
     liveDepthSchema,
+    liveQuoteSnapshot,
     liveOrderBookSnapshot,
     marketError,
-    projectedOrderBookSnapshot,
-    showcaseMode,
-    simulationFallback
+    showcaseMode
   ]);
 
   const visibleOrderBookLevels = useMemo(() => {
@@ -5774,16 +5445,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const feedStatusLabel =
     marketStatus === "loading"
       ? "Loading Databento"
-      : simulationFallback
-        ? `Simulation - ${selectedTimeframe}`
-        : marketStatus === "error"
-          ? "Databento unavailable"
-          : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
-  const marketStatusDetails = marketError
-    ? simulationFallback
-      ? `Simulation fallback: ${marketError}`
-      : marketError
+      : marketStatus === "error"
+        ? "Databento unavailable"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
+  const marketStatusDetails = marketError
+    ? marketError
+    : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
   const currentAccountLabel = activeAccountRole ?? (isMobileWorkspace ? "User" : "Guest");
   const isAdmin = activeAccountRole === "Admin";
   const canManageConnections = activeAccountRole !== null;
