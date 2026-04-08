@@ -2116,6 +2116,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [liveQuoteSchema, setLiveQuoteSchema] = useState<string | null>(null);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [orderFlowRows, setOrderFlowRows] = useState<OrderFlowRow[]>([]);
+  const [quoteOrderBookExpanded, setQuoteOrderBookExpanded] = useState(false);
   const [liveDepthMessage, setLiveDepthMessage] = useState<string | null>(null);
   const [liveDepthSchema, setLiveDepthSchema] = useState<string | null>(null);
   const [chartReadyVersion, setChartReadyVersion] = useState(0);
@@ -7915,19 +7916,24 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </svg>
             <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
             <div className="chart-overlay-stack">
-              <div className="quote-overlay-card">
+              <button
+                type="button"
+                className={`quote-overlay-card quote-overlay-toggle${
+                  quoteOrderBookExpanded ? " expanded" : ""
+                }`}
+                aria-expanded={quoteOrderBookExpanded}
+                aria-controls="chart-order-book-overlay"
+                aria-label={quoteOrderBookExpanded ? "Hide order book" : "Show order book"}
+                onClick={() => {
+                  setQuoteOrderBookExpanded((current) => !current);
+                }}
+              >
                 <div className="quote-overlay-head">
                   <strong>Live Quote</strong>
                   <span>{quoteOverlaySourceLabel}</span>
                 </div>
                 {quoteSnapshot ? (
                   <div className="quote-overlay-grid">
-                    <div className="quote-overlay-item">
-                      <span>Bid</span>
-                      <strong className="up">
-                        {formatPriceByTick(quoteSnapshot.bestBid, selectedAsset.tickSize)}
-                      </strong>
-                    </div>
                     <div className="quote-overlay-item">
                       <span>Ask</span>
                       <strong className="down">
@@ -7941,8 +7947,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </strong>
                     </div>
                     <div className="quote-overlay-item">
-                      <span>Bid Depth</span>
-                      <strong className="up">{formatDepthSize(quoteSnapshot.bidTotal)}</strong>
+                      <span>Bid</span>
+                      <strong className="up">
+                        {formatPriceByTick(quoteSnapshot.bestBid, selectedAsset.tickSize)}
+                      </strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Ask Depth</span>
@@ -7955,6 +7963,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         {quoteSnapshot.imbalance.toFixed(1)}%
                       </strong>
                     </div>
+                    <div className="quote-overlay-item">
+                      <span>Bid Depth</span>
+                      <strong className="up">{formatDepthSize(quoteSnapshot.bidTotal)}</strong>
+                    </div>
                   </div>
                 ) : (
                   <p className="quote-overlay-empty">
@@ -7964,63 +7976,65 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         : "Waiting for real Databento depth.")}
                   </p>
                 )}
-              </div>
-              <div className="order-book-card">
-                <div className="order-book-head">
-                  <strong>Order Book</strong>
-                  <span>{orderBookSourceLabel}</span>
+              </button>
+              {quoteOrderBookExpanded ? (
+                <div id="chart-order-book-overlay" className="order-book-card">
+                  <div className="order-book-head">
+                    <strong>Order Book</strong>
+                    <span>{orderBookSourceLabel}</span>
+                  </div>
+                  {orderBookSnapshot ? (
+                    <>
+                      <div className="order-book-labels">
+                        <span>Bid Size</span>
+                        <span>Bid</span>
+                        <span>Ask</span>
+                        <span>Ask Size</span>
+                      </div>
+                      <div className="order-book-rows">
+                        {visibleOrderBookLevels.map((level) => (
+                          <div
+                            key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`}
+                            className="order-book-row"
+                          >
+                            <span className="order-book-depth-cell bid">
+                              <span
+                                className="order-book-depth-fill bid"
+                                style={{ width: `${level.bidFillPct}%` }}
+                              />
+                              <span className="order-book-depth-value">
+                                {formatDepthSize(level.bidSize)}
+                              </span>
+                            </span>
+                            <span className="order-book-price bid">
+                              {formatPriceByTick(level.bidPrice, selectedAsset.tickSize)}
+                            </span>
+                            <span className="order-book-price ask">
+                              {formatPriceByTick(level.askPrice, selectedAsset.tickSize)}
+                            </span>
+                            <span className="order-book-depth-cell ask">
+                              <span
+                                className="order-book-depth-fill ask"
+                                style={{ width: `${level.askFillPct}%` }}
+                              />
+                              <span className="order-book-depth-value">
+                                {formatDepthSize(level.askSize)}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="order-book-empty">
+                      {liveDepthMessage ??
+                        (isTopOfBookSchema(liveDepthSchema)
+                          ? "Waiting for real Databento top-of-book."
+                          : "Waiting for real Databento depth.")}
+                    </p>
+                  )}
                 </div>
-                {orderBookSnapshot ? (
-                  <>
-                    <div className="order-book-labels">
-                      <span>Bid Size</span>
-                      <span>Bid</span>
-                      <span>Ask</span>
-                      <span>Ask Size</span>
-                    </div>
-                    <div className="order-book-rows">
-                      {visibleOrderBookLevels.map((level) => (
-                        <div
-                          key={`${selectedAsset.symbol}-${level.bidPrice}-${level.askPrice}`}
-                          className="order-book-row"
-                        >
-                          <span className="order-book-depth-cell bid">
-                            <span
-                              className="order-book-depth-fill bid"
-                              style={{ width: `${level.bidFillPct}%` }}
-                            />
-                            <span className="order-book-depth-value">
-                              {formatDepthSize(level.bidSize)}
-                            </span>
-                          </span>
-                          <span className="order-book-price bid">
-                            {formatPriceByTick(level.bidPrice, selectedAsset.tickSize)}
-                          </span>
-                          <span className="order-book-price ask">
-                            {formatPriceByTick(level.askPrice, selectedAsset.tickSize)}
-                          </span>
-                          <span className="order-book-depth-cell ask">
-                            <span
-                              className="order-book-depth-fill ask"
-                              style={{ width: `${level.askFillPct}%` }}
-                            />
-                            <span className="order-book-depth-value">
-                              {formatDepthSize(level.askSize)}
-                            </span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <p className="order-book-empty">
-                    {liveDepthMessage ??
-                      (isTopOfBookSchema(liveDepthSchema)
-                        ? "Waiting for real Databento top-of-book."
-                        : "Waiting for real Databento depth.")}
-                  </p>
-                )}
-              </div>
+              ) : null}
             </div>
             {renderedSelectedCandles.length === 0 ? (
               <div

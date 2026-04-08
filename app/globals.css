@@ -1180,6 +1180,34 @@ button {
   padding: 0.3rem 0.34rem 0.32rem;
 }
 
+.quote-overlay-toggle {
+  width: 100%;
+  display: block;
+  appearance: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.quote-overlay-toggle:hover,
+.quote-overlay-toggle.expanded {
+  border-color: rgba(109, 157, 255, 0.34);
+  background: rgba(24, 36, 50, 0.94);
+}
+
+.quote-overlay-toggle:focus-visible {
+  outline: none;
+  border-color: rgba(129, 176, 255, 0.56);
+  box-shadow:
+    0 0 0 1px rgba(129, 176, 255, 0.32),
+    0 12px 26px rgba(0, 0, 0, 0.35);
+}
+
 .quote-overlay-head {
   display: flex;
   align-items: center;
@@ -2577,9 +2605,10 @@ button {
 }
 
 .market-maker-ladder-price {
-  font-size: 0.95rem;
+  font-size: 0.84rem;
   text-align: center;
   letter-spacing: 0.02em;
+  font-weight: 600;
 }
 
 .market-maker-ladder-price.ask {
@@ -2635,7 +2664,8 @@ button {
   height: 100%;
   padding: 0 0.44rem;
   color: rgba(241, 246, 255, 0.96);
-  font-size: 0.82rem;
+  font-size: 0.74rem;
+  font-weight: 600;
 }
 
 .market-maker-depth-cell.ask .market-maker-depth-value {
@@ -2677,7 +2707,7 @@ button {
   color: #c8a279;
   text-align: center;
   padding: 0.5rem 0.6rem;
-  font-size: 0.58rem;
+  font-size: 0.52rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
@@ -2714,14 +2744,14 @@ button {
 }
 
 .market-maker-stat-card strong {
-  font-size: 2rem;
+  font-size: 1.28rem;
   line-height: 0.92;
   font-weight: 600;
 }
 
 .market-maker-stat-card small {
   color: rgba(182, 194, 221, 0.62);
-  font-size: 0.68rem;
+  font-size: 0.6rem;
   letter-spacing: 0.04em;
 }
 
@@ -2734,7 +2764,7 @@ button {
 }
 
 .market-maker-stat-card.pnl strong {
-  font-size: 1.72rem;
+  font-size: 1.18rem;
 }
 
 .market-maker-stat-label {
@@ -3056,11 +3086,11 @@ button {
   }
 
   .market-maker-ladder-price {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
   }
 
   .market-maker-depth-value {
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     padding: 0 0.32rem;
   }
 
@@ -3078,7 +3108,7 @@ button {
 
   .market-maker-stat-card strong,
   .market-maker-stat-card.pnl strong {
-    font-size: 1.5rem;
+    font-size: 1.08rem;
   }
 
   .market-maker-dashboard-title {
