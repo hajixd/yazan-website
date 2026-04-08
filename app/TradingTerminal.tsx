@@ -643,6 +643,107 @@ const formatDepthSize = (value: number): string => {
   });
 };
 
+const expandOrderBookSnapshot = (
+  snapshot: OrderBookSnapshot,
+  tickSize: number,
+  seedKey: string,
+  levelCount = 10
+): OrderBookSnapshot => {
+  const baseLevels = snapshot.levels
+    .slice(0, levelCount)
+    .filter(
+      (level) =>
+        level.bidPrice > 0 ||
+        level.askPrice > 0 ||
+        level.bidSize > 0 ||
+        level.askSize > 0
+    )
+    .map((level) => ({
+      bidPrice: level.bidPrice,
+      askPrice: level.askPrice,
+      bidSize: level.bidSize,
+      askSize: level.askSize,
+      bidFillPct: 0,
+      askFillPct: 0
+    }));
+
+  if (baseLevels.length === 0) {
+    return snapshot;
+  }
+
+  const normalizedTick = Number.isFinite(tickSize) && tickSize > 0 ? tickSize : 0.25;
+
+  if (baseLevels.length < levelCount) {
+    const rand = createSeededRng(hashString(seedKey));
+    const topBidPrice = snapshot.bestBid > 0 ? snapshot.bestBid : baseLevels[0]?.bidPrice ?? 0;
+    const topAskPrice = snapshot.bestAsk > 0 ? snapshot.bestAsk : baseLevels[0]?.askPrice ?? 0;
+    const topBidSize = Math.max(1, baseLevels[0]?.bidSize ?? 1);
+    const topAskSize = Math.max(1, baseLevels[0]?.askSize ?? 1);
+
+    for (let index = baseLevels.length; index < levelCount; index += 1) {
+      const previous = baseLevels[index - 1] ?? baseLevels[0];
+      const distanceWeight = Math.max(0.22, 1 - index / (levelCount * 1.08));
+      const bidPrice = roundToTick(
+        (previous?.bidPrice > 0 ? previous.bidPrice : topBidPrice) - normalizedTick,
+        normalizedTick
+      );
+      const askPrice = roundToTick(
+        (previous?.askPrice > 0 ? previous.askPrice : topAskPrice) + normalizedTick,
+        normalizedTick
+      );
+      const bidSize = Math.max(
+        1,
+        Math.round(topBidSize * distanceWeight * (0.74 + rand() * 0.5))
+      );
+      const askSize = Math.max(
+        1,
+        Math.round(topAskSize * distanceWeight * (0.74 + rand() * 0.5))
+      );
+
+      baseLevels.push({
+        bidPrice,
+        askPrice,
+        bidSize,
+        askSize,
+        bidFillPct: 0,
+        askFillPct: 0
+      });
+    }
+  }
+
+  const maxBidSize = Math.max(...baseLevels.map((level) => level.bidSize), 1);
+  const maxAskSize = Math.max(...baseLevels.map((level) => level.askSize), 1);
+  const bidTotal = baseLevels.reduce((sum, level) => sum + level.bidSize, 0);
+  const askTotal = baseLevels.reduce((sum, level) => sum + level.askSize, 0);
+  const bestBid =
+    snapshot.bestBid > 0 ? snapshot.bestBid : Math.max(...baseLevels.map((level) => level.bidPrice), 0);
+  const bestAsk =
+    snapshot.bestAsk > 0
+      ? snapshot.bestAsk
+      : baseLevels.reduce((lowest, level) => {
+          if (level.askPrice <= 0) {
+            return lowest;
+          }
+
+          return lowest === 0 ? level.askPrice : Math.min(lowest, level.askPrice);
+        }, 0);
+
+  return {
+    levels: baseLevels.slice(0, levelCount).map((level) => ({
+      ...level,
+      bidFillPct: (level.bidSize / maxBidSize) * 100,
+      askFillPct: (level.askSize / maxAskSize) * 100
+    })),
+    bestBid,
+    bestAsk,
+    spread:
+      bestBid > 0 && bestAsk > 0 ? Math.max(normalizedTick, roundToTick(bestAsk - bestBid, normalizedTick)) : 0,
+    bidTotal,
+    askTotal,
+    imbalance: bidTotal + askTotal > 0 ? ((bidTotal - askTotal) / (bidTotal + askTotal)) * 100 : 0
+  };
+};
+
 const createDrawingId = (): string => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -3381,18 +3482,19 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       : null;
 
   const simulatedOrderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
-    if (!showcaseMode && !simulationFallback) {
+    const referencePrice = latestCandle?.close ?? selectedAsset.basePrice;
+
+    if (!Number.isFinite(referencePrice) || referencePrice <= 0) {
       return null;
     }
 
-    const referencePrice = latestCandle?.close ?? selectedAsset.basePrice;
     const tickSize = selectedAsset.tickSize;
     const midPrice = roundToTick(referencePrice, tickSize);
     const seed = hashString(
       `${selectedAsset.symbol}-${selectedTimeframe}-${latestCandle?.time ?? referenceNowMs}-${midPrice}`
     );
     const rand = createSeededRng(seed);
-    const levelCount = 6;
+    const levelCount = 10;
     const spreadTicks = Math.max(
       1,
       quoteChange !== null && Math.abs(quoteChange) > 0.3 ? 2 : 1
@@ -3466,11 +3568,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const orderBookSnapshot = useMemo<OrderBookSnapshot | null>(() => {
     if (liveOrderBookSnapshot) {
+      if (
+        isTopOfBookSchema(liveDepthSchema) ||
+        liveOrderBookSnapshot.levels.length < 10
+      ) {
+        return expandOrderBookSnapshot(
+          liveOrderBookSnapshot,
+          selectedAsset.tickSize,
+          `${selectedAsset.symbol}-${selectedTimeframe}-${liveDepthSchema ?? "top"}-${liveOrderBookSnapshot.bestBid}-${liveOrderBookSnapshot.bestAsk}-${liveOrderBookSnapshot.bidTotal}-${liveOrderBookSnapshot.askTotal}`
+        );
+      }
+
       return liveOrderBookSnapshot;
     }
 
-    return simulatedOrderBookSnapshot;
-  }, [liveOrderBookSnapshot, simulatedOrderBookSnapshot]);
+    if (simulatedOrderBookSnapshot) {
+      return expandOrderBookSnapshot(
+        simulatedOrderBookSnapshot,
+        selectedAsset.tickSize,
+        `${selectedAsset.symbol}-${selectedTimeframe}-simulation-${simulatedOrderBookSnapshot.bestBid}-${simulatedOrderBookSnapshot.bestAsk}`
+      );
+    }
+
+    return null;
+  }, [liveDepthSchema, liveOrderBookSnapshot, selectedAsset.symbol, selectedAsset.tickSize, selectedTimeframe, simulatedOrderBookSnapshot]);
 
   const quoteOverlaySourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
@@ -3478,7 +3599,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (quoteSnapshot) {
-      return isTopOfBookSchema(liveQuoteSchema) ? "Live top of book" : "Live depth";
+      if (liveQuoteSnapshot || liveOrderBookSnapshot) {
+        return isTopOfBookSchema(liveQuoteSchema) ? "Live top of book" : "Live depth";
+      }
+
+      return "Projected";
     }
 
     if (liveDepthMessage) {
@@ -3488,7 +3613,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return "Waiting for depth";
-  }, [liveDepthMessage, liveDepthSchema, liveQuoteSchema, quoteSnapshot, showcaseMode, simulationFallback]);
+  }, [
+    liveDepthMessage,
+    liveDepthSchema,
+    liveOrderBookSnapshot,
+    liveQuoteSchema,
+    liveQuoteSnapshot,
+    quoteSnapshot,
+    showcaseMode,
+    simulationFallback
+  ]);
 
   const orderBookSourceLabel = useMemo(() => {
     if (showcaseMode || simulationFallback) {
@@ -3496,9 +3630,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     if (liveOrderBookSnapshot) {
-      return isTopOfBookSchema(liveDepthSchema)
-        ? "Top of book"
+      return isTopOfBookSchema(liveDepthSchema) || liveOrderBookSnapshot.levels.length < 10
+        ? "Top of book +"
         : "Live depth";
+    }
+
+    if (simulatedOrderBookSnapshot) {
+      return simulationFallback || showcaseMode ? "Simulation" : "Projected";
     }
 
     if (liveDepthMessage) {
@@ -3506,7 +3644,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return "Waiting";
-  }, [liveDepthMessage, liveDepthSchema, liveOrderBookSnapshot, showcaseMode, simulationFallback]);
+  }, [
+    liveDepthMessage,
+    liveDepthSchema,
+    liveOrderBookSnapshot,
+    showcaseMode,
+    simulatedOrderBookSnapshot,
+    simulationFallback
+  ]);
 
   const visibleOrderBookLevels = useMemo(() => {
     return orderBookSnapshot?.levels.slice(0, 10) ?? [];
