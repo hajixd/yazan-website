@@ -365,31 +365,7 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
   "1W": 62
 };
 
-const modelProfiles: ModelProfile[] = [
-  {
-    id: "yazan",
-    name: "Yazan",
-    kind: "Person",
-    accountNumber: createPseudoAccountNumber("yazan"),
-    riskMin: 0.0018,
-    riskMax: 0.0048,
-    rrMin: 1.35,
-    rrMax: 2.6,
-    longBias: 0.57,
-    winRate: 0.61
-  },
-  {
-    id: "ict",
-    name: "ICT",
-    kind: "Model",
-    riskMin: 0.0015,
-    riskMax: 0.004,
-    rrMin: 1.6,
-    rrMax: 3.1,
-    longBias: 0.51,
-    winRate: 0.55
-  }
-];
+const modelProfiles: ModelProfile[] = [];
 
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "active", label: "Active" },
@@ -1562,7 +1538,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [assetOrder, setAssetOrder] = useState<string[]>(defaultAssetOrder);
   const [draggedAssetSymbol, setDraggedAssetSymbol] = useState<string | null>(null);
   const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
-  const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(modelProfiles[0]?.id ?? null);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
@@ -1784,12 +1760,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     window.localStorage.setItem(ASSET_ORDER_STORAGE_KEY, JSON.stringify(normalizeAssetOrder(assetOrder)));
   }, [assetOrder]);
 
+  useEffect(() => {
+    if (selectedModelId && modelProfiles.some((model) => model.id === selectedModelId)) {
+      return;
+    }
+
+    const nextModelId = modelProfiles[0]?.id ?? null;
+
+    if (selectedModelId !== nextModelId) {
+      setSelectedModelId(nextModelId);
+    }
+  }, [selectedModelId]);
+
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
   const selectedModel = useMemo(() => {
-    return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0];
+    return modelProfiles.find((model) => model.id === selectedModelId) ?? null;
   }, [selectedModelId]);
+  const hasWorkspaceProfiles = modelProfiles.length > 0;
+  const hasYazanProfile = modelProfiles.some((model) => model.id === "yazan");
 
   const syncMarketClock = useCallback((marketTimeMs: number) => {
     if (!Number.isFinite(marketTimeMs) || marketTimeMs <= 0) {
@@ -3356,6 +3346,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const historyRows = useMemo(() => {
     if (!chartSimulationEnabled) {
+      return [];
+    }
+
+    if (!selectedModel) {
       return [];
     }
 
@@ -5291,6 +5285,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [selectedModelId]);
 
   useEffect(() => {
+    if (hasYazanProfile) {
+      return;
+    }
+
+    setShowYazanAccountMenu(false);
+    setShowYazanSyncDraft(false);
+  }, [hasYazanProfile]);
+
+  useEffect(() => {
     if (!showYazanAccountMenu) {
       return;
     }
@@ -6249,7 +6252,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         </div>
       </div>
 
-      {isAdmin && showYazanAccountMenu ? (
+      {isAdmin && hasYazanProfile && showYazanAccountMenu ? (
         <div
           ref={yazanAccountMenuRef}
           className="sync-account-menu"
@@ -6829,7 +6832,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "models" ? (
                 <div className="tab-view">
-                  {showYazanSyncDraft ? (
+                  {hasYazanProfile && showYazanSyncDraft ? (
                     <>
                       <div className="watchlist-head with-action">
                         <div>
@@ -7515,12 +7518,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <div>
                           <h2>Models / People</h2>
                           <p>
-                            {isAdmin
-                              ? "Add a Tradovate or Trade Syncer setup for Yazan."
-                              : "Profiles in the current workspace."}
+                            {hasWorkspaceProfiles
+                              ? isAdmin
+                                ? "Add a Tradovate or Trade Syncer setup for Yazan."
+                                : "Profiles in the current workspace."
+                              : "No profiles in the current workspace."}
                           </p>
                         </div>
-                        {isAdmin ? (
+                        {isAdmin && hasYazanProfile ? (
                           <button
                             type="button"
                             className="panel-action-btn"
@@ -7530,13 +7535,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           </button>
                         ) : null}
                       </div>
-                      {yazanSyncSuccess ? (
+                      {hasYazanProfile && yazanSyncSuccess ? (
                         <div className="sync-note-card sync-status-card sync-status-card-success">
                           <strong>Broker connection saved</strong>
                           <p>{yazanSyncSuccess}</p>
                         </div>
                       ) : null}
-                      {yazanAccount?.connectionMessage ? (
+                      {hasYazanProfile && yazanAccount?.connectionMessage ? (
                         <div className="sync-note-card sync-storage-card">
                           <strong>{yazanAccount.connectionState === "connected" ? "Connection healthy" : "Connection status"}</strong>
                           <p>{yazanAccount.connectionMessage}</p>
@@ -7547,51 +7552,57 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           ) : null}
                         </div>
                       ) : null}
-                      <ul className="model-list">
-                        {modelProfiles.map((model) => {
-                          const selected = model.id === selectedModelId;
-                          const isYazan = model.id === "yazan";
+                      {hasWorkspaceProfiles ? (
+                        <ul className="model-list">
+                          {modelProfiles.map((model) => {
+                            const selected = model.id === selectedModelId;
+                            const isYazan = model.id === "yazan";
 
-                          return (
-                            <li key={model.id}>
-                              <button
-                                type="button"
-                                className={`model-row ${selected ? "selected" : ""}`}
-                                onClick={() => {
-                                  setSelectedModelId(model.id);
-                                  setShowYazanAccountMenu(false);
+                            return (
+                              <li key={model.id}>
+                                <button
+                                  type="button"
+                                  className={`model-row ${selected ? "selected" : ""}`}
+                                  onClick={() => {
+                                    setSelectedModelId(model.id);
+                                    setShowYazanAccountMenu(false);
 
-                                  if (model.id !== "yazan") {
-                                    setShowYazanSyncDraft(false);
+                                    if (model.id !== "yazan") {
+                                      setShowYazanSyncDraft(false);
+                                    }
+                                  }}
+                                  onMouseDown={(event) => handleYazanAccountMouseDown(event, isYazan)}
+                                  onContextMenu={(event) => handleYazanAccountContextMenu(event, isYazan)}
+                                  title={
+                                    isAdmin && isYazan
+                                      ? "Right-click for connection options"
+                                      : model.name
                                   }
-                                }}
-                                onMouseDown={(event) => handleYazanAccountMouseDown(event, isYazan)}
-                                onContextMenu={(event) => handleYazanAccountContextMenu(event, isYazan)}
-                                title={
-                                  isAdmin && isYazan
-                                    ? "Right-click for connection options"
-                                    : model.name
-                                }
-                              >
-                                <span className="model-main">
-                                  <span className="model-name">{model.name}</span>
-                                  <span className="model-kind">{model.kind}</span>
-                                </span>
-                                {isYazan && yazanAccountSummary ? (
-                                  <span className="model-account">{yazanAccountSummary}</span>
-                                ) : isYazan ? (
-                                  <span className="model-account muted">No broker sync connected</span>
-                                ) : model.accountNumber ? (
-                                  <span className="model-account">
-                                    Yazan Account #{model.accountNumber}
+                                >
+                                  <span className="model-main">
+                                    <span className="model-name">{model.name}</span>
+                                    <span className="model-kind">{model.kind}</span>
                                   </span>
-                                ) : null}
-                                <span className="model-state">{selected ? "Selected" : "Select"}</span>
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                                  {isYazan && yazanAccountSummary ? (
+                                    <span className="model-account">{yazanAccountSummary}</span>
+                                  ) : isYazan ? (
+                                    <span className="model-account muted">No broker sync connected</span>
+                                  ) : model.accountNumber ? (
+                                    <span className="model-account">
+                                      Yazan Account #{model.accountNumber}
+                                    </span>
+                                  ) : null}
+                                  <span className="model-state">{selected ? "Selected" : "Select"}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="ai-placeholder">
+                          <p>The current ICT and Yazan profiles have been removed from this workspace.</p>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -7754,7 +7765,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>Account: {currentAccountLabel}</span>
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
-        <span>Model: {selectedModel.name}</span>
+        <span>Model: {selectedModel?.name ?? "None"}</span>
         <span>Feed: {feedStatusLabel}</span>
         <span>{marketError ? marketStatusDetails : `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>
