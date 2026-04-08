@@ -8189,26 +8189,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             );
                           })}
                         </ul>
-                      ) : (
-                        <div className="model-empty-actions">
-                          <div className="model-empty-provider-row">
-                            <button
-                              type="button"
-                              className="model-empty-provider-btn"
-                              onClick={() => openYazanSyncDraft("add", "tradovate")}
-                            >
-                              Tradovate
-                            </button>
-                            <button
-                              type="button"
-                              className="model-empty-provider-btn"
-                              onClick={() => openYazanSyncDraft("add", "tradesyncer")}
-                            >
-                              Trade Syncer
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>
