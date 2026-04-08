@@ -5,11 +5,6 @@ import {
   type FutureAsset
 } from "../../../../lib/futuresCatalog";
 import { logDatabentoApiKeyFailure } from "../../../../lib/server/databentoAuth";
-import {
-  generateSimulatedFuturesCandles,
-  getSimulatedTimeframeMs,
-  type SimulatedTimeframe
-} from "../../../../lib/simulatedFutures";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -37,7 +32,7 @@ type MarketFeedMeta = {
   sourceTimeframe: string;
   databentoSymbol: string;
   updatedAt: string;
-  fallback?: "cache" | "simulation";
+  fallback?: "cache";
   reason?: string;
 };
 
@@ -384,40 +379,6 @@ const parseRangeWindow = (value: { start?: string; end?: string } | undefined): 
   };
 };
 
-const buildSimulationCandlesPayload = (
-  asset: FutureAsset,
-  timeframe: Timeframe,
-  targetCount: number,
-  beforeMs?: number,
-  reason?: string
-): CandlesResponseBody => {
-  const referenceNowMs =
-    typeof beforeMs === "number" && Number.isFinite(beforeMs)
-      ? Math.max(getSimulatedTimeframeMs(timeframe as SimulatedTimeframe), beforeMs - 1)
-      : Date.now();
-
-  return {
-    symbol: asset.symbol,
-    timeframe,
-    candles: generateSimulatedFuturesCandles(
-      asset,
-      timeframe as SimulatedTimeframe,
-      targetCount,
-      referenceNowMs
-    ),
-    meta: {
-      provider: "Simulation",
-      dataset: "local",
-      sourceTimeframe: timeframe,
-      databentoSymbol: asset.symbol,
-      updatedAt: new Date().toISOString(),
-      fallback: "simulation",
-      reason
-    },
-    warning: reason
-  };
-};
-
 const candlesCacheKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}:${timeframe}`;
 };
@@ -664,8 +625,13 @@ export async function GET(request: Request) {
 
   if (!apiKey) {
     return NextResponse.json(
-      buildSimulationCandlesPayload(asset, timeframe, targetCount, beforeMs ?? undefined),
-      { headers }
+      {
+        error: "Missing DATABENTO_API_KEY. Add it to your environment before loading market candles."
+      },
+      {
+        status: 503,
+        headers
+      }
     );
   }
 
@@ -705,19 +671,14 @@ export async function GET(request: Request) {
       return NextResponse.json(cachedPayload, { headers });
     }
 
-    console.warn(
-      `[databento:candles] Serving simulated candles for ${asset.symbol} (${timeframe}) after upstream failure: ${errorMessage}`
-    );
-
     return NextResponse.json(
-      buildSimulationCandlesPayload(
-        asset,
-        timeframe,
-        targetCount,
-        beforeMs ?? undefined,
-        errorMessage
-      ),
-      { headers }
+      {
+        error: errorMessage
+      },
+      {
+        status: 503,
+        headers
+      }
     );
   }
 }

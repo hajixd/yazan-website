@@ -5,7 +5,6 @@ import {
   type FutureAsset
 } from "../../../../lib/futuresCatalog";
 import { logDatabentoApiKeyFailure } from "../../../../lib/server/databentoAuth";
-import { buildSimulatedLatestTrade } from "../../../../lib/simulatedFutures";
 
 type DatabentoTradeRecord = {
   hd?: {
@@ -27,7 +26,7 @@ type LatestTradeMeta = {
   schema: string;
   databentoSymbol: string;
   updatedAt: string;
-  fallback?: "cache" | "simulation";
+  fallback?: "cache";
   reason?: string;
 };
 
@@ -185,29 +184,6 @@ const buildDatabentoMeta = (
   };
 };
 
-const buildSimulationTradePayload = (
-  asset: FutureAsset,
-  reason?: string
-): LatestTradeResponseBody => {
-  const latestTrade = buildSimulatedLatestTrade(asset, "15m");
-
-  return {
-    symbol: asset.symbol,
-    price: latestTrade.price,
-    time: latestTrade.time,
-    meta: {
-      provider: "Simulation",
-      dataset: "local",
-      schema: "simulated-trades",
-      databentoSymbol: asset.symbol,
-      updatedAt: new Date().toISOString(),
-      fallback: "simulation",
-      reason
-    },
-    warning: reason
-  };
-};
-
 const storeLatestTradeCache = (asset: FutureAsset, payload: LatestTradeResponseBody) => {
   databentoLatestTradeCache.set(asset.symbol, {
     payload,
@@ -286,7 +262,15 @@ export async function GET(request: Request) {
   };
 
   if (!apiKey) {
-    return NextResponse.json(buildSimulationTradePayload(asset), { headers });
+    return NextResponse.json(
+      {
+        error: "Missing DATABENTO_API_KEY. Add it to your environment before loading live trades."
+      },
+      {
+        status: 503,
+        headers
+      }
+    );
   }
 
   const endMs = Date.now();
@@ -400,7 +384,7 @@ export async function GET(request: Request) {
         }
       }
     } catch {
-      // Fall through to cache/simulation fallback if the 1m bar lookup also fails.
+      // Fall through to cache fallback if the 1m bar lookup also fails.
     }
 
     const cachedPayload = buildCachedTradePayload(asset, errorMessage);
@@ -412,10 +396,14 @@ export async function GET(request: Request) {
       return NextResponse.json(cachedPayload, { headers });
     }
 
-    console.warn(
-      `[databento:last] Serving simulated trade for ${asset.symbol} after upstream failure: ${errorMessage}`
+    return NextResponse.json(
+      {
+        error: errorMessage
+      },
+      {
+        status: 503,
+        headers
+      }
     );
-
-    return NextResponse.json(buildSimulationTradePayload(asset, errorMessage), { headers });
   }
 }
