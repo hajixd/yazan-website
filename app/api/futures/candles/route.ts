@@ -111,15 +111,6 @@ const timeframeStepMs: Record<"1m" | "1H" | "1D", number> = {
   "1D": 24 * 60 * 60_000
 };
 
-const targetTimeframeMs: Record<Exclude<Timeframe, "1W">, number> = {
-  "1m": 60_000,
-  "5m": 5 * 60_000,
-  "15m": 15 * 60_000,
-  "1H": 60 * 60_000,
-  "4H": 4 * 60 * 60_000,
-  "1D": 24 * 60 * 60_000
-};
-
 const RAW_FETCH_PADDING_BARS: Record<"1m" | "1H" | "1D", number> = {
   "1m": 180,
   "1H": 24,
@@ -252,10 +243,6 @@ const aggregateCandles = (candles: Candle[], timeframe: Timeframe): Candle[] => 
   }
 
   return aggregated;
-};
-
-const shouldOverlayMinuteTail = (timeframe: Timeframe): timeframe is "1H" | "4H" => {
-  return timeframe === "1H" || timeframe === "4H";
 };
 
 const mergeCandles = (olderCandles: Candle[], newerCandles: Candle[]) => {
@@ -650,33 +637,6 @@ const fetchDatabentoCandles = async (
     }
 
     cursorEndMs = chunkStartMs;
-  }
-
-  if (typeof beforeMs !== "number" && shouldOverlayMinuteTail(timeframe)) {
-    const minuteRange = datasetRange?.schema["ohlcv-1m"] ?? datasetRange?.overall ?? null;
-    const currentBucketStart = getBucketTime(Math.max(stepMs, endMs - 1), timeframe);
-    const lookbackWindowMs = targetTimeframeMs[timeframe] * 2;
-    const tailStartMs = Math.max(
-      minuteRange?.startMs ?? timeframeStepMs["1m"],
-      currentBucketStart - lookbackWindowMs
-    );
-
-    if (tailStartMs < endMs) {
-      const { response, payload } = await fetchDatabentoText(
-        buildDatabentoUrl(databentoSymbol, "ohlcv-1m", tailStartMs, endMs),
-        authHeaders
-      );
-
-      if (response.ok) {
-        const delayedTail = aggregateCandles(parseDatabentoCandles(payload), timeframe).filter(
-          (candle) => candle.time >= tailStartMs
-        );
-
-        if (delayedTail.length > 0) {
-          aggregated = mergeCandles(aggregated, delayedTail).slice(-targetCount);
-        }
-      }
-    }
   }
 
   return aggregated;
