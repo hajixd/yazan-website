@@ -595,20 +595,6 @@ const multiAssetHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1W": 120
 };
 
-const getInitialChartCandleCount = (timeframe: Timeframe): number => {
-  return Math.min(
-    candleHistoryCountByTimeframe[timeframe],
-    Math.max(240, timeframeVisibleCount[timeframe] * 4)
-  );
-};
-
-const getChartBackfillBatchCount = (timeframe: Timeframe): number => {
-  return Math.min(
-    candleHistoryCountByTimeframe[timeframe],
-    Math.max(360, timeframeVisibleCount[timeframe] * 6)
-  );
-};
-
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
 };
@@ -2320,9 +2306,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [assetOrder]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
-  const loadedSelectedCandles = seriesMap[selectedKey];
-  const selectedCandles = loadedSelectedCandles ?? [];
-  const shouldDeferAuxiliaryCandleRequests = !showcaseMode && marketStatus !== "ready";
   const currentChartDrawings = useMemo(() => {
     return chartDrawingsByKey[selectedKey] ?? [];
   }, [chartDrawingsByKey, selectedKey]);
@@ -2420,7 +2403,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     fetchFuturesCandles(
       selectedSymbol,
       selectedTimeframe,
-      getInitialChartCandleCount(selectedTimeframe),
+      candleHistoryCountByTimeframe[selectedTimeframe],
       { signal: controller.signal }
     )
       .then((payload) => {
@@ -2508,10 +2491,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       setWatchlistSeriesMap(next);
-      return;
-    }
-
-    if (shouldDeferAuxiliaryCandleRequests) {
       return;
     }
 
@@ -2724,15 +2703,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       activeControllers.forEach((controller) => controller.abort());
       activeControllers.clear();
     };
-  }, [
-    marketStatus,
-    referenceNowMs,
-    selectedCandles.length,
-    selectedTimeframe,
-    shouldDeferAuxiliaryCandleRequests,
-    simulationFallback,
-    showcaseMode
-  ]);
+  }, [referenceNowMs, selectedTimeframe, simulationFallback, showcaseMode]);
 
   useEffect(() => {
     if (showcaseMode) {
@@ -2753,10 +2724,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
         return next;
       });
-      return;
-    }
-
-    if (shouldDeferAuxiliaryCandleRequests) {
       return;
     }
 
@@ -2802,17 +2769,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       cancelled = true;
       controller.abort();
     };
-  }, [
-    marketStatus,
-    referenceNowMs,
-    selectedAsset.basePrice,
-    selectedCandles.length,
-    selectedSymbol,
-    shouldDeferAuxiliaryCandleRequests,
-    simulationFallback,
-    showcaseMode
-  ]);
+  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, simulationFallback, showcaseMode]);
 
+  const loadedSelectedCandles = seriesMap[selectedKey];
+  const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
   const renderedSelectedCandles = selectedCandles;
   const canDrawOnChart = renderedSelectedCandles.length > 0;
   const selectedDrawing = useMemo(() => {
@@ -5023,7 +4983,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       const requestCount = Math.min(
-        getChartBackfillBatchCount(selectedTimeframe),
+        candleHistoryCountByTimeframe[selectedTimeframe],
         remainingCapacity
       );
 
