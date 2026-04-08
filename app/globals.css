@@ -1621,6 +1621,93 @@ button {
   width: 100%;
 }
 
+.asset-search-stack {
+  gap: 0.44rem;
+}
+
+.asset-search-count {
+  color: rgba(194, 208, 230, 0.76);
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.asset-search-input {
+  height: 40px;
+  border-radius: 10px;
+  font-size: 0.74rem;
+  padding: 0 0.8rem;
+}
+
+.asset-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.34rem;
+  max-height: 172px;
+  overflow-y: auto;
+}
+
+.asset-search-result {
+  width: 100%;
+  border: 1px solid rgba(48, 67, 101, 0.92);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(18, 26, 39, 0.98) 0%, rgba(10, 15, 22, 0.98) 100%);
+  color: #eef4ff;
+  padding: 0.56rem 0.68rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+  text-align: left;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.asset-search-result:hover {
+  border-color: rgba(86, 129, 214, 0.96);
+  background:
+    linear-gradient(180deg, rgba(24, 35, 53, 0.98) 0%, rgba(11, 18, 27, 0.98) 100%);
+  transform: translateY(-1px);
+}
+
+.asset-search-symbol {
+  color: #f6fbff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.asset-search-meta {
+  min-width: 0;
+  color: rgba(194, 208, 230, 0.76);
+  font-size: 0.64rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-search-action {
+  border: 1px solid rgba(74, 120, 210, 0.7);
+  border-radius: 999px;
+  background: rgba(44, 86, 170, 0.22);
+  color: #d6e4ff;
+  padding: 0.16rem 0.44rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.asset-search-empty {
+  margin: 0;
+  color: rgba(183, 197, 216, 0.68);
+  font-size: 0.64rem;
+}
+
 .watchlist-head h2 {
   margin: 0;
   font-size: 0.82rem;
@@ -2040,6 +2127,10 @@ button {
   opacity: 0.56;
 }
 
+.asset-managed-item {
+  position: relative;
+}
+
 .watchlist-row {
   width: 100%;
   border: 0;
@@ -2051,6 +2142,10 @@ button {
   cursor: pointer;
   position: relative;
   transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.asset-managed-row {
+  padding-right: 5.5rem;
 }
 
 .watchlist-row:hover {
@@ -2082,6 +2177,34 @@ button {
   color: inherit;
   font-weight: inherit;
   letter-spacing: inherit;
+}
+
+.asset-row-remove {
+  position: absolute;
+  top: 50%;
+  right: 0.7rem;
+  transform: translateY(-50%);
+  border: 1px solid rgba(90, 110, 146, 0.68);
+  border-radius: 999px;
+  background: rgba(14, 21, 31, 0.96);
+  color: rgba(218, 229, 245, 0.84);
+  padding: 0.26rem 0.52rem;
+  font-size: 0.54rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.asset-row-remove:hover {
+  border-color: rgba(217, 104, 118, 0.76);
+  background: rgba(77, 27, 35, 0.42);
+  color: #ffd8de;
+}
+
+.asset-row-remove:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .symbol-col small {

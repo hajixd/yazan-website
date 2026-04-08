@@ -27,7 +27,7 @@ import type {
   DatabentoLiveEvent,
   DatabentoOrderBookSnapshot
 } from "../lib/databentoLive";
-import { futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
+import { type FutureAsset, futuresAssets, getAssetBySymbol } from "../lib/futuresCatalog";
 import {
   listRomanSeenNotificationIds,
   markRomanNotificationEventsDelivered,
@@ -403,13 +403,48 @@ const normalizeAssetOrder = (order: string[]): string[] => {
     next.push(symbol);
   }
 
-  for (const symbol of defaultAssetOrder) {
-    if (!next.includes(symbol)) {
-      next.push(symbol);
-    }
+  if (next.length > 0) {
+    return next;
   }
 
-  return next;
+  return defaultAssetOrder[0] ? [defaultAssetOrder[0]] : [];
+};
+
+const matchesAssetSearch = (asset: FutureAsset, query: string) => {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [asset.symbol, asset.name, asset.category, asset.venue, asset.contract].some((field) =>
+    field.toLowerCase().includes(normalizedQuery)
+  );
+};
+
+const rankAssetSearchMatch = (asset: FutureAsset, query: string) => {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return 0;
+  }
+
+  const symbol = asset.symbol.toLowerCase();
+  const name = asset.name.toLowerCase();
+
+  if (symbol === normalizedQuery) {
+    return 3;
+  }
+
+  if (symbol.startsWith(normalizedQuery)) {
+    return 2;
+  }
+
+  if (name.startsWith(normalizedQuery)) {
+    return 1;
+  }
+
+  return 0;
 };
 
 const timeframeMinutes: Record<Timeframe, number> = {
@@ -1901,6 +1936,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     symbol: string;
     placement: AssetDropPlacement;
   } | null>(null);
+  const [assetSearchQuery, setAssetSearchQuery] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(
     modelProfiles[0]?.id ?? INTERNAL_SIMULATION_MODEL.id
   );
@@ -2214,12 +2250,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return ordered;
   }, [assetOrder]);
+  const hiddenAssets = useMemo(() => {
+    const enabledSymbols = new Set(orderedAssets.map((asset) => asset.symbol));
+    return futuresAssets.filter((asset) => !enabledSymbols.has(asset.symbol));
+  }, [orderedAssets]);
+  const filteredHiddenAssets = useMemo(() => {
+    const query = assetSearchQuery.trim();
+
+    return hiddenAssets
+      .filter((asset) => matchesAssetSearch(asset, query))
+      .sort((left, right) => {
+        const leftRank = rankAssetSearchMatch(left, query);
+        const rightRank = rankAssetSearchMatch(right, query);
+
+        if (leftRank !== rightRank) {
+          return rightRank - leftRank;
+        }
+
+        return left.symbol.localeCompare(right.symbol);
+      })
+      .slice(0, query ? 8 : 6);
+  }, [assetSearchQuery, hiddenAssets]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
   const currentChartDrawings = useMemo(() => {
     return chartDrawingsByKey[selectedKey] ?? [];
   }, [chartDrawingsByKey, selectedKey]);
   const activeDrawingDraft = drawingDraft;
+
+  useEffect(() => {
+    if (orderedAssets.some((asset) => asset.symbol === selectedSymbol)) {
+      return;
+    }
+
+    const fallbackSymbol = orderedAssets[0]?.symbol ?? defaultAssetOrder[0];
+
+    if (!fallbackSymbol || fallbackSymbol === selectedSymbol) {
+      return;
+    }
+
+    setSelectedSymbol(fallbackSymbol);
+    setSelectedHistoryId(null);
+    setShowAllTradesOnChart(false);
+    focusTradeIdRef.current = null;
+  }, [orderedAssets, selectedSymbol]);
 
   useEffect(() => {
     if (showcaseMode || typeof window === "undefined") {
@@ -2386,7 +2460,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const simulationNowMs = referenceNowMs;
       const next: Record<string, Candle[]> = {};
 
-      for (const asset of futuresAssets) {
+      for (const asset of orderedAssets) {
         const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
         next[key] = generateFakeCandles(
           asset.basePrice,
@@ -2414,7 +2488,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       refreshInFlight = true;
       const nextResults = new Map<string, Candle[]>();
-      const sortedAssets = [...futuresAssets].sort((left, right) => {
+      const sortedAssets = [...orderedAssets].sort((left, right) => {
         const leftKey = symbolTimeframeKey(left.symbol, selectedTimeframe);
         const rightKey = symbolTimeframeKey(right.symbol, selectedTimeframe);
         const leftExisting = watchlistSeriesMapRef.current[leftKey] ?? [];
@@ -2610,7 +2684,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       activeControllers.forEach((controller) => controller.abort());
       activeControllers.clear();
     };
-  }, [referenceNowMs, selectedTimeframe, showcaseMode]);
+  }, [orderedAssets, referenceNowMs, selectedTimeframe, showcaseMode]);
 
   useEffect(() => {
     if (showcaseMode) {
@@ -3516,7 +3590,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const marketCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
     const next: Record<string, Candle[]> = {};
 
-    for (const asset of futuresAssets) {
+    for (const asset of orderedAssets) {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
       const chartCandles = seriesMap[key] ?? [];
       const backgroundCandles = watchlistSeriesMap[key] ?? [];
@@ -3524,12 +3598,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return next;
-  }, [selectedTimeframe, seriesMap, watchlistSeriesMap]);
+  }, [orderedAssets, selectedTimeframe, seriesMap, watchlistSeriesMap]);
 
   const historyCandlesBySymbol = useMemo<Record<string, Candle[]>>(() => {
     const next: Record<string, Candle[]> = {};
 
-    for (const asset of futuresAssets) {
+    for (const asset of orderedAssets) {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
       const backgroundCandles = watchlistSeriesMap[key] ?? [];
       const chartCandles = seriesMap[key] ?? [];
@@ -3541,7 +3615,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return next;
-  }, [selectedTimeframe, seriesMap, watchlistSeriesMap]);
+  }, [orderedAssets, selectedTimeframe, seriesMap, watchlistSeriesMap]);
 
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
@@ -3768,7 +3842,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     const rows: HistoryItem[] = [];
 
-    for (const asset of futuresAssets) {
+    for (const asset of orderedAssets) {
       const list = historyCandlesBySymbol[asset.symbol] ?? [];
 
       if (list.length < 16) {
@@ -3819,7 +3893,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [chartSimulationEnabled, historyCandlesBySymbol, selectedTradeOwnerModel, showcaseMode]);
+  }, [chartSimulationEnabled, historyCandlesBySymbol, orderedAssets, selectedTradeOwnerModel, showcaseMode]);
 
   const currentSymbolHistoryRows = useMemo(() => {
     return historyRows.filter((row) => row.symbol === selectedSymbol);
@@ -3836,7 +3910,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     const rows: HistoryItem[] = [];
 
-    for (const asset of futuresAssets) {
+    for (const asset of orderedAssets) {
       const list = historyCandlesBySymbol[asset.symbol] ?? [];
 
       if (list.length < 40) {
@@ -3858,11 +3932,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     return rows
       .sort((a, b) => Number(b.entryTime) - Number(a.entryTime))
-      .slice(0, Math.min(12, futuresAssets.length));
+      .slice(0, Math.min(12, orderedAssets.length));
   }, [
     chartSimulationEnabled,
     getProjectedMarketNowMs,
     historyCandlesBySymbol,
+    orderedAssets,
     selectedTradeOwnerModel
   ]);
 
@@ -5734,6 +5809,47 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
       return next;
     });
+  };
+
+  const addAssetSymbol = (symbol: string) => {
+    const normalized = normalizeAssetOrder(assetOrder);
+
+    if (normalized.includes(symbol)) {
+      return;
+    }
+
+    setAssetOrder([...normalized, symbol]);
+    setAssetSearchQuery("");
+    setSelectedSymbol(symbol);
+    setSelectedHistoryId(null);
+    setShowAllTradesOnChart(false);
+    focusTradeIdRef.current = null;
+  };
+
+  const removeAssetSymbol = (symbol: string) => {
+    const normalized = normalizeAssetOrder(assetOrder);
+
+    if (!normalized.includes(symbol) || normalized.length <= 1) {
+      return;
+    }
+
+    const nextOrder = normalized.filter((entry) => entry !== symbol);
+    setAssetOrder(nextOrder);
+
+    if (selectedSymbol !== symbol) {
+      return;
+    }
+
+    const fallbackSymbol = nextOrder[0] ?? defaultAssetOrder[0];
+
+    if (!fallbackSymbol) {
+      return;
+    }
+
+    setSelectedSymbol(fallbackSymbol);
+    setSelectedHistoryId(null);
+    setShowAllTradesOnChart(false);
+    focusTradeIdRef.current = null;
   };
 
   const handleAssetDragStart = (event: ReactDragEvent<HTMLButtonElement>, symbol: string) => {
@@ -7787,10 +7903,67 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
               {activePanelTab === "assets" ? (
                 <div className="tab-view">
-                  <div className="watchlist-head">
+                  <div className="watchlist-head with-action">
                     <div>
                       <h2>Assets</h2>
-                      <p>Drag rows to rearrange your symbols.</p>
+                      <p>
+                        Drag rows to rearrange your symbols. Search hidden contracts to add them
+                        back.
+                      </p>
+                    </div>
+                    <div className="panel-head-actions asset-search-stack">
+                      <span className="asset-search-count">
+                        {orderedAssets.length} of {futuresAssets.length} symbols added
+                      </span>
+                      <input
+                        type="search"
+                        className="account-input asset-search-input"
+                        placeholder={
+                          hiddenAssets.length === 0
+                            ? "All catalog symbols are already added"
+                            : "Search hidden symbols to add"
+                        }
+                        value={assetSearchQuery}
+                        onChange={(event) => setAssetSearchQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") {
+                            return;
+                          }
+
+                          const firstMatch = filteredHiddenAssets[0];
+
+                          if (!firstMatch) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          addAssetSymbol(firstMatch.symbol);
+                        }}
+                        disabled={hiddenAssets.length === 0}
+                      />
+                      {hiddenAssets.length === 0 ? (
+                        <p className="asset-search-empty">All catalog symbols are already active.</p>
+                      ) : filteredHiddenAssets.length > 0 ? (
+                        <ul className="asset-search-results">
+                          {filteredHiddenAssets.map((asset) => (
+                            <li key={asset.symbol}>
+                              <button
+                                type="button"
+                                className="asset-search-result"
+                                onClick={() => addAssetSymbol(asset.symbol)}
+                              >
+                                <span className="asset-search-symbol">{asset.symbol}</span>
+                                <span className="asset-search-meta">
+                                  {asset.name} - {asset.category}
+                                </span>
+                                <span className="asset-search-action">Add</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="asset-search-empty">No hidden symbols match that search.</p>
+                      )}
                     </div>
                   </div>
 
@@ -7803,7 +7976,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     {watchlistRows.map((row) => (
                       <li
                         key={row.symbol}
-                        className={`watchlist-item${
+                        className={`watchlist-item asset-managed-item${
                           assetDropTarget?.symbol === row.symbol
                             ? assetDropTarget.placement === "before"
                               ? " drop-before"
@@ -7817,7 +7990,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       >
                         <button
                           type="button"
-                          className={`watchlist-row ${
+                          className={`watchlist-row asset-managed-row ${
                             row.symbol === selectedSymbol ? "selected" : ""
                           }`}
                           draggable={!isMobileWorkspace}
@@ -7865,6 +8038,20 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               ? "--"
                               : `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}`}
                           </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="asset-row-remove"
+                          onClick={() => removeAssetSymbol(row.symbol)}
+                          disabled={orderedAssets.length <= 1}
+                          aria-label={`Remove ${row.symbol}`}
+                          title={
+                            orderedAssets.length <= 1
+                              ? "At least one symbol must stay active."
+                              : `Remove ${row.symbol}`
+                          }
+                        >
+                          Remove
                         </button>
                       </li>
                     ))}
