@@ -8046,13 +8046,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         </ul>
                       ) : (
                         <div className="model-empty-actions">
-                          <button
-                            type="button"
-                            className="panel-action-btn model-empty-add-btn"
-                            onClick={() => openYazanSyncDraft("add")}
-                          >
-                            Add
-                          </button>
                           <div className="model-empty-provider-row">
                             <button
                               type="button"
