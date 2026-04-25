@@ -2,6 +2,8 @@ import {
   type AccountSyncDraft,
   type BrokerSyncVerifyResponse,
   type SavedAccountSync,
+  type TradovateTradeRow,
+  type TradovateTradesResponse,
   buildDefaultTradesyncWebhookUrl,
   createEmptySavedConnection,
   sanitizeAccountSyncDraft
@@ -39,6 +41,31 @@ type TradovateAccount = {
   userId?: number | string;
   active?: boolean;
   status?: string;
+};
+
+type TradovateOrder = {
+  id?: number | string;
+  accountId?: number | string;
+  contractId?: number | string;
+  timestamp?: string;
+  action?: string;
+  ordStatus?: string;
+};
+
+type TradovateFill = {
+  id?: number | string | null;
+  orderId?: number | string;
+  contractId?: number | string;
+  timestamp?: string;
+  action?: string;
+  qty?: number | string;
+  price?: number | string;
+  active?: boolean;
+};
+
+type TradovateContract = {
+  id?: number | string;
+  name?: string;
 };
 
 type TradesyncEnvelope<T> = {
@@ -334,6 +361,57 @@ const tradovateFetch = async (
   });
 };
 
+const getTradovateAccessToken = async (draft: AccountSyncDraft) => {
+  const baseUrl = TRADOVATE_BASE_URLS[draft.environment];
+
+  const directBearerResponse = await tradovateFetch(baseUrl, "/auth/me", {
+    headers: {
+      Authorization: `Bearer ${draft.apiKey}`
+    }
+  });
+
+  if (directBearerResponse.ok) {
+    return {
+      baseUrl,
+      accessToken: draft.apiKey
+    };
+  }
+
+  const authPayload: Record<string, string | number> = {
+    name: draft.username,
+    password: draft.apiSecret,
+    appId: draft.appId || "roman-capital-terminal",
+    appVersion: draft.appVersion || "1.0.0",
+    cid: 0,
+    sec: draft.apiKey
+  };
+
+  if (draft.deviceId) {
+    authPayload.deviceId = draft.deviceId;
+  }
+
+  const authResponse = await tradovateFetch(baseUrl, "/auth/accesstokenrequest", {
+    method: "POST",
+    body: JSON.stringify(authPayload)
+  });
+  const authData = (await assertTradovateSuccess(
+    authResponse,
+    "Tradovate rejected the connection details."
+  )) as {
+    accessToken?: string;
+    expirationTime?: string;
+  };
+
+  if (!authData.accessToken) {
+    throw new ProviderError("Tradovate did not return an access token.");
+  }
+
+  return {
+    baseUrl,
+    accessToken: authData.accessToken
+  };
+};
+
 const tradesyncFetch = async (
   pathname: string,
   authHeader: string,
@@ -382,49 +460,7 @@ const pickTradovateAccount = (
 };
 
 const verifyTradovateConnection = async (draft: AccountSyncDraft): Promise<SavedAccountSync> => {
-  const baseUrl = TRADOVATE_BASE_URLS[draft.environment];
-  let accessToken = "";
-
-  const directBearerResponse = await tradovateFetch(baseUrl, "/auth/me", {
-    headers: {
-      Authorization: `Bearer ${draft.apiKey}`
-    }
-  });
-
-  if (directBearerResponse.ok) {
-    accessToken = draft.apiKey;
-  } else {
-    const authPayload: Record<string, string | number> = {
-      name: draft.username,
-      password: draft.apiSecret,
-      appId: draft.appId || "roman-capital-terminal",
-      appVersion: draft.appVersion || "1.0.0",
-      cid: 0,
-      sec: draft.apiKey
-    };
-
-    if (draft.deviceId) {
-      authPayload.deviceId = draft.deviceId;
-    }
-
-    const authResponse = await tradovateFetch(baseUrl, "/auth/accesstokenrequest", {
-      method: "POST",
-      body: JSON.stringify(authPayload)
-    });
-    const authData = (await assertTradovateSuccess(
-      authResponse,
-      "Tradovate rejected the connection details."
-    )) as {
-      accessToken?: string;
-      expirationTime?: string;
-    };
-
-    if (!authData.accessToken) {
-      throw new ProviderError("Tradovate did not return an access token.");
-    }
-
-    accessToken = authData.accessToken;
-  }
+  const { baseUrl, accessToken } = await getTradovateAccessToken(draft);
 
   const meResponse = await tradovateFetch(baseUrl, "/auth/me", {
     headers: {
@@ -491,6 +527,241 @@ const verifyTradovateConnection = async (draft: AccountSyncDraft): Promise<Saved
     lastVerifiedAt: new Date().toISOString(),
     storedInBrowser: true
   };
+};
+
+const toStableId = (value: unknown): string | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return null;
+};
+
+const toFiniteNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  return 0;
+};
+
+const readTradovateList = async <T>(
+  baseUrl: string,
+  accessToken: string,
+  pathname: string,
+  fallback: string
+): Promise<T[]> => {
+  const response = await tradovateFetch(baseUrl, pathname, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+  const payload = await assertTradovateSuccess(response, fallback);
+
+  if (Array.isArray(payload)) {
+    return payload as T[];
+  }
+
+  throw new ProviderError(fallback);
+};
+
+const readTradovateContracts = async (
+  baseUrl: string,
+  accessToken: string,
+  contractIds: string[]
+) => {
+  const uniqueIds = Array.from(new Set(contractIds)).slice(0, 80);
+  const contractsById = new Map<string, string>();
+
+  if (uniqueIds.length === 0) {
+    return contractsById;
+  }
+
+  const params = new URLSearchParams();
+  params.set("ids", uniqueIds.join(","));
+
+  const response = await tradovateFetch(baseUrl, `/contract/items?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+
+  const payload = await assertTradovateSuccess(
+    response,
+    "Tradovate returned fills, but contract names could not be loaded."
+  );
+
+  if (!Array.isArray(payload)) {
+    return contractsById;
+  }
+
+  for (const contract of payload as TradovateContract[]) {
+    const id = toStableId(contract.id);
+
+    if (id && contract.name) {
+      contractsById.set(id, contract.name);
+    }
+  }
+
+  return contractsById;
+};
+
+const getRequestedTradovateAccountId = (
+  rawDraft: AccountSyncDraft,
+  draft: AccountSyncDraft
+) => {
+  const savedFields = rawDraft as Partial<SavedAccountSync>;
+  const candidates = [
+    savedFields.providerAccountId,
+    savedFields.providerAccountNumber,
+    draft.accountNumber
+  ];
+
+  for (const candidate of candidates) {
+    const value = toStableId(candidate);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+export const fetchTradovateTrades = async (
+  rawDraft: AccountSyncDraft,
+  limit = 80
+): Promise<TradovateTradesResponse> => {
+  const draft = sanitizeAccountSyncDraft(rawDraft);
+  const requestedAccountId = getRequestedTradovateAccountId(rawDraft, draft);
+  const parsedLimit = Number.isFinite(limit) ? Math.floor(limit) : 80;
+  const safeLimit = Math.max(1, Math.min(200, parsedLimit));
+
+  try {
+    if (draft.provider !== "tradovate") {
+      throw new ProviderError("Add Tradovate details before loading Tradovate trades.");
+    }
+
+    validateDraft(draft);
+
+    const { baseUrl, accessToken } = await getTradovateAccessToken(draft);
+    const fills = await readTradovateList<TradovateFill>(
+      baseUrl,
+      accessToken,
+      "/fill/list",
+      "Tradovate did not return fill history."
+    );
+    let orders: TradovateOrder[] = [];
+
+    try {
+      orders = await readTradovateList<TradovateOrder>(
+        baseUrl,
+        accessToken,
+        "/order/list",
+        "Tradovate did not return order history."
+      );
+    } catch {
+      orders = [];
+    }
+
+    const ordersById = new Map<string, TradovateOrder>();
+
+    for (const order of orders) {
+      const id = toStableId(order.id);
+
+      if (id) {
+        ordersById.set(id, order);
+      }
+    }
+
+    const filteredFills = fills.filter((fill) => {
+      if (!requestedAccountId || orders.length === 0) {
+        return true;
+      }
+
+      const orderId = toStableId(fill.orderId);
+      const order = orderId ? ordersById.get(orderId) : null;
+      const orderAccountId = toStableId(order?.accountId);
+
+      return !orderAccountId || orderAccountId === requestedAccountId;
+    });
+    const contractIds = filteredFills
+      .map((fill) => toStableId(fill.contractId ?? ordersById.get(toStableId(fill.orderId) ?? "")?.contractId))
+      .filter((value): value is string => Boolean(value));
+    let contractsById = new Map<string, string>();
+
+    try {
+      contractsById = await readTradovateContracts(baseUrl, accessToken, contractIds);
+    } catch {
+      contractsById = new Map();
+    }
+
+    const trades: TradovateTradeRow[] = filteredFills
+      .map((fill) => {
+        const orderId = toStableId(fill.orderId);
+        const order = orderId ? ordersById.get(orderId) : null;
+        const contractId = toStableId(fill.contractId ?? order?.contractId);
+        const action = typeof fill.action === "string" ? fill.action : order?.action;
+        const side: TradovateTradeRow["side"] =
+          action === "Buy" || action === "Sell" ? action : "Unknown";
+        const timestamp = typeof fill.timestamp === "string" ? fill.timestamp : order?.timestamp ?? "";
+
+        return {
+          id: toStableId(fill.id) ?? `${orderId ?? "fill"}-${timestamp}-${contractId ?? "contract"}`,
+          orderId,
+          accountId: toStableId(order?.accountId),
+          contractId,
+          symbol: (contractId ? contractsById.get(contractId) : null) ?? (contractId ? `Contract ${contractId}` : "Unknown"),
+          side,
+          quantity: toFiniteNumber(fill.qty),
+          price: toFiniteNumber(fill.price),
+          timestamp,
+          status: order?.ordStatus ?? (fill.active === false ? "Closed" : "Filled"),
+          active: typeof fill.active === "boolean" ? fill.active : null
+        };
+      })
+      .sort((a, b) => {
+        const aTime = Date.parse(a.timestamp);
+        const bTime = Date.parse(b.timestamp);
+
+        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+      })
+      .slice(0, safeLimit);
+
+    return {
+      ok: true,
+      trades,
+      meta: {
+        environment: draft.environment,
+        accountLabel: draft.accountLabel || draft.connectionLabel || draft.username,
+        fetchedAt: new Date().toISOString(),
+        totalFills: fills.length,
+        filteredFills: filteredFills.length
+      }
+    };
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      return {
+        ok: false,
+        error: error.message,
+        fieldErrors: error.fieldErrors
+      };
+    }
+
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Tradovate trades could not be loaded."
+    };
+  }
 };
 
 const pickTradesyncAccount = (accounts: TradesyncAccount[], draft: AccountSyncDraft) => {

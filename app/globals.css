@@ -854,6 +854,7 @@ button {
   --chart-left-rail-width: 58px;
   --chart-left-rail-gap: 12px;
   --chart-top-rail-top: 10px;
+  --chart-settings-panel-width: 286px;
 }
 
 .chart-drawing-toolbar {
@@ -1024,6 +1025,335 @@ button {
   opacity: 0.38;
   cursor: not-allowed;
   transform: none;
+}
+
+.chart-drawing-settings {
+  position: absolute;
+  top: var(--chart-top-rail-top);
+  left: calc(var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap));
+  z-index: 12;
+  width: min(
+    var(--chart-settings-panel-width, 286px),
+    calc(100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) + 12px))
+  );
+  max-height: calc(100% - (var(--chart-top-rail-top) * 2));
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(218, 231, 248, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(16, 23, 33, 0.96), rgba(7, 11, 17, 0.96)),
+    rgba(7, 11, 17, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 18px 34px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  scrollbar-width: none;
+}
+
+.chart-drawing-settings::-webkit-scrollbar {
+  display: none;
+}
+
+.chart-stage.with-drawing-settings .chart-overlay-stack {
+  left: calc(
+    var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) +
+      var(--chart-settings-panel-width, 286px) + 10px
+  );
+  width: min(
+    238px,
+    calc(
+      100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) +
+            var(--chart-settings-panel-width, 286px) + 22px)
+    )
+  );
+}
+
+.chart-drawing-settings-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px 30px;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-drawing-settings-head div:first-child,
+.chart-drawing-settings-section {
+  min-width: 0;
+}
+
+.chart-drawing-settings-head span,
+.chart-drawing-setting-label span {
+  display: block;
+  color: rgba(185, 201, 221, 0.58);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.chart-drawing-settings-head strong {
+  display: block;
+  margin-top: 0.18rem;
+  color: #f1f6ff;
+  font-size: 0.78rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-drawing-settings-preview {
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.chart-drawing-settings-preview span {
+  width: 34px;
+  min-height: 2px;
+  border-radius: 999px;
+  background: var(--drawing-active-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--drawing-active-color) 42%, transparent);
+}
+
+.chart-drawing-settings-icon-btn,
+.chart-fib-level-remove {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(218, 229, 244, 0.78);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.chart-drawing-settings-icon-btn:hover,
+.chart-fib-level-remove:hover {
+  border-color: rgba(130, 177, 255, 0.34);
+  background: rgba(80, 124, 190, 0.16);
+  color: #f4f8ff;
+  transform: translateY(-1px);
+}
+
+.chart-drawing-settings-icon-btn svg,
+.chart-fib-level-remove svg,
+.chart-fib-add-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chart-drawing-settings-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.chart-drawing-setting-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.chart-drawing-setting-label strong {
+  color: rgba(234, 241, 250, 0.88);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.58rem;
+  font-weight: 650;
+}
+
+.chart-drawing-settings-color-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.chart-drawing-settings-swatch,
+.chart-drawing-settings-color-input {
+  min-width: 0;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: var(--drawing-swatch-color);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 4px 10px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+.chart-drawing-settings-swatch.active {
+  border-color: rgba(246, 251, 255, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(9, 13, 19, 0.6),
+    0 0 0 1px rgba(246, 251, 255, 0.24);
+}
+
+.chart-drawing-settings-color-input {
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.chart-drawing-settings-color-input input {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.chart-drawing-settings-color-input input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.chart-drawing-settings-color-input input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 3px;
+}
+
+.chart-drawing-range-field {
+  display: grid;
+  gap: 8px;
+}
+
+.chart-drawing-range-field span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.chart-drawing-range-field b,
+.chart-drawing-range-field em {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.58rem;
+  font-style: normal;
+}
+
+.chart-drawing-range-field b {
+  color: rgba(227, 237, 251, 0.86);
+  font-weight: 650;
+}
+
+.chart-drawing-range-field em {
+  color: rgba(180, 196, 220, 0.7);
+}
+
+.chart-drawing-range-field input[type="range"] {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  accent-color: #7fb7ff;
+  cursor: pointer;
+}
+
+.chart-fib-settings {
+  gap: 9px;
+}
+
+.chart-fib-preset-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.chart-fib-preset-btn,
+.chart-fib-add-btn {
+  min-height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
+    rgba(255, 255, 255, 0.025);
+  color: rgba(226, 236, 250, 0.84);
+  font-size: 0.62rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.chart-fib-preset-btn:hover,
+.chart-fib-add-btn:hover {
+  border-color: rgba(130, 177, 255, 0.34);
+  background: rgba(80, 124, 190, 0.16);
+  color: #f6faff;
+  transform: translateY(-1px);
+}
+
+.chart-fib-level-list {
+  display: grid;
+  gap: 6px;
+  max-height: 188px;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(126, 155, 198, 0.42) transparent;
+}
+
+.chart-fib-level-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-fib-level-row > span {
+  color: rgba(178, 194, 218, 0.56);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.56rem;
+}
+
+.chart-fib-level-row input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #eef5ff;
+  padding: 0 0.5rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.66rem;
+  outline: none;
+}
+
+.chart-fib-level-row input:focus {
+  border-color: rgba(127, 183, 255, 0.48);
+  background: rgba(44, 68, 105, 0.22);
+}
+
+.chart-fib-level-remove:disabled,
+.chart-fib-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.chart-fib-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
 }
 
 .chart-empty-state {
@@ -3094,6 +3424,149 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
+.tradovate-tab {
+  background:
+    linear-gradient(180deg, rgba(8, 12, 18, 0.98) 0%, rgba(5, 8, 13, 1) 100%);
+}
+
+.tradovate-trades-shell {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  align-content: start;
+  gap: 0.7rem;
+  padding: 0.76rem 0.72rem 0.9rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tradovate-account-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border: 1px solid rgba(48, 65, 98, 0.82);
+  border-radius: 12px;
+  background: rgba(14, 20, 30, 0.78);
+  overflow: hidden;
+}
+
+.tradovate-account-strip div {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.62rem 0.7rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tradovate-account-strip div:last-child {
+  border-bottom: 0;
+}
+
+.tradovate-account-strip span,
+.tradovate-updated-at {
+  color: rgba(183, 197, 216, 0.64);
+  font-size: 0.54rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.tradovate-account-strip strong {
+  min-width: 0;
+  color: #eef4ff;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tradovate-updated-at {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0.03em;
+}
+
+.tradovate-trade-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.tradovate-trade-row {
+  width: 100%;
+  border: 1px solid rgba(47, 64, 94, 0.88);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(18, 27, 40, 0.96) 0%, rgba(10, 15, 23, 0.98) 100%);
+  color: inherit;
+  padding: 0.66rem 0.7rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.68rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.tradovate-trade-row:hover {
+  border-color: rgba(86, 117, 186, 0.86);
+  background:
+    linear-gradient(180deg, rgba(23, 34, 50, 0.98) 0%, rgba(12, 19, 28, 0.98) 100%);
+  transform: translateY(-1px);
+}
+
+.tradovate-trade-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.tradovate-trade-values {
+  min-width: 112px;
+  display: grid;
+  justify-items: end;
+  gap: 0.14rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.tradovate-trade-values strong {
+  color: #eef4ff;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.tradovate-trade-values span,
+.tradovate-trade-values small {
+  color: rgba(183, 197, 216, 0.68);
+  font-size: 0.58rem;
+  line-height: 1.18;
+}
+
+.tradovate-empty-state {
+  margin: 0.82rem 0.72rem;
+  display: grid;
+  gap: 0.32rem;
+  padding: 0.82rem;
+  border: 1px solid rgba(48, 65, 98, 0.82);
+  border-radius: 12px;
+  background: rgba(14, 20, 30, 0.72);
+}
+
+.tradovate-empty-state.compact {
+  margin: 0;
+}
+
+.tradovate-empty-state strong {
+  color: #eef4ff;
+  font-size: 0.78rem;
+}
+
+.tradovate-empty-state p {
+  margin: 0;
+  color: rgba(222, 232, 244, 0.68);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
 .ai-tab {
   justify-content: flex-start;
 }
@@ -3195,6 +3668,12 @@ button {
     flex-direction: row;
     justify-content: flex-start;
     padding: 0.42rem 0.58rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .panel-rail::-webkit-scrollbar {
+    display: none;
   }
 
   .panel-content {
@@ -3267,6 +3746,25 @@ button {
   left: var(--chart-left-rail-left);
   transform: scale(0.92);
   transform-origin: top left;
+}
+
+.chart-drawing-settings {
+  top: auto;
+  bottom: 8px;
+  left: calc(var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap));
+  width: min(
+    300px,
+    calc(100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) + 8px))
+  );
+  max-height: min(58%, 370px);
+}
+
+.chart-stage.with-drawing-settings .chart-overlay-stack {
+  left: calc(var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap));
+  width: min(
+    220px,
+    calc(100% - (var(--chart-left-rail-left) + var(--chart-left-rail-width) + var(--chart-left-rail-gap) + 8px))
+  );
 }
 
 .mobile-phone-shell {

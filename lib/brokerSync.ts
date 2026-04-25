@@ -53,10 +53,47 @@ export type BrokerSyncVerifyRequest = {
   origin?: string | null;
 };
 
+export type TradovateTradeRow = {
+  id: string;
+  orderId: string | null;
+  accountId: string | null;
+  contractId: string | null;
+  symbol: string;
+  side: "Buy" | "Sell" | "Unknown";
+  quantity: number;
+  price: number;
+  timestamp: string;
+  status: string;
+  active: boolean | null;
+};
+
+export type TradovateTradesRequest = {
+  draft: AccountSyncDraft;
+  limit?: number;
+};
+
 export type BrokerSyncVerifyResponse =
   | {
       ok: true;
       connection: SavedAccountSync;
+    }
+  | {
+      ok: false;
+      error: string;
+      fieldErrors?: Partial<Record<keyof AccountSyncDraft | "form", string>>;
+    };
+
+export type TradovateTradesResponse =
+  | {
+      ok: true;
+      trades: TradovateTradeRow[];
+      meta: {
+        environment: SyncEnvironment;
+        accountLabel: string;
+        fetchedAt: string;
+        totalFills: number;
+        filteredFills: number;
+      };
     }
   | {
       ok: false;

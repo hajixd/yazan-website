@@ -42,6 +42,8 @@ import {
   type BrokerSyncVerifyResponse,
   type SavedAccountSync,
   type SyncProvider,
+  type TradovateTradeRow,
+  type TradovateTradesResponse,
   type WebhookAuthMode,
   TRADESYNC_AUTH_URL,
   TRADESYNC_CREATE_ACCOUNT_URL,
@@ -67,7 +69,8 @@ type PanelTab =
   | "history"
   | "actions"
   | "marketMaker"
-  | "orderFlow";
+  | "orderFlow"
+  | "tradovate";
 type AccountRole = "Admin" | "User";
 type MobileWorkspaceTab = "trade" | "history";
 
@@ -237,16 +240,25 @@ type DrawingTool =
   | "shortPosition"
   | "fibonacci";
 
+type DrawableDrawingTool = Exclude<DrawingTool, "cursor">;
+
 type DrawingPoint = {
   time: number;
   price: number;
 };
 
+type ChartDrawingSettings = {
+  lineWidth: number;
+  fillOpacity: number;
+  fibonacciLevels: number[];
+};
+
 type ChartDrawing = {
   id: string;
-  tool: Exclude<DrawingTool, "cursor">;
+  tool: DrawableDrawingTool;
   points: DrawingPoint[];
   color: string;
+  settings?: Partial<ChartDrawingSettings>;
   createdAt: number;
 };
 
@@ -539,8 +551,23 @@ const sidebarTabs: Array<{ id: PanelTab; label: string; compactLabel?: boolean }
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
   { id: "marketMaker", label: "Market Maker", compactLabel: true },
-  { id: "orderFlow", label: "Order Flow", compactLabel: true }
+  { id: "orderFlow", label: "Order Flow", compactLabel: true },
+  { id: "tradovate", label: "Tradovate", compactLabel: true }
 ];
+
+const findAssetSymbolForTradovateContract = (contractSymbol: string): string | null => {
+  const normalized = contractSymbol.trim().toUpperCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return (
+    [...futuresAssets]
+      .sort((a, b) => b.symbol.length - a.symbol.length)
+      .find((asset) => normalized === asset.symbol || normalized.startsWith(asset.symbol))?.symbol ?? null
+  );
+};
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 10_080,
@@ -579,6 +606,24 @@ const CHART_DRAWING_COLOR_PALETTE = [
   "#ff934f",
   "#59d8ff"
 ] as const;
+const DEFAULT_FIBONACCI_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const EXTENDED_FIBONACCI_LEVELS = [
+  0,
+  0.236,
+  0.382,
+  0.5,
+  0.618,
+  0.786,
+  1,
+  1.272,
+  1.618
+];
+const SIMPLE_FIBONACCI_LEVELS = [0, 0.5, 1];
+const MIN_DRAWING_LINE_WIDTH = 1;
+const MAX_DRAWING_LINE_WIDTH = 7;
+const MIN_DRAWING_FILL_OPACITY = 0;
+const MAX_DRAWING_FILL_OPACITY = 0.48;
+const MAX_FIBONACCI_LEVELS = 12;
 
 const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1m": 4,
@@ -1168,6 +1213,49 @@ const renderToolbarActionIcon = (action: "delete" | "clear") => {
   );
 };
 
+const renderDrawingSettingsActionIcon = (action: "add" | "remove" | "reset") => {
+  if (action === "remove") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path
+          d="M5.8 5.8 14.2 14.2M14.2 5.8 5.8 14.2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  if (action === "reset") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path
+          d="M6.2 7.3A5 5 0 1 1 5 10.5M6.2 7.3H3.8V4.9"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.45"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path
+        d="M10 4.6v10.8M4.6 10h10.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.55"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
+
 const formatMobileDate = (timestampMs: number): string => {
   return new Date(timestampMs).toLocaleDateString("en-US", {
     weekday: "short",
@@ -1186,6 +1274,87 @@ const formatMobileTime = (timestampMs: number): string => {
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
+};
+
+const normalizeFibonacciLevels = (levels?: number[]): number[] => {
+  const normalized = (levels && levels.length > 0 ? levels : DEFAULT_FIBONACCI_LEVELS)
+    .map((level) => Number(level))
+    .filter((level) => Number.isFinite(level))
+    .map((level) => Number(clamp(level, -2, 3).toFixed(3)));
+  const unique = Array.from(new Set(normalized)).sort((a, b) => a - b);
+
+  return unique.length > 0 ? unique.slice(0, MAX_FIBONACCI_LEVELS) : DEFAULT_FIBONACCI_LEVELS;
+};
+
+const getDefaultDrawingSettings = (tool: DrawableDrawingTool): ChartDrawingSettings => {
+  const lineWidth =
+    tool === "horizontal" || tool === "vertical" || tool === "rectangle" || tool === "ellipse"
+      ? 1.6
+      : tool === "longPosition" || tool === "shortPosition"
+        ? 1.8
+        : tool === "fibonacci"
+          ? 1.4
+          : 1.7;
+  const fillOpacity =
+    tool === "rectangle" || tool === "ellipse"
+      ? 0.14
+      : tool === "measure"
+        ? 0.08
+        : tool === "longPosition" || tool === "shortPosition"
+          ? 0.24
+          : tool === "fibonacci"
+            ? 0.07
+            : 0.1;
+
+  return {
+    lineWidth,
+    fillOpacity,
+    fibonacciLevels: DEFAULT_FIBONACCI_LEVELS
+  };
+};
+
+const resolveDrawingSettings = (
+  tool: DrawableDrawingTool,
+  settings?: Partial<ChartDrawingSettings>
+): ChartDrawingSettings => {
+  const defaults = getDefaultDrawingSettings(tool);
+  const lineWidth = Number(settings?.lineWidth);
+  const fillOpacity = Number(settings?.fillOpacity);
+
+  return {
+    lineWidth: Number.isFinite(lineWidth)
+      ? clamp(lineWidth, MIN_DRAWING_LINE_WIDTH, MAX_DRAWING_LINE_WIDTH)
+      : defaults.lineWidth,
+    fillOpacity: Number.isFinite(fillOpacity)
+      ? clamp(fillOpacity, MIN_DRAWING_FILL_OPACITY, MAX_DRAWING_FILL_OPACITY)
+      : defaults.fillOpacity,
+    fibonacciLevels: normalizeFibonacciLevels(settings?.fibonacciLevels)
+  };
+};
+
+const getColorWithAlpha = (color: string, alpha: number): string => {
+  const normalizedAlpha = clamp(alpha, 0, 1);
+  const trimmed = color.trim();
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(trimmed);
+
+  if (!match) {
+    return `rgba(158, 201, 255, ${normalizedAlpha.toFixed(3)})`;
+  }
+
+  const raw = match[1];
+  const expanded =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((digit) => `${digit}${digit}`)
+          .join("")
+      : raw;
+  const value = Number.parseInt(expanded, 16);
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+
+  return `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha.toFixed(3)})`;
 };
 
 const getExitMarkerPosition = (
@@ -2003,6 +2172,16 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
     );
   }
 
+  if (tab === "tradovate") {
+    return (
+      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
+        <path d="M6 6.2h12v11.6H6z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8.4 9h7.2M8.4 12h7.2M8.4 15h4.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M5.2 8.2 3.7 9.7l1.5 1.5M18.8 12.8l1.5 1.5-1.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+    );
+  }
+
   return (
     <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
       <path
@@ -2079,6 +2258,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   });
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool>("cursor");
   const [activeDrawingColor, setActiveDrawingColor] = useState(CHART_DRAWING_COLOR);
+  const [activeDrawingSettings, setActiveDrawingSettings] = useState<ChartDrawingSettings>(
+    getDefaultDrawingSettings("trendline")
+  );
   const [chartDrawingsByKey, setChartDrawingsByKey] = useState<Record<string, ChartDrawing[]>>({});
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [drawingDraft, setDrawingDraft] = useState<DrawingDraft | null>(null);
@@ -2092,6 +2274,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [yazanSyncFieldErrors, setYazanSyncFieldErrors] = useState<
     Partial<Record<keyof AccountSyncDraft | "form", string>>
   >({});
+  const [tradovateTrades, setTradovateTrades] = useState<TradovateTradeRow[]>([]);
+  const [tradovateTradeStatus, setTradovateTradeStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [tradovateTradeError, setTradovateTradeError] = useState<string | null>(null);
+  const [tradovateTradesUpdatedAt, setTradovateTradesUpdatedAt] = useState<string | null>(null);
   const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
   const [yazanAccountMenuPosition, setYazanAccountMenuPosition] = useState<AccountMenuPosition>({
     x: 0,
@@ -2865,7 +3053,28 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
   }, [currentChartDrawings, selectedDrawingId]);
+  const selectedDrawingTool = selectedDrawing?.tool ?? null;
   const activeDrawingColorValue = selectedDrawing?.color ?? activeDrawingColor;
+  const activeDrawableDrawingTool = activeDrawingTool === "cursor" ? null : activeDrawingTool;
+  const drawingSettingsTool = selectedDrawingTool ?? activeDrawableDrawingTool;
+  const drawingSettingsValue = drawingSettingsTool
+    ? selectedDrawing
+      ? resolveDrawingSettings(selectedDrawing.tool, selectedDrawing.settings)
+      : resolveDrawingSettings(drawingSettingsTool, activeDrawingSettings)
+    : null;
+  const drawingSettingsToolConfig = drawingSettingsTool
+    ? chartDrawingTools.find((tool) => tool.tool === drawingSettingsTool)
+    : null;
+  const drawingSettingsTitle = selectedDrawing
+    ? `Selected ${drawingSettingsToolConfig?.label ?? "Drawing"}`
+    : drawingSettingsToolConfig
+      ? `New ${drawingSettingsToolConfig.label}`
+      : "Drawing Settings";
+  const drawingSettingsCanUseFill = drawingSettingsTool
+    ? ["rectangle", "ellipse", "measure", "longPosition", "shortPosition", "fibonacci"].includes(
+        drawingSettingsTool
+      )
+    : false;
 
   const updateChartDrawings = useCallback(
     (updater: (current: ChartDrawing[]) => ChartDrawing[]) => {
@@ -2902,6 +3111,38 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       );
     },
     [selectedDrawingId, updateChartDrawings]
+  );
+
+  const applyDrawingSettingsPatch = useCallback(
+    (patch: Partial<ChartDrawingSettings>) => {
+      const targetTool = selectedDrawingTool ?? (activeDrawingTool === "cursor" ? "trendline" : activeDrawingTool);
+
+      setActiveDrawingSettings((current) =>
+        resolveDrawingSettings(targetTool, {
+          ...current,
+          ...patch
+        })
+      );
+
+      if (!selectedDrawingId) {
+        return;
+      }
+
+      updateChartDrawings((current) =>
+        current.map((drawing) =>
+          drawing.id === selectedDrawingId
+            ? {
+                ...drawing,
+                settings: resolveDrawingSettings(drawing.tool, {
+                  ...drawing.settings,
+                  ...patch
+                })
+              }
+            : drawing
+        )
+      );
+    },
+    [activeDrawingTool, selectedDrawingId, selectedDrawingTool, updateChartDrawings]
   );
 
   const deleteSelectedDrawing = useCallback(() => {
@@ -3114,6 +3355,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           tool: "horizontal",
           points: [point],
           color: activeDrawingColor,
+          settings: resolveDrawingSettings("horizontal", activeDrawingSettings),
           createdAt: Date.now()
         };
 
@@ -3128,6 +3370,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           tool: "vertical",
           points: [point],
           color: activeDrawingColor,
+          settings: resolveDrawingSettings("vertical", activeDrawingSettings),
           createdAt: Date.now()
         };
 
@@ -3151,6 +3394,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         tool: activeDrawingDraft.tool,
         points: [activeDrawingDraft.start, point],
         color: activeDrawingColor,
+        settings: resolveDrawingSettings(activeDrawingDraft.tool, activeDrawingSettings),
         createdAt: Date.now()
       };
 
@@ -3161,6 +3405,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     [
       activeDrawingDraft,
       activeDrawingColor,
+      activeDrawingSettings,
       activeDrawingTool,
       canDrawOnChart,
       getDrawingPointFromClientPosition,
@@ -5699,6 +5944,78 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         ? INTERNAL_SIMULATION_MODEL.name
         : null;
 
+  const tradovateConnection = yazanAccount?.provider === "tradovate" ? yazanAccount : null;
+  const tradovateTradeCountLabel =
+    tradovateTradeStatus === "loading"
+      ? "Loading"
+      : `${tradovateTrades.length.toLocaleString("en-US")} fills`;
+
+  const loadTradovateTrades = useCallback(async () => {
+    if (!tradovateConnection) {
+      setTradovateTrades([]);
+      setTradovateTradesUpdatedAt(null);
+      setTradovateTradeStatus("idle");
+      setTradovateTradeError(null);
+      return;
+    }
+
+    setTradovateTradeStatus("loading");
+    setTradovateTradeError(null);
+
+    try {
+      const response = await fetch("/api/broker-sync/tradovate-trades", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          draft: tradovateConnection,
+          limit: 80
+        })
+      });
+      const result = (await response.json()) as TradovateTradesResponse;
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? "Tradovate trades could not be loaded." : result.error);
+      }
+
+      setTradovateTrades(result.trades);
+      setTradovateTradesUpdatedAt(result.meta.fetchedAt);
+      setTradovateTradeStatus("ready");
+    } catch (error) {
+      setTradovateTrades([]);
+      setTradovateTradesUpdatedAt(null);
+      setTradovateTradeStatus("error");
+      setTradovateTradeError(
+        error instanceof Error ? error.message : "Tradovate trades could not be loaded."
+      );
+    }
+  }, [tradovateConnection]);
+
+  useEffect(() => {
+    if (activePanelTab !== "tradovate" || showYazanSyncDraft) {
+      return;
+    }
+
+    void loadTradovateTrades();
+  }, [activePanelTab, loadTradovateTrades, showYazanSyncDraft]);
+
+  useEffect(() => {
+    if (
+      activePanelTab !== "tradovate" ||
+      !showYazanSyncDraft ||
+      yazanSyncDraft.provider === "tradovate"
+    ) {
+      return;
+    }
+
+    setYazanSyncDraft(createDefaultSyncDraft("tradovate"));
+    setYazanSyncDraftMode("add");
+    setYazanSyncFieldErrors({});
+    setYazanSyncError(null);
+    setYazanSyncSuccess(null);
+  }, [activePanelTab, showYazanSyncDraft, yazanSyncDraft.provider]);
+
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
@@ -5785,6 +6102,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setShowYazanSyncDraft(true);
   };
 
+  const openTradovateSyncDraft = () => {
+    openYazanSyncDraft(tradovateConnection ? "edit" : "add", "tradovate");
+  };
+
   const openYazanAccountMenu = (clientX: number, clientY: number) => {
     if (!isAdmin) {
       return;
@@ -5865,6 +6186,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       setYazanAccount(nextConnection);
       setYazanSyncDraft(nextConnection);
       setYazanSyncSuccess(nextConnection.connectionMessage || "Connection verified and saved.");
+      if (nextConnection.provider !== "tradovate") {
+        setTradovateTrades([]);
+        setTradovateTradeStatus("idle");
+        setTradovateTradeError(null);
+        setTradovateTradesUpdatedAt(null);
+      }
       setShowYazanSyncDraft(false);
       setShowYazanAccountMenu(false);
     } catch (error) {
@@ -5883,6 +6210,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
     setYazanSyncFieldErrors({});
+    setTradovateTrades([]);
+    setTradovateTradeStatus("idle");
+    setTradovateTradeError(null);
+    setTradovateTradesUpdatedAt(null);
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
   };
@@ -6603,6 +6934,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           tool: activeDrawingDraft.tool,
           points: [activeDrawingDraft.start, activeDrawingDraft.current],
           color: activeDrawingColor,
+          settings: resolveDrawingSettings(activeDrawingDraft.tool, activeDrawingSettings),
           createdAt: Date.now()
         } satisfies ChartDrawing
       ]
@@ -6730,7 +7062,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     start: { x: number; y: number },
     end: { x: number; y: number },
     stroke: string,
-    opacity: number
+    opacity: number,
+    lineWidth: number
   ) => {
     const dx = end.x - start.x;
     const dy = end.y - start.y;
@@ -6754,7 +7087,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         d={`M ${leftX} ${leftY} L ${end.x} ${end.y} L ${rightX} ${rightY}`}
         fill="none"
         stroke={stroke}
-        strokeWidth={1.8}
+        strokeWidth={Math.max(1.4, lineWidth)}
         strokeLinecap="round"
         strokeLinejoin="round"
         opacity={opacity}
@@ -6766,6 +7099,16 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const isDraft = drawing.id === "draft-drawing";
     const isSelected = selectedDrawingId === drawing.id;
     const stroke = drawing.color || CHART_DRAWING_COLOR;
+    const settings = resolveDrawingSettings(drawing.tool, drawing.settings);
+    const lineWidth = settings.lineWidth;
+    const activeLineWidth = lineWidth + (isSelected ? 0.45 : 0);
+    const haloLineWidth = Math.max(lineWidth + 4, 5);
+    const hitLineWidth = Math.max(14, lineWidth * 6);
+    const drawingFill = getColorWithAlpha(stroke, settings.fillOpacity);
+    const drawingFillSelected = getColorWithAlpha(
+      stroke,
+      Math.min(MAX_DRAWING_FILL_OPACITY, settings.fillOpacity + 0.08)
+    );
     const opacity = isDraft ? 0.76 : 1;
     const groupProps =
       !isDraft && activeDrawingTool === "cursor"
@@ -6793,7 +7136,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y1={point.y}
             y2={point.y}
             stroke="rgba(158, 201, 255, 0.18)"
-            strokeWidth={6}
+            strokeWidth={Math.max(6, lineWidth + 4)}
             opacity={opacity}
           />
           <line
@@ -6802,7 +7145,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y1={point.y}
             y2={point.y}
             stroke={stroke}
-            strokeWidth={isSelected ? 2.2 : 1.55}
+            strokeWidth={activeLineWidth}
             strokeDasharray="6 4"
             opacity={opacity}
           />
@@ -6813,7 +7156,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               y1={point.y}
               y2={point.y}
               stroke="transparent"
-              strokeWidth={14}
+              strokeWidth={hitLineWidth}
             />
           ) : null}
           {renderDrawingBadge(
@@ -6842,7 +7185,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y1={0}
             y2={chartViewportSize.height}
             stroke="rgba(158, 201, 255, 0.16)"
-            strokeWidth={6}
+            strokeWidth={Math.max(6, lineWidth + 4)}
             opacity={opacity}
           />
           <line
@@ -6851,7 +7194,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y1={0}
             y2={chartViewportSize.height}
             stroke={stroke}
-            strokeWidth={isSelected ? 2.2 : 1.55}
+            strokeWidth={activeLineWidth}
             strokeDasharray="6 4"
             opacity={opacity}
           />
@@ -6862,7 +7205,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               y1={0}
               y2={chartViewportSize.height}
               stroke="transparent"
-              strokeWidth={14}
+              strokeWidth={hitLineWidth}
             />
           ) : null}
           {renderDrawingBadge(
@@ -6904,9 +7247,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             cy={cy}
             rx={width / 2}
             ry={height / 2}
-            fill={isSelected ? "rgba(158, 201, 255, 0.16)" : "rgba(115, 170, 245, 0.11)"}
-            stroke="rgba(158, 201, 255, 0.18)"
-            strokeWidth={7}
+            fill={isSelected ? drawingFillSelected : drawingFill}
+            stroke={getColorWithAlpha(stroke, 0.18)}
+            strokeWidth={Math.max(7, lineWidth + 5)}
             opacity={opacity}
           />
           <ellipse
@@ -6916,7 +7259,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             ry={height / 2}
             fill="transparent"
             stroke={stroke}
-            strokeWidth={isSelected ? 2.2 : 1.5}
+            strokeWidth={activeLineWidth}
             opacity={opacity}
           />
           <line
@@ -6926,7 +7269,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y2={y + height}
             stroke="rgba(210, 226, 245, 0.2)"
             strokeDasharray="4 4"
-            strokeWidth={1}
+            strokeWidth={Math.max(1, lineWidth * 0.5)}
             opacity={opacity}
           />
           <line
@@ -6936,7 +7279,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y2={cy}
             stroke="rgba(210, 226, 245, 0.2)"
             strokeDasharray="4 4"
-            strokeWidth={1}
+            strokeWidth={Math.max(1, lineWidth * 0.5)}
             opacity={opacity}
           />
           {renderDrawingBadge(x, y - 20, `ELLIPSE  ${getDrawingRangeLabel(drawing.points[0], drawing.points[1], selectedAsset.tickSize, selectedTimeframe)}`, "accent")}
@@ -6975,9 +7318,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y={y}
             width={width}
             height={height}
-            fill="rgba(95, 163, 255, 0.06)"
-            stroke="rgba(95, 163, 255, 0.55)"
-            strokeWidth={isSelected ? 1.8 : 1.2}
+            fill={drawingFill}
+            stroke={getColorWithAlpha(stroke, 0.56)}
+            strokeWidth={Math.max(1.1, activeLineWidth * 0.78)}
             strokeDasharray="4 4"
             opacity={opacity}
           />
@@ -6987,7 +7330,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={end.x}
             y2={end.y}
             stroke={stroke}
-            strokeWidth={isSelected ? 2.1 : 1.4}
+            strokeWidth={activeLineWidth}
             opacity={opacity}
           />
           <line
@@ -6996,7 +7339,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={x + width}
             y2={midY}
             stroke="rgba(214, 227, 244, 0.18)"
-            strokeWidth={1}
+            strokeWidth={Math.max(1, lineWidth * 0.45)}
             opacity={opacity}
           />
           <line
@@ -7005,7 +7348,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={midX}
             y2={y + height}
             stroke="rgba(214, 227, 244, 0.18)"
-            strokeWidth={1}
+            strokeWidth={Math.max(1, lineWidth * 0.45)}
             opacity={opacity}
           />
           {renderDrawingBadge(midX, y - 20, label, lineMetrics.priceDelta >= 0 ? "up" : "down", "center")}
@@ -7029,8 +7372,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const width = Math.max(56, right - left);
       const top = start.y;
       const bottom = end.y;
-      const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-      const fibStroke = isSelected ? "#f6fbff" : "#d9bf76";
+      const ratios = settings.fibonacciLevels;
+      const fibStroke = stroke;
       const startPrice = drawing.points[0]?.price ?? 0;
       const endPrice = drawing.points[1]?.price ?? 0;
 
@@ -7041,7 +7384,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y={Math.min(top, bottom)}
             width={width}
             height={Math.abs(bottom - top)}
-            fill="rgba(217, 191, 118, 0.04)"
+            fill={drawingFill}
             opacity={opacity}
           />
           {ratios.map((ratio) => {
@@ -7055,8 +7398,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   y1={y}
                   x2={left + width}
                   y2={y}
-                  stroke="rgba(217, 191, 118, 0.2)"
-                  strokeWidth={ratio === 0 || ratio === 1 ? 6 : 4}
+                  stroke={getColorWithAlpha(fibStroke, 0.22)}
+                  strokeWidth={ratio === 0 || ratio === 1 ? Math.max(6, lineWidth + 5) : Math.max(4, lineWidth + 3)}
                   opacity={opacity}
                 />
                 <line
@@ -7065,7 +7408,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   x2={left + width}
                   y2={y}
                   stroke={fibStroke}
-                  strokeWidth={ratio === 0 || ratio === 1 ? 1.9 : 1.2}
+                  strokeWidth={ratio === 0 || ratio === 1 ? activeLineWidth + 0.35 : activeLineWidth}
                   opacity={opacity}
                 />
                 <text
@@ -7114,8 +7457,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const stopHeight = Math.abs(stopY - entryY);
       const targetTop = Math.min(entryY, targetY);
       const targetHeight = Math.abs(targetY - entryY);
-      const targetFill = isSelected ? "rgba(72, 199, 142, 0.28)" : "rgba(38, 176, 118, 0.22)";
-      const stopFill = isSelected ? "rgba(255, 111, 131, 0.24)" : "rgba(214, 74, 98, 0.18)";
+      const targetFillAlpha = clamp(settings.fillOpacity + (isSelected ? 0.08 : 0), 0.08, 0.38);
+      const stopFillAlpha = clamp(settings.fillOpacity + (isSelected ? 0.04 : -0.02), 0.06, 0.34);
+      const targetFill = `rgba(72, 199, 142, ${targetFillAlpha.toFixed(3)})`;
+      const stopFill = `rgba(255, 111, 131, ${stopFillAlpha.toFixed(3)})`;
       const entryPrice = drawing.points[0]?.price ?? 0;
       const stopPrice = drawing.points[1]?.price ?? entryPrice;
       const riskDistance = Math.max(selectedAsset.tickSize, Math.abs(entryPrice - stopPrice));
@@ -7143,7 +7488,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             height={Math.max(1, targetHeight)}
             fill={targetFill}
             stroke="rgba(79, 214, 154, 0.92)"
-            strokeWidth={isSelected ? 1.8 : 1.2}
+            strokeWidth={Math.max(1.1, activeLineWidth * 0.74)}
             opacity={opacity}
           />
           <rect
@@ -7153,7 +7498,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             height={Math.max(1, stopHeight)}
             fill={stopFill}
             stroke="rgba(255, 123, 145, 0.9)"
-            strokeWidth={isSelected ? 1.8 : 1.2}
+            strokeWidth={Math.max(1.1, activeLineWidth * 0.74)}
             opacity={opacity}
           />
           <line
@@ -7162,7 +7507,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={left + width}
             y2={entryY}
             stroke={stroke}
-            strokeWidth={isSelected ? 2.4 : 1.8}
+            strokeWidth={activeLineWidth}
             strokeDasharray="5 4"
             opacity={opacity}
           />
@@ -7227,9 +7572,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             y={y}
             width={Math.max(1, width)}
             height={Math.max(1, height)}
-            fill={isSelected ? "rgba(246, 251, 255, 0.14)" : "rgba(158, 201, 255, 0.14)"}
+            fill={isSelected ? drawingFillSelected : drawingFill}
             stroke={stroke}
-            strokeWidth={isSelected ? 2.2 : 1.55}
+            strokeWidth={activeLineWidth}
             rx={7}
             opacity={opacity}
           />
@@ -7270,7 +7615,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           x2={lineEnd.x}
           y2={lineEnd.y}
           stroke="rgba(158, 201, 255, 0.2)"
-          strokeWidth={isSelected ? 7 : 5}
+          strokeWidth={isSelected ? haloLineWidth + 1 : haloLineWidth}
           strokeLinecap="round"
           opacity={opacity}
         />
@@ -7280,13 +7625,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           x2={lineEnd.x}
           y2={lineEnd.y}
           stroke={stroke}
-          strokeWidth={isSelected ? 2.3 : 1.7}
+          strokeWidth={activeLineWidth}
           strokeLinecap="round"
           opacity={opacity}
         />
-        {drawing.tool === "arrow" ? renderArrowHead(start, lineEnd, stroke, opacity) : null}
-        <circle cx={start.x} cy={start.y} r={3.2} fill={stroke} opacity={opacity} />
-        {drawing.tool !== "ray" ? <circle cx={lineEnd.x} cy={lineEnd.y} r={3.2} fill={stroke} opacity={opacity} /> : null}
+        {drawing.tool === "arrow" ? renderArrowHead(start, lineEnd, stroke, opacity, activeLineWidth) : null}
+        <circle cx={start.x} cy={start.y} r={Math.max(3.2, lineWidth * 1.25)} fill={stroke} opacity={opacity} />
+        {drawing.tool !== "ray" ? (
+          <circle cx={lineEnd.x} cy={lineEnd.y} r={Math.max(3.2, lineWidth * 1.25)} fill={stroke} opacity={opacity} />
+        ) : null}
         {renderDrawingBadge(
           labelX,
           labelY,
@@ -7301,12 +7648,414 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             x2={lineEnd.x}
             y2={lineEnd.y}
             stroke="transparent"
-            strokeWidth={14}
+            strokeWidth={hitLineWidth}
             strokeLinecap="round"
           />
         ) : null}
         {renderDrawingHandles(drawing, [start, end])}
       </g>
+    );
+  };
+
+  const renderTradovateEditor = () => (
+    <>
+      <div className="watchlist-head with-action">
+        <div>
+          <h2>{yazanSyncDraftMode === "add" ? "Add Tradovate" : "Edit Tradovate"}</h2>
+          <p>Save your Tradovate API details to load recent account fills.</p>
+        </div>
+        <button
+          type="button"
+          className="panel-action-btn"
+          onClick={closeYazanSyncDraft}
+          disabled={yazanSyncSaving}
+        >
+          Back
+        </button>
+      </div>
+      <form
+        className="account-editor-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void saveYazanSyncDraft();
+        }}
+      >
+        {yazanSyncError ? (
+          <div className="sync-note-card sync-status-card sync-status-card-error">
+            <strong>Connection failed</strong>
+            <p>{yazanSyncError}</p>
+          </div>
+        ) : null}
+        {yazanSyncSuccess ? (
+          <div className="sync-note-card sync-status-card sync-status-card-success">
+            <strong>Connection saved</strong>
+            <p>{yazanSyncSuccess}</p>
+          </div>
+        ) : null}
+        <label className="account-editor-row">
+          <span>Connection Label</span>
+          <input
+            className={`account-input ${yazanSyncFieldErrors.connectionLabel ? "input-error" : ""}`}
+            value={yazanSyncDraft.connectionLabel}
+            onChange={(event) => {
+              updateYazanSyncDraft("connectionLabel", event.target.value);
+            }}
+            placeholder="Yazan Tradovate"
+            disabled={yazanSyncSaving}
+          />
+          {yazanSyncFieldErrors.connectionLabel ? (
+            <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
+          ) : null}
+        </label>
+        <label className="account-editor-row">
+          <span>Account Name</span>
+          <input
+            className="account-input"
+            value={yazanSyncDraft.accountLabel}
+            onChange={(event) => {
+              updateYazanSyncDraft("accountLabel", event.target.value);
+            }}
+            placeholder="Roman Capital Primary"
+            disabled={yazanSyncSaving}
+          />
+        </label>
+        <div className="account-editor-row">
+          <span>Environment</span>
+          <div className="sync-mode-row">
+            <button
+              type="button"
+              className={`sync-mode-btn ${yazanSyncDraft.environment === "live" ? "active" : ""}`}
+              onClick={() => setYazanSyncDraft((prev) => ({ ...prev, environment: "live" }))}
+              disabled={yazanSyncSaving}
+            >
+              Live
+            </button>
+            <button
+              type="button"
+              className={`sync-mode-btn ${yazanSyncDraft.environment === "demo" ? "active" : ""}`}
+              onClick={() => setYazanSyncDraft((prev) => ({ ...prev, environment: "demo" }))}
+              disabled={yazanSyncSaving}
+            >
+              Demo
+            </button>
+          </div>
+          <small className="sync-field-hint">
+            Tradovate API access is configured separately for live and simulation accounts.
+          </small>
+        </div>
+        <div className="account-editor-row">
+          <span>Access Mode</span>
+          <div className="sync-mode-row">
+            <button
+              type="button"
+              className={`sync-mode-btn ${yazanSyncDraft.accessMode === "api_key" ? "active" : ""}`}
+              onClick={() => setYazanSyncDraft((prev) => ({ ...prev, accessMode: "api_key" }))}
+              disabled={yazanSyncSaving}
+            >
+              API Key
+            </button>
+            <button
+              type="button"
+              className={`sync-mode-btn ${
+                yazanSyncDraft.accessMode === "api_key_password" ? "active" : ""
+              }`}
+              onClick={() =>
+                setYazanSyncDraft((prev) => ({ ...prev, accessMode: "api_key_password" }))
+              }
+              disabled={yazanSyncSaving}
+            >
+              Key + Password
+            </button>
+          </div>
+        </div>
+        <label className="account-editor-row">
+          <span>Username</span>
+          <input
+            className={`account-input ${yazanSyncFieldErrors.username ? "input-error" : ""}`}
+            value={yazanSyncDraft.username}
+            onChange={(event) => {
+              updateYazanSyncDraft("username", event.target.value);
+            }}
+            placeholder="yourname@tradovate"
+            disabled={yazanSyncSaving}
+          />
+          {yazanSyncFieldErrors.username ? (
+            <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
+          ) : null}
+        </label>
+        <label className="account-editor-row">
+          <span>API / Security Key</span>
+          <input
+            className={`account-input ${yazanSyncFieldErrors.apiKey ? "input-error" : ""}`}
+            type="password"
+            value={yazanSyncDraft.apiKey}
+            onChange={(event) => {
+              updateYazanSyncDraft("apiKey", event.target.value);
+            }}
+            placeholder="Tradovate API key"
+            disabled={yazanSyncSaving}
+          />
+          {yazanSyncFieldErrors.apiKey ? (
+            <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+          ) : null}
+        </label>
+        {yazanSyncDraft.accessMode === "api_key_password" ? (
+          <label className="account-editor-row">
+            <span>Dedicated Password</span>
+            <input
+              className={`account-input ${yazanSyncFieldErrors.apiSecret ? "input-error" : ""}`}
+              type="password"
+              value={yazanSyncDraft.apiSecret}
+              onChange={(event) => {
+                updateYazanSyncDraft("apiSecret", event.target.value);
+              }}
+              placeholder="Dedicated API password"
+              disabled={yazanSyncSaving}
+            />
+            {yazanSyncFieldErrors.apiSecret ? (
+              <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
+            ) : null}
+          </label>
+        ) : null}
+        <label className="account-editor-row">
+          <span>App ID</span>
+          <input
+            className={`account-input ${yazanSyncFieldErrors.appId ? "input-error" : ""}`}
+            value={yazanSyncDraft.appId}
+            onChange={(event) => {
+              updateYazanSyncDraft("appId", event.target.value);
+            }}
+            placeholder="roman-capital-terminal"
+            disabled={yazanSyncSaving}
+          />
+          {yazanSyncFieldErrors.appId ? (
+            <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
+          ) : null}
+        </label>
+        <label className="account-editor-row">
+          <span>App Version</span>
+          <input
+            className="account-input"
+            value={yazanSyncDraft.appVersion}
+            onChange={(event) => {
+              updateYazanSyncDraft("appVersion", event.target.value);
+            }}
+            placeholder="1.0.0"
+            disabled={yazanSyncSaving}
+          />
+        </label>
+        <label className="account-editor-row">
+          <span>Device ID</span>
+          <input
+            className="account-input"
+            value={yazanSyncDraft.deviceId}
+            onChange={(event) => {
+              updateYazanSyncDraft("deviceId", event.target.value);
+            }}
+            placeholder="optional-device-id"
+            disabled={yazanSyncSaving}
+          />
+        </label>
+        <label className="account-editor-row">
+          <span>Account Number</span>
+          <input
+            className={`account-input ${yazanSyncFieldErrors.accountNumber ? "input-error" : ""}`}
+            value={yazanSyncDraft.accountNumber}
+            onChange={(event) => {
+              updateYazanSyncDraft("accountNumber", event.target.value);
+            }}
+            placeholder="Optional: exact Tradovate account ID"
+            disabled={yazanSyncSaving}
+          />
+          {yazanSyncFieldErrors.accountNumber ? (
+            <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
+          ) : null}
+        </label>
+        <div className="sync-note-card">
+          <strong>Tradovate setup notes</strong>
+          <p>
+            Enable API Access in Tradovate, then save the key here to verify the account and
+            read recent fills.
+          </p>
+          <div className="sync-doc-links">
+            <a href={TRADOVATE_API_ACCESS_URL} target="_blank" rel="noreferrer">
+              API Access
+            </a>
+            <a href={TRADOVATE_AUTH_OPTIONS_URL} target="_blank" rel="noreferrer">
+              Auth Options
+            </a>
+            <a href={TRADOVATE_MARKET_DATA_URL} target="_blank" rel="noreferrer">
+              Market Data
+            </a>
+            <a href={TRADOVATE_PERMISSIONS_URL} target="_blank" rel="noreferrer">
+              Permissions
+            </a>
+          </div>
+        </div>
+        <div className="account-editor-actions">
+          <button
+            type="submit"
+            className="account-submit-btn account-editor-submit"
+            disabled={yazanSyncSaving}
+          >
+            {yazanSyncSaving ? "Verifying..." : "Save Tradovate"}
+          </button>
+        </div>
+      </form>
+    </>
+  );
+
+  const renderTradovateTrades = () => {
+    if (!tradovateConnection) {
+      return (
+        <>
+          <div className="watchlist-head with-action">
+            <div>
+              <h2>Tradovate</h2>
+              <p>Add your Tradovate details to show recent fills here.</p>
+            </div>
+            {canManageConnections ? (
+              <button type="button" className="panel-action-btn" onClick={openTradovateSyncDraft}>
+                Add Details
+              </button>
+            ) : null}
+          </div>
+          <div className="tradovate-empty-state">
+            <strong>No Tradovate account connected</strong>
+            <p>Once the account verifies, this tab will load recent fills from Tradovate.</p>
+          </div>
+        </>
+      );
+    }
+
+    return (
+      <>
+        <div className="watchlist-head with-action">
+          <div className="active-tab-heading">
+            <div>
+              <h2>Tradovate</h2>
+              <p>{yazanAccountSummary ?? "Connected Tradovate account"}</p>
+            </div>
+            <span className="active-count-chip">{tradovateTradeCountLabel}</span>
+          </div>
+          <div className="panel-head-actions">
+            <button
+              type="button"
+              className="panel-action-btn"
+              onClick={() => void loadTradovateTrades()}
+              disabled={tradovateTradeStatus === "loading"}
+            >
+              Refresh Trades
+            </button>
+            {canManageConnections ? (
+              <button type="button" className="panel-action-btn" onClick={openTradovateSyncDraft}>
+                Edit Details
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="tradovate-trades-shell">
+          <div className="tradovate-account-strip">
+            <div>
+              <span>Account</span>
+              <strong>
+                {tradovateConnection.providerAccountName ||
+                  tradovateConnection.accountLabel ||
+                  tradovateConnection.connectionLabel}
+              </strong>
+            </div>
+            <div>
+              <span>Environment</span>
+              <strong>{tradovateConnection.environment === "demo" ? "Demo" : "Live"}</strong>
+            </div>
+            <div>
+              <span>Status</span>
+              <strong>{tradovateConnection.connectionState}</strong>
+            </div>
+          </div>
+
+          {tradovateConnection.connectionMessage ? (
+            <div className="sync-note-card sync-storage-card">
+              <strong>Connection status</strong>
+              <p>{tradovateConnection.connectionMessage}</p>
+            </div>
+          ) : null}
+
+          {tradovateTradeError ? (
+            <div className="sync-note-card sync-status-card sync-status-card-error">
+              <strong>Trades unavailable</strong>
+              <p>{tradovateTradeError}</p>
+            </div>
+          ) : null}
+
+          {tradovateTradesUpdatedAt ? (
+            <p className="tradovate-updated-at">
+              Last loaded {new Date(tradovateTradesUpdatedAt).toLocaleString("en-US")}
+            </p>
+          ) : null}
+
+          {tradovateTradeStatus === "loading" ? (
+            <div className="ai-placeholder">
+              <p>Loading recent Tradovate fills...</p>
+            </div>
+          ) : tradovateTrades.length > 0 ? (
+            <div className="tradovate-trade-list" role="list">
+              {tradovateTrades.map((trade) => {
+                const timeMs = Date.parse(trade.timestamp);
+                const mappedSymbol = findAssetSymbolForTradovateContract(trade.symbol);
+
+                return (
+                  <button
+                    key={trade.id}
+                    type="button"
+                    className="tradovate-trade-row"
+                    role="listitem"
+                    onClick={() => {
+                      if (!mappedSymbol) {
+                        return;
+                      }
+
+                      setSelectedSymbol(mappedSymbol);
+                      setSelectedHistoryId(null);
+                      setShowAllTradesOnChart(false);
+                      focusTradeIdRef.current = null;
+                    }}
+                    title={mappedSymbol ? `Open ${mappedSymbol} chart` : trade.symbol}
+                  >
+                    <span className="tradovate-trade-main">
+                      <span className="active-trade-symbol-wrap">
+                        <strong className="active-trade-symbol">{trade.symbol}</strong>
+                        <span
+                          className={`active-side ${
+                            trade.side === "Sell" ? "down" : trade.side === "Buy" ? "up" : ""
+                          }`}
+                        >
+                          {trade.side}
+                        </span>
+                      </span>
+                      <span className="active-trade-row-meta">
+                        <span>{trade.status}</span>
+                        {trade.orderId ? <span>Order {trade.orderId}</span> : null}
+                      </span>
+                    </span>
+                    <span className="tradovate-trade-values">
+                      <strong>{formatPrice(trade.price)}</strong>
+                      <span>{formatUnits(trade.quantity)} contracts</span>
+                      <small>{Number.isFinite(timeMs) ? formatDateTime(timeMs) : "--"}</small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="tradovate-empty-state compact">
+              <strong>No fills returned</strong>
+              <p>Tradovate verified the account, but no recent fills were returned for it.</p>
+            </div>
+          )}
+        </div>
+      </>
     );
   };
 
@@ -7524,7 +8273,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               );
             })()}
           </div>
-            <div className="chart-stage">
+            <div className={`chart-stage${drawingSettingsValue ? " with-drawing-settings" : ""}`}>
             <div className="chart-drawing-toolbar" aria-label="Chart drawing tools">
               {chartDrawingToolGroups.map((group, groupIndex) => (
                 <div key={group.id} className="chart-drawing-toolbar-section">
@@ -7620,6 +8369,202 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 </button>
               </div>
             </div>
+            {drawingSettingsValue ? (
+              <section
+                className="chart-drawing-settings"
+                aria-label="Drawing tool settings"
+                style={{ "--drawing-active-color": activeDrawingColorValue } as CSSProperties}
+              >
+                <header className="chart-drawing-settings-head">
+                  <div>
+                    <span>{selectedDrawing ? "Selection" : "Tool"}</span>
+                    <strong>{drawingSettingsTitle}</strong>
+                  </div>
+                  <div className="chart-drawing-settings-preview" aria-hidden="true">
+                    <span style={{ height: `${Math.max(2, drawingSettingsValue.lineWidth)}px` }} />
+                  </div>
+                  <button
+                    type="button"
+                    className="chart-drawing-settings-icon-btn"
+                    title="Reset drawing settings"
+                    aria-label="Reset drawing settings"
+                    onClick={() => {
+                      if (!drawingSettingsTool) {
+                        return;
+                      }
+
+                      applyDrawingSettingsPatch(getDefaultDrawingSettings(drawingSettingsTool));
+                    }}
+                  >
+                    {renderDrawingSettingsActionIcon("reset")}
+                  </button>
+                </header>
+
+                <div className="chart-drawing-settings-section">
+                  <div className="chart-drawing-setting-label">
+                    <span>Color</span>
+                    <strong>{activeDrawingColorValue.toUpperCase()}</strong>
+                  </div>
+                  <div className="chart-drawing-settings-color-row">
+                    {CHART_DRAWING_COLOR_PALETTE.map((color) => (
+                      <button
+                        key={`settings-${color}`}
+                        type="button"
+                        className={`chart-drawing-settings-swatch ${
+                          activeDrawingColorValue.toLowerCase() === color.toLowerCase() ? "active" : ""
+                        }`}
+                        style={{ "--drawing-swatch-color": color } as CSSProperties}
+                        title={selectedDrawing ? `Set selected drawing color to ${color}` : `Set drawing color to ${color}`}
+                        aria-label={selectedDrawing ? `Set selected drawing color to ${color}` : `Set drawing color to ${color}`}
+                        onClick={() => applyDrawingColor(color)}
+                      />
+                    ))}
+                    <label className="chart-drawing-settings-color-input">
+                      <input
+                        type="color"
+                        value={activeDrawingColorValue}
+                        aria-label={selectedDrawing ? "Selected drawing color" : "Drawing color"}
+                        onChange={(event) => applyDrawingColor(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="chart-drawing-settings-section">
+                  <label className="chart-drawing-range-field">
+                    <span>
+                      <b>Width</b>
+                      <em>{drawingSettingsValue.lineWidth.toFixed(1)} px</em>
+                    </span>
+                    <input
+                      type="range"
+                      min={MIN_DRAWING_LINE_WIDTH}
+                      max={MAX_DRAWING_LINE_WIDTH}
+                      step="0.1"
+                      value={drawingSettingsValue.lineWidth}
+                      aria-label="Drawing line width"
+                      onChange={(event) => {
+                        const lineWidth = Number(event.target.value);
+
+                        if (Number.isFinite(lineWidth)) {
+                          applyDrawingSettingsPatch({ lineWidth });
+                        }
+                      }}
+                    />
+                  </label>
+
+                  {drawingSettingsCanUseFill ? (
+                    <label className="chart-drawing-range-field">
+                      <span>
+                        <b>Fill</b>
+                        <em>{Math.round(drawingSettingsValue.fillOpacity * 100)}%</em>
+                      </span>
+                      <input
+                        type="range"
+                        min={MIN_DRAWING_FILL_OPACITY}
+                        max={MAX_DRAWING_FILL_OPACITY}
+                        step="0.01"
+                        value={drawingSettingsValue.fillOpacity}
+                        aria-label="Drawing fill opacity"
+                        onChange={(event) => {
+                          const fillOpacity = Number(event.target.value);
+
+                          if (Number.isFinite(fillOpacity)) {
+                            applyDrawingSettingsPatch({ fillOpacity });
+                          }
+                        }}
+                      />
+                    </label>
+                  ) : null}
+                </div>
+
+                {drawingSettingsTool === "fibonacci" ? (
+                  <div className="chart-drawing-settings-section chart-fib-settings">
+                    <div className="chart-drawing-setting-label">
+                      <span>Fibonacci</span>
+                      <strong>{drawingSettingsValue.fibonacciLevels.length} levels</strong>
+                    </div>
+                    <div className="chart-fib-preset-row" aria-label="Fibonacci presets">
+                      {[
+                        { label: "Simple", levels: SIMPLE_FIBONACCI_LEVELS },
+                        { label: "Standard", levels: DEFAULT_FIBONACCI_LEVELS },
+                        { label: "Extend", levels: EXTENDED_FIBONACCI_LEVELS }
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          className="chart-fib-preset-btn"
+                          onClick={() => applyDrawingSettingsPatch({ fibonacciLevels: preset.levels })}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="chart-fib-level-list">
+                      {drawingSettingsValue.fibonacciLevels.map((level, index) => (
+                        <label key={`fib-level-${index}-${level}`} className="chart-fib-level-row">
+                          <span>{String(index + 1).padStart(2, "0")}</span>
+                          <input
+                            type="number"
+                            min="-2"
+                            max="3"
+                            step="0.001"
+                            value={level.toFixed(3)}
+                            aria-label={`Fibonacci level ${index + 1}`}
+                            onChange={(event) => {
+                              const nextLevel = Number(event.target.value);
+
+                              if (!Number.isFinite(nextLevel)) {
+                                return;
+                              }
+
+                              const nextLevels = [...drawingSettingsValue.fibonacciLevels];
+                              nextLevels[index] = nextLevel;
+                              applyDrawingSettingsPatch({ fibonacciLevels: nextLevels });
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="chart-fib-level-remove"
+                            title="Remove Fibonacci level"
+                            aria-label={`Remove Fibonacci level ${index + 1}`}
+                            disabled={drawingSettingsValue.fibonacciLevels.length <= 1}
+                            onClick={() => {
+                              applyDrawingSettingsPatch({
+                                fibonacciLevels: drawingSettingsValue.fibonacciLevels.filter(
+                                  (_level, levelIndex) => levelIndex !== index
+                                )
+                              });
+                            }}
+                          >
+                            {renderDrawingSettingsActionIcon("remove")}
+                          </button>
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="chart-fib-add-btn"
+                      disabled={drawingSettingsValue.fibonacciLevels.length >= MAX_FIBONACCI_LEVELS}
+                      onClick={() => {
+                        const missingLevel = EXTENDED_FIBONACCI_LEVELS.find(
+                          (level) => !drawingSettingsValue.fibonacciLevels.includes(level)
+                        );
+                        const lastLevel = drawingSettingsValue.fibonacciLevels.at(-1) ?? 1;
+                        const nextLevel = missingLevel ?? Math.min(3, Number((lastLevel + 0.1).toFixed(3)));
+
+                        applyDrawingSettingsPatch({
+                          fibonacciLevels: [...drawingSettingsValue.fibonacciLevels, nextLevel]
+                        });
+                      }}
+                    >
+                      {renderDrawingSettingsActionIcon("add")}
+                      <span>Add level</span>
+                    </button>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
             <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
             <svg
               ref={chartDrawingOverlayRef}
@@ -9270,6 +10215,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </div>
                     </div>
                   )}
+                </div>
+              ) : null}
+
+              {activePanelTab === "tradovate" ? (
+                <div className="tab-view tradovate-tab">
+                  {showYazanSyncDraft ? renderTradovateEditor() : renderTradovateTrades()}
                 </div>
               ) : null}
 
