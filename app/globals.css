@@ -639,6 +639,36 @@ button {
   color: #dce5f6;
 }
 
+.telegram-alert-link {
+  height: 30px;
+  min-width: 78px;
+  border: 1px solid rgba(51, 156, 216, 0.42);
+  border-radius: 7px;
+  background: rgba(35, 127, 176, 0.12);
+  color: #c9eeff;
+  padding: 0 0.68rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.telegram-alert-link:hover {
+  border-color: rgba(70, 176, 236, 0.72);
+  background: rgba(35, 127, 176, 0.2);
+  color: #e3f7ff;
+}
+
+.telegram-alert-link:focus-visible {
+  outline: none;
+  border-color: rgba(98, 194, 248, 0.88);
+  box-shadow: 0 0 0 2px rgba(35, 127, 176, 0.24);
+}
+
 .notif-wrap {
   position: relative;
   z-index: 1700;
@@ -4522,6 +4552,11 @@ button {
   .account-shell-panel {
     padding: 1.15rem;
     border-radius: 20px;
+  }
+
+  .telegram-alert-link {
+    min-width: 72px;
+    padding: 0 0.5rem;
   }
 
   .account-choice-grid {

@@ -589,6 +589,8 @@ const SIMULATION_TICK_INTERVAL_MS = 1_000;
 const WATCHLIST_FETCH_BATCH_SIZE = 2;
 const WATCHLIST_FETCH_RETRY_ATTEMPTS = 1;
 const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
+const TELEGRAM_GROUP_URL =
+  process.env.NEXT_PUBLIC_TELEGRAM_GROUP_URL?.trim() || "https://t.me/RomanCapital";
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
 const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = createDefaultSyncDraft("tradovate");
 const YAZAN_ACCOUNT_MENU_WIDTH = 188;
@@ -619,6 +621,38 @@ const EXTENDED_FIBONACCI_LEVELS = [
 ];
 const SIMPLE_FIBONACCI_LEVELS = [0, 0.5, 1];
 const MIN_DRAWING_LINE_WIDTH = 1;
+
+const sendTelegramNotificationEvents = async (events: NotificationItem[]): Promise<void> => {
+  const payload = events.map((event) => ({
+    id: event.id,
+    title: event.title,
+    body: event.details,
+    tone: event.tone,
+    link: event.link ?? "/",
+    symbol: event.symbol ?? null,
+    tradeId: event.tradeId ?? null,
+    entityType: event.entityType ?? null,
+    actionCode: event.actionCode ?? null,
+    occurredAt: event.timestamp
+  }));
+
+  if (payload.length === 0) {
+    return;
+  }
+
+  try {
+    await fetch("/api/telegram/notify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ events: payload }),
+      keepalive: true
+    });
+  } catch {
+    // Telegram delivery should never interrupt the trading workspace.
+  }
+};
 const MAX_DRAWING_LINE_WIDTH = 7;
 const MIN_DRAWING_FILL_OPACITY = 0;
 const MAX_DRAWING_FILL_OPACITY = 0.48;
@@ -4717,6 +4751,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
+      if (!showcaseMode) {
+        const insertedIdSet = new Set(insertedIds);
+        void sendTelegramNotificationEvents(
+          notificationItems.filter(
+            (item) =>
+              insertedIdSet.has(item.id) &&
+              item.timestamp >= notificationSessionStartedAtRef.current
+          )
+        );
+      }
+
       const hiddenDocument =
         typeof document !== "undefined" && document.visibilityState !== "visible";
 
@@ -4762,7 +4807,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return () => {
       cancelled = true;
     };
-  }, [notificationItems]);
+  }, [notificationItems, showcaseMode]);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -8131,6 +8176,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               </button>
             ) : null}
           </div>
+          <a
+            className="telegram-alert-link"
+            href={TELEGRAM_GROUP_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open the Roman Capital Telegram group for alert notifications"
+          >
+            Telegram
+          </a>
           <div className="notif-wrap" ref={notificationRef}>
             <button
               type="button"
