@@ -569,17 +569,19 @@ const findAssetSymbolForTradovateContract = (contractSymbol: string): string | n
   );
 };
 
+const RECENT_CHART_CANDLE_COUNT = 2_000;
+
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 10_080,
-  "5m": 8_640,
-  "15m": 5_760,
-  "1H": 4_320,
-  "4H": 3_000,
-  "1D": 3_000,
+  "1m": RECENT_CHART_CANDLE_COUNT,
+  "5m": RECENT_CHART_CANDLE_COUNT,
+  "15m": RECENT_CHART_CANDLE_COUNT,
+  "1H": RECENT_CHART_CANDLE_COUNT,
+  "4H": RECENT_CHART_CANDLE_COUNT,
+  "1D": RECENT_CHART_CANDLE_COUNT,
   "1W": 1_040
 };
 
-const MAX_CHART_CANDLE_COUNT = 20_000;
+const MAX_CHART_CANDLE_COUNT = RECENT_CHART_CANDLE_COUNT;
 const CHART_BACKFILL_TRIGGER_BUFFER = 35;
 const WATCHLIST_REFRESH_INTERVAL_MS = 30_000;
 const LIVE_STREAM_FLUSH_INTERVAL_MS = 80;
