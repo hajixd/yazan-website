@@ -9351,6 +9351,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.appId ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                This is this app&apos;s client name for Tradovate token requests, not a separate value
+                                shown in your Tradovate settings. The default is fine.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>App Version</span>
@@ -9363,6 +9367,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 placeholder="1.0.0"
                                 disabled={yazanSyncSaving}
                               />
+                              <small className="sync-field-hint">
+                                Optional app version label used in the Tradovate token request.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>Device ID</span>
@@ -9375,6 +9382,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 placeholder="optional-device-id"
                                 disabled={yazanSyncSaving}
                               />
+                              <small className="sync-field-hint">
+                                Optional. You usually will not copy this from Tradovate. Leave it blank unless you use
+                                a custom device ID.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>Account Number</span>
@@ -9392,6 +9403,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.accountNumber ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Optional. Leave blank to use the first Tradovate account returned by the API. Add it
+                                only if you need to target one exact account.
+                              </small>
                             </label>
                             <div className="sync-note-card">
                               <strong>Tradovate setup notes</strong>
@@ -9502,6 +9517,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.brokerServerId ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.brokerServerId}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                This is a Trade Sync broker-server ID, not the plain MetaTrader server name. Match your
+                                MT4 or MT5 server name to Trade Sync&apos;s `/broker-servers` list to find it.
+                              </small>
                             </label>
                             <div className="account-editor-row">
                               <span>Account Type</span>
@@ -9549,6 +9568,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.apiKey ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Use the Trade Sync API key from the Trade Sync web app. This is different from your
+                                MetaTrader login.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>API Secret</span>
@@ -9567,6 +9590,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.apiSecret ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Pair this with the Trade Sync API key from the same API credential entry.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>Webhook URL</span>
@@ -9584,6 +9610,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.webhookUrl ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.webhookUrl}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Leave this blank to use this site&apos;s built-in Trade Sync webhook route. If this app
+                                is running only on localhost, Trade Sync will need a public URL or tunnel to reach it.
+                              </small>
                             </label>
                             <div className="account-editor-row">
                               <span>Webhook Auth</span>
@@ -9646,6 +9676,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.webhookAuthMode ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.webhookAuthMode}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Use `None` when you use the built-in webhook. Auth options are only for your own custom
+                                webhook URL.
+                              </small>
                             </div>
                             {yazanSyncDraft.webhookAuthMode === "basic_auth" ? (
                               <>

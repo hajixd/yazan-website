@@ -54,8 +54,13 @@ FUTURES_SYMBOLS = {
     "6J": "6J.c.0",
     "6A": "6A.c.0",
 }
+DEFAULT_MARKET_DATA_COLLECTION = "yazanMarketAssets"
 
 app = FastAPI()
+
+firebase_lock = threading.Lock()
+firebase_client: Any | None = None
+firebase_unavailable = False
 
 
 def now_ms() -> int:
@@ -119,6 +124,192 @@ def coerce_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    return normalized or None
+
+
+def normalize_private_key(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    return value.replace("\\n", "\n")
+
+
+def read_firebase_service_account() -> dict[str, Any] | None:
+    raw_json = env_value("FIREBASE_SERVICE_ACCOUNT_JSON")
+
+    if raw_json:
+        parsed = json.loads(raw_json)
+        project_id = parsed.get("project_id") or parsed.get("projectId")
+        client_email = parsed.get("client_email") or parsed.get("clientEmail")
+        private_key = normalize_private_key(parsed.get("private_key") or parsed.get("privateKey"))
+        private_key_id = parsed.get("private_key_id") or parsed.get("privateKeyId")
+
+        if not project_id or not client_email or not private_key:
+            return None
+
+        return {
+            "type": parsed.get("type") or "service_account",
+            "project_id": project_id,
+            "private_key_id": private_key_id,
+            "private_key": private_key,
+            "client_email": client_email,
+            "client_id": parsed.get("client_id") or parsed.get("clientId"),
+            "auth_uri": parsed.get("auth_uri") or "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": parsed.get("token_uri") or "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": parsed.get("auth_provider_x509_cert_url")
+            or "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": parsed.get("client_x509_cert_url"),
+            "universe_domain": parsed.get("universe_domain") or "googleapis.com",
+        }
+
+    project_id = env_value("FIREBASE_PROJECT_ID")
+    client_email = env_value("FIREBASE_CLIENT_EMAIL")
+    private_key = normalize_private_key(env_value("FIREBASE_PRIVATE_KEY"))
+    private_key_id = env_value("FIREBASE_PRIVATE_KEY_ID")
+
+    if not project_id or not client_email or not private_key:
+        return None
+
+    return {
+        "type": "service_account",
+        "project_id": project_id,
+        "private_key_id": private_key_id,
+        "private_key": private_key,
+        "client_email": client_email,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "universe_domain": "googleapis.com",
+    }
+
+
+def firebase_market_data_configured() -> bool:
+    return bool(
+        env_value("FIREBASE_SERVICE_ACCOUNT_JSON")
+        or (env_value("FIREBASE_PROJECT_ID") and env_value("FIREBASE_CLIENT_EMAIL") and env_value("FIREBASE_PRIVATE_KEY"))
+        or env_value("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+
+
+def firebase_market_data_collection() -> str:
+    return env_value("FIREBASE_MARKET_DATA_COLLECTION") or DEFAULT_MARKET_DATA_COLLECTION
+
+
+def firestore_client() -> Any | None:
+    global firebase_client
+    global firebase_unavailable
+
+    if firebase_unavailable:
+        return None
+
+    if firebase_client is not None:
+        return firebase_client
+
+    with firebase_lock:
+        if firebase_client is not None:
+            return firebase_client
+
+        if firebase_unavailable:
+            return None
+
+        try:
+            import firebase_admin
+            from firebase_admin import credentials, firestore
+
+            if not firebase_admin._apps:
+                service_account = read_firebase_service_account()
+                project_id = env_value("FIREBASE_PROJECT_ID") or (
+                    service_account.get("project_id") if service_account else None
+                )
+                credential = (
+                    credentials.Certificate(service_account)
+                    if service_account
+                    else credentials.ApplicationDefault()
+                )
+                firebase_admin.initialize_app(
+                    credential,
+                    {"projectId": project_id} if project_id else {},
+                )
+
+            firebase_client = firestore.client()
+            return firebase_client
+        except Exception as error:
+            firebase_unavailable = True
+            print(f"[firebase-candles] unavailable: {error}", flush=True)
+            return None
+
+
+def store_live_candle(
+    symbol: str,
+    databento_symbol: str,
+    timeframe: str,
+    candle: dict[str, Any],
+    schema: str,
+) -> None:
+    client = firestore_client()
+
+    if client is None:
+        return
+
+    try:
+        from firebase_admin import firestore
+
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        time_ms = int(candle["time"])
+        asset_ref = client.collection(firebase_market_data_collection()).document(symbol)
+        timeframe_ref = asset_ref.collection("timeframes").document(timeframe)
+        payload = {
+            **candle,
+            "dataset": DATABENTO_DATASET,
+            "databentoSymbol": databento_symbol,
+            "provider": "Databento Live",
+            "schema": schema,
+            "sourceTimeframe": timeframe,
+            "symbol": symbol,
+            "timeIso": datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "timeframe": timeframe,
+            "updatedAt": now_iso,
+            "serverUpdatedAt": firestore.SERVER_TIMESTAMP,
+        }
+
+        asset_ref.set(
+            {
+                "databentoSymbol": databento_symbol,
+                "symbol": symbol,
+                "updatedAt": now_iso,
+                "serverUpdatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        timeframe_ref.set(
+            {
+                "dataset": DATABENTO_DATASET,
+                "databentoSymbol": databento_symbol,
+                "latestCandleTime": time_ms,
+                "latestCandleTimeIso": payload["timeIso"],
+                "provider": "Databento Live",
+                "schema": schema,
+                "sourceTimeframe": timeframe,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updatedAt": now_iso,
+                "serverUpdatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        timeframe_ref.collection("candles").document(str(time_ms)).set(payload, merge=True)
+    except Exception as error:
+        print(f"[firebase-candles:{symbol}:{timeframe}] write failed: {error}", flush=True)
 
 
 def enum_code(value: Any) -> str:
@@ -931,6 +1122,92 @@ def stream_bbo_client(
         stop_live_client(client)
 
 
+def stream_ohlcv_client(
+    symbol: str,
+    databento_symbol: str,
+    api_key: str,
+    stop_event: threading.Event,
+    client_refs: dict[str, db.Live | None],
+) -> None:
+    resolved_symbol: str | None = None
+    client: db.Live | None = None
+
+    try:
+        client = db.Live(
+            key=api_key,
+            reconnect_policy=db.ReconnectPolicy.RECONNECT,
+            heartbeat_interval_s=10,
+        )
+        client_refs["ohlcv"] = client
+
+        client.subscribe(
+            dataset=DATABENTO_DATASET,
+            schema="ohlcv-1m",
+            symbols=[databento_symbol],
+            stype_in="continuous",
+            start=get_live_replay_start(),
+        )
+
+        for record in client:
+            if stop_event.is_set():
+                return
+
+            if isinstance(record, SymbolMappingMsg):
+                resolved = str(record.stype_out_symbol).strip()
+                resolved_symbol = resolved or None
+                continue
+
+            if isinstance(record, SystemMsg):
+                continue
+
+            if isinstance(record, ErrorMsg):
+                message = str(getattr(record, "err", "")) or "Databento sent an OHLCV error message."
+
+                if classify_terminal(message):
+                    print(f"[databento-live:{symbol}:ohlcv-1m] {message}", flush=True)
+                    return
+
+                continue
+
+            if isinstance(record, OHLCVMsg):
+                candle = {
+                    "time": ns_to_ms(getattr(record, "ts_event", None)),
+                    "open": normalise_price(
+                        getattr(record, "pretty_open", None), getattr(record, "open", None)
+                    ),
+                    "high": normalise_price(
+                        getattr(record, "pretty_high", None), getattr(record, "high", None)
+                    ),
+                    "low": normalise_price(
+                        getattr(record, "pretty_low", None), getattr(record, "low", None)
+                    ),
+                    "close": normalise_price(
+                        getattr(record, "pretty_close", None), getattr(record, "close", None)
+                    ),
+                    "volume": coerce_int(getattr(record, "volume", 0)),
+                }
+
+                if all(candle[field] > 0 for field in ("open", "high", "low", "close")):
+                    store_live_candle(
+                        symbol,
+                        databento_symbol,
+                        "1m",
+                        {
+                            **candle,
+                            "resolvedSymbol": resolved_symbol,
+                        },
+                        "ohlcv-1m",
+                    )
+    except Exception as error:
+        print(
+            f"[databento-live:{symbol}:ohlcv-1m] {error or 'OHLCV stream failed.'}",
+            flush=True,
+        )
+    finally:
+        client_refs["ohlcv"] = None
+        stop_live_client(client)
+
+
 def stream_databento_worker(
     symbol: str,
     databento_symbol: str,
@@ -992,13 +1269,26 @@ def stream_databento_worker(
         args=(symbol, databento_symbol, api_key, enqueue, stop_event, client_refs),
         daemon=True,
     )
+    ohlcv_thread = (
+        threading.Thread(
+            target=stream_ohlcv_client,
+            args=(symbol, databento_symbol, api_key, stop_event, client_refs),
+            daemon=True,
+        )
+        if firebase_market_data_configured()
+        else None
+    )
 
     trades_thread.start()
     depth_thread.start()
     bbo_thread.start()
+    if ohlcv_thread is not None:
+        ohlcv_thread.start()
     trades_thread.join()
     depth_thread.join()
     bbo_thread.join()
+    if ohlcv_thread is not None:
+        ohlcv_thread.join()
 
     enqueue(None)
 
@@ -1021,7 +1311,7 @@ async def futures_live(
 
     output_queue: queue.Queue[bytes | dict[str, Any] | None] = queue.Queue(maxsize=512)
     stop_event = threading.Event()
-    client_refs: dict[str, db.Live | None] = {"trades": None, "depth": None, "bbo": None}
+    client_refs: dict[str, db.Live | None] = {"trades": None, "depth": None, "bbo": None, "ohlcv": None}
     worker = threading.Thread(
         target=stream_databento_worker,
         args=(normalized_symbol, databento_symbol, output_queue, stop_event, client_refs),
@@ -1056,6 +1346,7 @@ async def futures_live(
             stop_live_client(client_refs.get("trades"))
             stop_live_client(client_refs.get("depth"))
             stop_live_client(client_refs.get("bbo"))
+            stop_live_client(client_refs.get("ohlcv"))
             worker.join(timeout=1.5)
 
     return StreamingResponse(

@@ -3,7 +3,16 @@ import {
   futuresAssets,
   getAssetBySymbol
 } from "../../../../lib/futuresCatalog";
+import {
+  buildStoredCandlesMeta,
+  readStoredCandles,
+  upsertStoredCandles,
+  type StoredCandle
+} from "../../../../lib/server/assetCandleStore";
 import { logDatabentoApiKeyFailure } from "../../../../lib/server/databentoAuth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -13,6 +22,7 @@ type Candle = {
   high: number;
   low: number;
   time: number;
+  volume?: number;
 };
 
 type DatabentoRecord = {
@@ -23,6 +33,7 @@ type DatabentoRecord = {
   high?: string | number;
   low?: string | number;
   close?: string | number;
+  volume?: string | number;
 };
 
 type MarketFeedMeta = {
@@ -145,6 +156,11 @@ const normalizeNumber = (value: string | number | undefined): number => {
   return Number.isFinite(next) ? next : NaN;
 };
 
+const normalizeVolume = (value: string | number | undefined): number | undefined => {
+  const next = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(next) ? next : undefined;
+};
+
 const parseIsoTimestamp = (value: string | undefined): number | null => {
   if (!value) {
     return null;
@@ -205,7 +221,8 @@ const aggregateCandles = (candles: Candle[], timeframe: Timeframe): Candle[] => 
         open: candle.open,
         high: candle.high,
         low: candle.low,
-        close: candle.close
+        close: candle.close,
+        ...(typeof candle.volume === "number" ? { volume: candle.volume } : {})
       };
       continue;
     }
@@ -213,6 +230,7 @@ const aggregateCandles = (candles: Candle[], timeframe: Timeframe): Candle[] => 
     activeBucket.high = Math.max(activeBucket.high, candle.high);
     activeBucket.low = Math.min(activeBucket.low, candle.low);
     activeBucket.close = candle.close;
+    activeBucket.volume = (activeBucket.volume ?? 0) + (candle.volume ?? 0);
   }
 
   if (activeBucket) {
@@ -277,6 +295,7 @@ const parseDatabentoCandles = (payload: string): Candle[] => {
       const high = normalizeNumber(record.high);
       const low = normalizeNumber(record.low);
       const close = normalizeNumber(record.close);
+      const volume = normalizeVolume(record.volume);
 
       if (
         !Number.isFinite(timestamp) ||
@@ -293,7 +312,8 @@ const parseDatabentoCandles = (payload: string): Candle[] => {
         open,
         high,
         low,
-        close
+        close,
+        ...(typeof volume === "number" ? { volume } : {})
       });
     } catch {
       continue;
@@ -519,6 +539,48 @@ const fetchDatabentoCandles = async (
   return aggregated;
 };
 
+const readFirebaseCandles = async (
+  symbol: string,
+  timeframe: Timeframe,
+  targetCount: number,
+  beforeMs: number | null
+): Promise<StoredCandle[] | null> => {
+  try {
+    return await readStoredCandles(symbol, timeframe, targetCount, beforeMs ?? undefined);
+  } catch (error) {
+    console.warn(
+      `[firebase-candles:${symbol}:${timeframe}] read failed`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+};
+
+const cacheFirebaseCandles = (
+  asset: ReturnType<typeof getAssetBySymbol>,
+  timeframe: Timeframe,
+  candles: Candle[],
+  meta: MarketFeedMeta
+) => {
+  if (candles.length === 0) {
+    return;
+  }
+
+  void upsertStoredCandles(asset, timeframe, candles, {
+    provider: meta.provider,
+    dataset: meta.dataset,
+    sourceTimeframe: meta.sourceTimeframe,
+    databentoSymbol: meta.databentoSymbol,
+    schema: targetSourceMap[timeframe].schema,
+    updatedAt: meta.updatedAt
+  }).catch((error) => {
+    console.warn(
+      `[firebase-candles:${asset.symbol}:${timeframe}] write failed`,
+      error instanceof Error ? error.message : error
+    );
+  });
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbol = String(searchParams.get("symbol") || futuresAssets[0].symbol).toUpperCase();
@@ -534,15 +596,42 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unsupported futures symbol." }, { status: 400 });
   }
 
-  const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
+  const cachedCandles = await readFirebaseCandles(symbol, timeframe, targetCount, beforeMs);
   const headers = {
     "Cache-Control": "no-store"
   };
 
-  if (!apiKey) {
+  if (cachedCandles && cachedCandles.length >= targetCount) {
     return NextResponse.json(
       {
-        error: "Missing DATABENTO_API_KEY. Add it to your environment before loading market candles."
+        symbol: asset.symbol,
+        timeframe,
+        candles: cachedCandles,
+        meta: buildStoredCandlesMeta(asset, timeframe)
+      } satisfies CandlesResponseBody,
+      { headers }
+    );
+  }
+
+  const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
+
+  if (!apiKey) {
+    if (cachedCandles && cachedCandles.length > 0) {
+      return NextResponse.json(
+        {
+          symbol: asset.symbol,
+          timeframe,
+          candles: cachedCandles,
+          meta: buildStoredCandlesMeta(asset, timeframe)
+        } satisfies CandlesResponseBody,
+        { headers }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error:
+          "Missing DATABENTO_API_KEY. Add it to your environment before loading market candles, or configure Firebase with cached candles."
       },
       {
         status: 503,
@@ -559,12 +648,15 @@ export async function GET(request: Request) {
       apiKey,
       beforeMs ?? undefined
     );
+    const meta = buildDatabentoMeta(timeframe, asset.databentoSymbol);
     const payload: CandlesResponseBody = {
       symbol: asset.symbol,
       timeframe,
       candles,
-      meta: buildDatabentoMeta(timeframe, asset.databentoSymbol)
+      meta
     };
+
+    cacheFirebaseCandles(asset, timeframe, candles, meta);
 
     return NextResponse.json(payload, { headers });
   } catch (error) {

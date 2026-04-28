@@ -8,8 +8,24 @@ import type {
 } from "../databentoLive";
 import { DATABENTO_DATASET } from "../databentoLive";
 import type { FutureAsset } from "../futuresCatalog";
+import { upsertStoredCandle } from "./assetCandleStore";
 
 type DatabentoLiveListener = (event: DatabentoLiveEvent) => void;
+
+type DatabentoLiveCandleBridgeEvent = {
+  type: "candle";
+  symbol: string;
+  timeframe: "1m";
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+  meta: DatabentoLiveMeta;
+};
+
+type DatabentoLiveBridgeEvent = DatabentoLiveEvent | DatabentoLiveCandleBridgeEvent;
 
 const SESSION_IDLE_SHUTDOWN_MS = 15_000;
 const SESSION_RESTART_DELAY_MS = 1_500;
@@ -207,7 +223,13 @@ class DatabentoLiveSession {
     }
 
     try {
-      const event = JSON.parse(line) as DatabentoLiveEvent;
+      const event = JSON.parse(line) as DatabentoLiveBridgeEvent;
+
+      if (event.type === "candle") {
+        this.persistCandle(event);
+        return;
+      }
+
       this.hasSeenData =
         this.hasSeenData || event.type === "trade" || event.type === "book";
 
@@ -306,6 +328,31 @@ class DatabentoLiveSession {
           error instanceof Error ? error.message : error
         );
       }
+    });
+  }
+
+  private persistCandle(event: DatabentoLiveCandleBridgeEvent) {
+    void upsertStoredCandle(
+      this.asset,
+      event.timeframe,
+      {
+        time: event.time,
+        open: event.open,
+        high: event.high,
+        low: event.low,
+        close: event.close,
+        ...(typeof event.volume === "number" ? { volume: event.volume } : {})
+      },
+      {
+        ...event.meta,
+        provider: "Databento Live",
+        sourceTimeframe: event.timeframe
+      }
+    ).catch((error) => {
+      console.error(
+        `[databento-live:${this.asset.symbol}] Firestore candle write failed`,
+        error instanceof Error ? error.message : error
+      );
     });
   }
 

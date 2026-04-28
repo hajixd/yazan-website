@@ -81,3 +81,755 @@ Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allow
  GET /api/futures/last?symbol=ES 200 in 6ms
  ✓ Compiled in 610ms (605 modules)
  ✓ Compiled in 351ms (619 modules)
+ ✓ Compiled in 285ms (619 modules)
+ GET / 200 in 312ms
+ ✓ Compiled /api/futures/candles in 153ms (383 modules)
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 276ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 275ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 240ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 279ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 278ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 281ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 16ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 29ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 29ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 29ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 38ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 37ms
+ ✓ Compiled /api/futures/live in 215ms (389 modules)
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 361ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 363ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 19ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 36ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 26ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 25ms
+ ⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/api/futures/candles'
+}
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 225ms
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 943ms (984 modules)
+ GET /api/futures/live?symbol=ES 200 in 1916ms
+ GET /api/backend/futures/live?symbol=ES 404 in 1562ms
+ GET / 200 in 739ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 500 in 1660ms
+ ✓ Compiled /api/futures/last in 289ms (586 modules)
+ GET /api/futures/last?symbol=ES 200 in 538ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 318ms
+ GET / 200 in 602ms
+ GET / 200 in 28ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ ✓ Compiled /icon.svg in 455ms (588 modules)
+ GET /icon.svg 200 in 637ms
+ GET /api/futures/last?symbol=ES 200 in 435ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ GET / 200 in 213ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 16ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 25ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 27ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 26ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 30ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 17ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 30ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 30ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 76ms
+ GET /api/futures/live?symbol=ES 200 in 104ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 15ms
+ GET /api/backend/futures/live?symbol=ES 404 in 87ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 25ms
+ GET /api/futures/last?symbol=ES 200 in 30ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 11ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 18ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 9ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ GET /icon.svg 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 6ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ ✓ Compiled in 799ms (855 modules)
+ ✓ Compiled in 602ms (855 modules)
+ ✓ Compiled in 571ms (855 modules)
+ ✓ Compiled in 686ms (855 modules)
+ ✓ Compiled in 581ms (855 modules)
+ GET / 200 in 381ms
+ ✓ Compiled /api/futures/candles in 319ms (482 modules)
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 468ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 468ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 403ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 471ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 471ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 475ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 34ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 34ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 34ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 41ms
+ ✓ Compiled /api/futures/live in 121ms (488 modules)
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 327ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 40ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 52ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 45ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 59ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 23ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 61ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 10ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 11ms
+ ✓ Compiled /_not-found in 401ms (888 modules)
+ GET /api/futures/live?symbol=ES 200 in 1033ms
+ GET /api/backend/futures/live?symbol=ES 404 in 699ms
+ ✓ Compiled /api/futures/last in 124ms (491 modules)
+ GET /api/futures/last?symbol=ES 200 in 179ms
+ ✓ Compiled /icon.svg in 191ms (493 modules)
+ GET /icon.svg 200 in 230ms
+ GET /api/futures/last?symbol=ES 200 in 68ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ ✓ Compiled in 810ms (877 modules)
+ ✓ Compiled in 557ms (855 modules)
+ ✓ Compiled in 563ms (855 modules)
+ GET / 200 in 403ms
+ ✓ Compiled /api/futures/candles in 135ms (482 modules)
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 321ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 320ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 290ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 322ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 322ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 326ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 17ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 33ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 33ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 33ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 41ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 38ms
+ ✓ Compiled /api/futures/live in 191ms (488 modules)
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 344ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 347ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 32ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 31ms
+ ⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/api/futures/candles'
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 796ms (984 modules)
+ GET /api/futures/live?symbol=ES 200 in 1546ms
+ GET /api/backend/futures/live?symbol=ES 404 in 1158ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 500 in 1293ms
+ ✓ Compiled /api/futures/last in 186ms (586 modules)
+ GET /api/futures/last?symbol=ES 200 in 249ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 81ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 86ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 9ms
+ ✓ Compiled /icon.svg in 148ms (588 modules)
+ GET /icon.svg 200 in 305ms
+ GET /api/futures/last?symbol=ES 200 in 235ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ ✓ Compiled in 884ms (988 modules)
+ GET / 200 in 324ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 30ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 41ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 41ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 44ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 43ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 14ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 39ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 39ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 38ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 38ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 72ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 85ms
+ GET /api/futures/live?symbol=ES 200 in 151ms
+ GET /api/futures/last?symbol=ES 200 in 31ms
+ GET /api/backend/futures/live?symbol=ES 404 in 107ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 45ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 45ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 17ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 25ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 23ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 19ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 12ms
+ GET /icon.svg 200 in 13ms
+ GET /api/futures/last?symbol=ES 200 in 12ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ ✓ Compiled in 645ms (892 modules)
+ GET / 200 in 396ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 34ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 54ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 53ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 55ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 55ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 12ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 31ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 31ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 31ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 31ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 51ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 70ms
+ GET /api/futures/live?symbol=ES 200 in 129ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 13ms
+ GET /api/backend/futures/live?symbol=ES 404 in 92ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 24ms
+ GET /api/futures/last?symbol=ES 200 in 37ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 13ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 22ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 13ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 11ms
+ GET /icon.svg 200 in 12ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ ✓ Compiled in 817ms (855 modules)
+ ✓ Compiled in 537ms (855 modules)
+ ✓ Compiled in 511ms (855 modules)
+ ✓ Compiled in 536ms (855 modules)
+ ✓ Compiled in 580ms (855 modules)
+ ✓ Compiled in 602ms (855 modules)
+ ✓ Compiled in 526ms (855 modules)
+ ✓ Compiled in 639ms (855 modules)
+ ✓ Compiled in 517ms (855 modules)
+ ✓ Compiled in 295ms (869 modules)
+ GET / 200 in 403ms
+ ✓ Compiled /api/futures/candles in 235ms (482 modules)
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 377ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 377ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 342ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 379ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 378ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 383ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 14ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 26ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 26ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 36ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 36ms
+ ✓ Compiled /api/futures/live in 124ms (488 modules)
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 294ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 296ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 18ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 32ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 39ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 52ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 16ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 23ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 12ms
+ ✓ Compiled /_not-found in 425ms (888 modules)
+ GET /api/futures/live?symbol=ES 200 in 1040ms
+ GET /api/backend/futures/live?symbol=ES 404 in 703ms
+ ✓ Compiled /api/futures/last in 132ms (491 modules)
+ GET /api/futures/last?symbol=ES 200 in 404ms
+ GET / 200 in 653ms
+ ✓ Compiled /icon.svg in 194ms (493 modules)
+ GET /icon.svg 200 in 346ms
+ GET /api/futures/last?symbol=ES 200 in 268ms
+ GET /api/futures/last?symbol=ES 200 in 11ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ ✓ Compiled in 423ms (869 modules)
+ ✓ Compiled in 579ms (855 modules)
+ ✓ Compiled in 585ms (855 modules)
+ ✓ Compiled in 534ms (855 modules)
+ ✓ Compiled in 619ms (855 modules)
+ ✓ Compiled in 409ms (869 modules)
+ ✓ Compiled in 185ms (869 modules)
+ GET / 200 in 334ms
+ GET / 200 in 48ms
+ ✓ Compiled /api/futures/candles in 234ms (482 modules)
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 352ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 352ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 287ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 355ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 354ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 357ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 12ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 22ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 22ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 28ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 26ms
+ ✓ Compiled /api/futures/live in 99ms (488 modules)
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 210ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 211ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 22ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 56ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 67ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 34ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 41ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ ✓ Compiled /_not-found in 334ms (888 modules)
+ GET /api/futures/live?symbol=ES 200 in 781ms
+ GET /api/backend/futures/live?symbol=ES 404 in 542ms
+ ✓ Compiled /api/futures/last in 102ms (491 modules)
+ GET /api/futures/last?symbol=ES 200 in 318ms
+ GET / 200 in 503ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 10ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=4 200 in 11ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=4 200 in 9ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=4 200 in 12ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=4 200 in 13ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=4 200 in 12ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=4 200 in 11ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=4 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET / 200 in 157ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 12ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 19ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 25ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 12ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 26ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 26ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 25ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 25ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 35ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 31ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/live?symbol=ES 200 in 78ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 57ms
+ GET /api/futures/last?symbol=ES 200 in 15ms
+ GET /api/backend/futures/live?symbol=ES 404 in 70ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 24ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 23ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 17ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 10ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 8ms
+ GET / 200 in 39ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 18ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 16ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 13ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 15ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 27ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 28ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 11ms
+ GET /api/futures/live?symbol=ES 200 in 77ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 51ms
+ GET /api/futures/last?symbol=ES 200 in 12ms
+ GET /api/backend/futures/live?symbol=ES 404 in 62ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 18ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 17ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 10ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 11ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ GET / 200 in 44ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 10ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 20ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 20ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 21ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 16ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 17ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 31ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 33ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 11ms
+ GET /api/futures/live?symbol=ES 200 in 77ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 49ms
+ GET /api/futures/last?symbol=ES 200 in 23ms
+ GET /api/backend/futures/live?symbol=ES 404 in 72ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 32ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 31ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 21ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 18ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET / 200 in 43ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 25ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 23ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 22ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 35ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 35ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 25ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 9ms
+ GET /api/futures/live?symbol=ES 200 in 75ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 55ms
+ GET /api/futures/last?symbol=ES 200 in 13ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 19ms
+ GET /api/backend/futures/live?symbol=ES 404 in 74ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 24ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 10ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 15ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 8ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 13ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET / 200 in 41ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 22ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 31ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 30ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 34ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 33ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 14ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 23ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 26ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 26ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 48ms
+ GET /api/futures/live?symbol=ES 200 in 68ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 10ms
+ GET /api/backend/futures/live?symbol=ES 404 in 60ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 18ms
+ GET /api/futures/last?symbol=ES 200 in 21ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 8ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 9ms
+ GET / 200 in 39ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 42ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 41ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 43ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 42ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 26ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 46ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 46ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 44ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 44ms
+ GET /api/futures/live?symbol=ES 200 in 162ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 106ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 105ms
+ GET /api/backend/futures/live?symbol=ES 404 in 113ms
+ GET /api/futures/last?symbol=ES 200 in 21ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 7ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 8ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 6ms
+ ✓ Compiled /icon.svg in 191ms (493 modules)
+ GET /icon.svg 200 in 244ms
+ GET /api/futures/last?symbol=ES 200 in 80ms
+ GET /api/futures/last?symbol=ES 200 in 8ms
+ GET / 200 in 216ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 17ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 27ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 11ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 30ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 20ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 47ms
+ GET /api/futures/live?symbol=ES 200 in 81ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 11ms
+ GET /api/backend/futures/live?symbol=ES 404 in 62ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 19ms
+ GET /api/futures/last?symbol=ES 200 in 23ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 10ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 14ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 13ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 12ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 7ms
+ GET /icon.svg 200 in 9ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 7ms
+ GET /api/futures/last?symbol=ES 200 in 10ms
+ GET / 200 in 39ms
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ ✓ Compiled /_error in 368ms (988 modules)
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\pages\_document.js'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\pages\\_document.js'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+[Error: ENOENT: no such file or directory, open 'C:\Users\elhad\Desktop\projects\yazan-website\.next\server\app-paths-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'C:\\Users\\elhad\\Desktop\\projects\\yazan-website\\.next\\server\\app-paths-manifest.json',
+  page: '/api/futures/candles'
+}
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 500 in 10904ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 500 in 349ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 500 in 10908ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 500 in 349ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 500 in 10905ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 500 in 349ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 500 in 10788ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 500 in 349ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 500 in 10906ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 500 in 351ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 500 in 10907ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 500 in 351ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 114ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 114ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 114ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 113ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz_' -> 'C:\Users\elhad\Desktop\projects\yazan-website\.next\cache\webpack\client-development-fallback\0.pack.gz'
+ GET / 200 in 100ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=500 200 in 19ms
+ GET /api/futures/candles?symbol=ES&timeframe=1m&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=5m&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=4 200 in 28ms
+ GET /api/futures/candles?symbol=ES&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=NQ&timeframe=15m&count=260 200 in 29ms
+ GET /api/futures/candles?symbol=ES&timeframe=1H&count=4 200 in 24ms
+ GET /api/futures/candles?symbol=ES&timeframe=4H&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=1D&count=4 200 in 21ms
+ GET /api/futures/candles?symbol=ES&timeframe=1W&count=4 200 in 20ms
+ GET /api/futures/candles?symbol=RTY&timeframe=15m&count=260 200 in 32ms
+ GET /api/futures/candles?symbol=YM&timeframe=15m&count=260 200 in 33ms
+ GET /api/futures/live?symbol=ES 200 in 68ms
+ GET /api/futures/candles?symbol=CL&timeframe=15m&count=260 200 in 27ms
+ GET /api/backend/futures/live?symbol=ES 404 in 35ms
+ GET /api/futures/candles?symbol=NG&timeframe=15m&count=260 200 in 22ms
+ GET /api/futures/last?symbol=ES 200 in 18ms
+ GET /api/futures/candles?symbol=MGC&timeframe=15m&count=260 200 in 13ms
+ GET /api/futures/candles?symbol=SI&timeframe=15m&count=260 200 in 16ms
+ GET /api/futures/candles?symbol=HG&timeframe=15m&count=260 200 in 8ms
+ GET /api/futures/candles?symbol=ZN&timeframe=15m&count=260 200 in 11ms
+ GET /api/futures/candles?symbol=6E&timeframe=15m&count=260 200 in 7ms
+ GET /api/futures/candles?symbol=6J&timeframe=15m&count=260 200 in 9ms
+ GET /api/futures/candles?symbol=6A&timeframe=15m&count=260 200 in 6ms
+ ✓ Compiled in 793ms (890 modules)
+ GET / 200 in 311ms
+ GET / 200 in 43ms
+ GET / 200 in 40ms
+ ✓ Compiled in 125ms (460 modules)
+ ✓ Compiled in 534ms (855 modules)
+ ✓ Compiled in 407ms (855 modules)
+ ✓ Compiled in 410ms (855 modules)
+ ✓ Compiled in 461ms (855 modules)
+ ✓ Compiled in 417ms (855 modules)
+ ✓ Compiled in 423ms (855 modules)
+ ✓ Compiled in 640ms (855 modules)
+ ✓ Compiled in 396ms (855 modules)
+ ✓ Compiled in 464ms (855 modules)
+ ✓ Compiled in 261ms (869 modules)
+ GET / 200 in 335ms
+ GET / 200 in 39ms
+ ✓ Compiled in 542ms (855 modules)
+ ✓ Compiled in 702ms (855 modules)
+ ✓ Compiled in 431ms (855 modules)
+ ✓ Compiled in 498ms (855 modules)
+ ✓ Compiled in 460ms (855 modules)
+ ✓ Compiled in 444ms (855 modules)
+ ✓ Compiled in 483ms (855 modules)
+ ✓ Compiled in 404ms (855 modules)
+ ✓ Compiled in 457ms (855 modules)
+ ✓ Compiled in 433ms (855 modules)
+ ✓ Compiled in 433ms (855 modules)
+ ✓ Compiled in 465ms (855 modules)
+ ✓ Compiled in 476ms (855 modules)
+ ✓ Compiled in 354ms (869 modules)
+ ⨯ ReferenceError: Cannot access 'visibleDrawingBounds' before initialization
+    at TradingTerminal (app\TradingTerminal.tsx:3050:57)
+  3048 |       };
+  3049 |     },
+> 3050 |     [chartViewportSize.height, chartViewportSize.width, visibleDrawingBounds]
+       |                                                         ^
+  3051 |   );
+  3052 |
+  3053 |   const getVisibleDrawingDragBounds = useCallback((): DrawingDragBounds | null => { {
+  digest: '2624013739'
+}
+ GET / 500 in 338ms
+ ✓ Compiled in 526ms (855 modules)
+ GET / 200 in 252ms
+ ✓ Compiled in 581ms (855 modules)

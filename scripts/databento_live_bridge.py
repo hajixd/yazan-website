@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import databento as db
-from databento_dbn import ErrorMsg, MBP10Msg, SymbolMappingMsg, SystemMsg, TradeMsg
+from databento_dbn import ErrorMsg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
 
 PRICE_SCALE = 1_000_000_000
 TERMINAL_ERROR_PATTERNS = (
@@ -95,6 +95,18 @@ def coerce_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def firebase_market_data_configured() -> bool:
+    return bool(
+        os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+        or (
+            os.environ.get("FIREBASE_PROJECT_ID")
+            and os.environ.get("FIREBASE_CLIENT_EMAIL")
+            and os.environ.get("FIREBASE_PRIVATE_KEY")
+        )
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    )
 
 
 def build_order_book_snapshot(record: MBP10Msg) -> dict[str, Any]:
@@ -247,6 +259,13 @@ def main() -> int:
             symbols=[args.databento_symbol],
             stype_in="continuous",
         )
+        if firebase_market_data_configured():
+            client.subscribe(
+                dataset=args.dataset,
+                schema="ohlcv-1m",
+                symbols=[args.databento_symbol],
+                stype_in="continuous",
+            )
 
         for record in client:
             if stopping:
@@ -309,6 +328,31 @@ def main() -> int:
                         "time": ns_to_ms(getattr(record, "ts_event", None)),
                         "snapshot": build_order_book_snapshot(record),
                         "meta": build_meta("mbp-10", args.symbol, args.dataset, args.databento_symbol),
+                    }
+                )
+                continue
+
+            if isinstance(record, OHLCVMsg):
+                emit(
+                    {
+                        "type": "candle",
+                        "symbol": args.symbol,
+                        "timeframe": "1m",
+                        "time": ns_to_ms(getattr(record, "ts_event", None)),
+                        "open": normalise_price(
+                            getattr(record, "pretty_open", None), getattr(record, "open", None)
+                        ),
+                        "high": normalise_price(
+                            getattr(record, "pretty_high", None), getattr(record, "high", None)
+                        ),
+                        "low": normalise_price(
+                            getattr(record, "pretty_low", None), getattr(record, "low", None)
+                        ),
+                        "close": normalise_price(
+                            getattr(record, "pretty_close", None), getattr(record, "close", None)
+                        ),
+                        "volume": coerce_int(getattr(record, "volume", 0)),
+                        "meta": build_meta("ohlcv-1m", args.symbol, args.dataset, args.databento_symbol),
                     }
                 )
 
