@@ -2245,6 +2245,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [marketFeedMeta, setMarketFeedMeta] = useState<MarketFeedMeta | null>(null);
   const [marketStatus, setMarketStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [liveStreamMessage, setLiveStreamMessage] = useState<string | null>(null);
   const [liveQuoteSnapshot, setLiveQuoteSnapshot] = useState<OrderBookSnapshot | null>(null);
   const [liveQuoteSchema, setLiveQuoteSchema] = useState<string | null>(null);
   const [liveOrderBookSnapshot, setLiveOrderBookSnapshot] = useState<OrderBookSnapshot | null>(null);
@@ -3529,6 +3530,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
     setOrderFlowRows([]);
+    setLiveStreamMessage(null);
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
   }, [selectedSymbol]);
@@ -3760,7 +3762,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       eventSource = null;
 
       if (message) {
-        setMarketError(message);
+        setLiveStreamMessage(message);
       }
     };
 
@@ -3768,7 +3770,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       streamHasDeliveredData = true;
       clearStreamBootstrapTimeout();
       clearStreamReconnectTimeout();
-      setMarketError(null);
+      setLiveStreamMessage(null);
     };
 
     const armStreamBootstrapTimeout = () => {
@@ -3786,6 +3788,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setLiveQuoteSchema(null);
     setLiveOrderBookSnapshot(null);
     setOrderFlowRows([]);
+    setLiveStreamMessage("Connecting to Databento live stream...");
     setLiveDepthMessage(null);
     setLiveDepthSchema(null);
 
@@ -3838,21 +3841,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           setLiveDepthSchema(payload.meta?.schema ?? null);
 
           if (payload.state === "connected") {
+            markStreamAsLive();
             setLiveDepthMessage(null);
           } else if (payload.state === "stopped") {
             setLiveOrderBookSnapshot(null);
             activeDepthSchema = null;
             setLiveDepthMessage(formatLiveDepthStatusMessage(payload.message, payload.meta?.schema));
+          } else {
+            setLiveStreamMessage(payload.message);
           }
 
-          syncMarketFeedMeta(payload.meta);
           return;
         }
 
         if (payload.state === "connected") {
-          setMarketError(null);
+          markStreamAsLive();
+        } else if (payload.state === "stopped") {
+          setLiveStreamMessage(payload.message);
+        } else {
+          setLiveStreamMessage(payload.message);
         }
-        syncMarketFeedMeta(payload.meta);
         return;
       }
 
@@ -3864,7 +3872,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return;
       }
 
-      setMarketError(payload.message);
+      setLiveStreamMessage(payload.message);
 
       if (!payload.retrying) {
         terminalStreamFailure = true;
@@ -3883,7 +3891,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         }
 
         if (streamReconnectTimeoutId === null) {
-          setMarketError("Live stream reconnecting...");
+          setLiveStreamMessage("Live stream reconnecting...");
           streamReconnectTimeoutId = window.setTimeout(() => {
             if (cancelled || streamDisabled) {
               return;
@@ -4063,7 +4071,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return "Top of book only";
     }
 
-    if (liveDepthMessage || marketError) {
+    if (liveDepthMessage || liveStreamMessage) {
       return "Unavailable";
     }
 
@@ -4071,9 +4079,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [
     liveDepthMessage,
     liveDepthSchema,
+    liveStreamMessage,
     liveQuoteSnapshot,
     liveOrderBookSnapshot,
-    marketError,
     showcaseMode
   ]);
 
@@ -5874,7 +5882,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   };
   const feedStatusLabel =
     marketStatus === "loading"
-      ? "Loading Databento"
+      ? "Loading Firebase"
       : marketStatus === "error"
         ? "Databento unavailable"
         : `${marketFeedMeta?.provider ?? "Databento"} - ${marketFeedMeta?.sourceTimeframe ?? selectedTimeframe}`;
@@ -8649,7 +8657,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 ) : (
                   <p className="quote-overlay-empty">
                     {liveDepthMessage ??
-                      marketError ??
+                      liveStreamMessage ??
                       (isTopOfBookSchema(liveQuoteSchema ?? liveDepthSchema)
                         ? "Waiting for real Databento top-of-book."
                         : "Waiting for real Databento depth.")}
@@ -8707,7 +8715,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   ) : (
                     <p className="order-book-empty">
                       {liveDepthMessage ??
-                        marketError ??
+                        liveStreamMessage ??
                         (isTopOfBookSchema(liveDepthSchema)
                           ? "Waiting for real Databento top-of-book."
                           : "Waiting for real Databento depth.")}
@@ -8727,7 +8735,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 </strong>
                 <p>
                   {marketStatus === "loading"
-                    ? "Waiting for real Databento bars."
+                    ? "Waiting for cached Firebase bars."
                     : marketError ?? "No real candles were returned for this contract and timeframe."}
                 </p>
               </div>
@@ -10246,7 +10254,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <p className="order-flow-empty">
                           {showcaseMode
                             ? "Order flow is not available while showcase simulation is driving the chart."
-                            : marketError ?? "Waiting for live trade prints."}
+                            : liveStreamMessage ?? "Waiting for live trade prints."}
                         </p>
                       </div>
                     </div>
@@ -10273,7 +10281,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <span>{selectedTimeframe}</span>
         <span>Model: {hasWorkspaceProfiles ? selectedModel?.name ?? "None" : "None"}</span>
         <span>Feed: {feedStatusLabel}</span>
-        <span>{marketError ? marketStatusDetails : `Contract: ${selectedAsset.contract}`}</span>
+        <span>{marketError ? marketStatusDetails : liveStreamMessage ?? `Contract: ${selectedAsset.contract}`}</span>
         <span>UTC</span>
       </footer>
     </main>

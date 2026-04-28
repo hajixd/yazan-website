@@ -1,5 +1,6 @@
 const DATABENTO_AUTH_ERROR_PATTERNS = [
   /invalid api key/i,
+  /not authorized/i,
   /unauthorized/i,
   /authentication/i,
   /\b401\b/,

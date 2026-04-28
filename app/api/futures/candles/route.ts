@@ -597,11 +597,31 @@ export async function GET(request: Request) {
   }
 
   const cachedCandles = await readFirebaseCandles(symbol, timeframe, targetCount, beforeMs);
+  const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
   const headers = {
     "Cache-Control": "no-store"
   };
 
-  if (cachedCandles && cachedCandles.length >= targetCount) {
+  if (cachedCandles && cachedCandles.length > 0) {
+    if (cachedCandles.length < targetCount && apiKey) {
+      void fetchDatabentoCandles(
+        asset.databentoSymbol,
+        timeframe,
+        targetCount,
+        apiKey,
+        beforeMs ?? undefined
+      )
+        .then((candles) => {
+          cacheFirebaseCandles(asset, timeframe, candles, buildDatabentoMeta(timeframe, asset.databentoSymbol));
+        })
+        .catch((error) => {
+          console.warn(
+            `[databento-candles:${asset.symbol}:${timeframe}] background refresh failed`,
+            error instanceof Error ? error.message : error
+          );
+        });
+    }
+
     return NextResponse.json(
       {
         symbol: asset.symbol,
@@ -613,21 +633,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const apiKey = process.env.DATABENTO_API_KEY || process.env.DATABENTO_KEY;
-
   if (!apiKey) {
-    if (cachedCandles && cachedCandles.length > 0) {
-      return NextResponse.json(
-        {
-          symbol: asset.symbol,
-          timeframe,
-          candles: cachedCandles,
-          meta: buildStoredCandlesMeta(asset, timeframe)
-        } satisfies CandlesResponseBody,
-        { headers }
-      );
-    }
-
     return NextResponse.json(
       {
         error:

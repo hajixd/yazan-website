@@ -31,6 +31,7 @@ const SESSION_IDLE_SHUTDOWN_MS = 15_000;
 const SESSION_RESTART_DELAY_MS = 1_500;
 const TERMINAL_ERROR_PATTERNS = [
   /invalid api key/i,
+  /not authorized/i,
   /unauthorized/i,
   /authentication/i,
   /\b401\b/,

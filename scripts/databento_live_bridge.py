@@ -15,6 +15,7 @@ from databento_dbn import ErrorMsg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, System
 PRICE_SCALE = 1_000_000_000
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
+    "not authorized",
     "unauthorized",
     "authentication",
     "401",
@@ -107,6 +108,15 @@ def firebase_market_data_configured() -> bool:
         )
         or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     )
+
+
+def depth_stream_enabled() -> bool:
+    return os.environ.get("DATABENTO_ENABLE_DEPTH", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def build_order_book_snapshot(record: MBP10Msg) -> dict[str, Any]:
@@ -202,7 +212,7 @@ def handle_signal(_: int, __: Any) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bridge Databento live records into NDJSON.")
     parser.add_argument("--symbol", required=True, help="Application symbol, e.g. ES")
-    parser.add_argument("--databento-symbol", required=True, help="Databento symbol, e.g. ES.c.0")
+    parser.add_argument("--databento-symbol", required=True, help="Databento symbol, e.g. ES.v.0")
     parser.add_argument("--dataset", required=True, help="Databento dataset, e.g. GLBX.MDP3")
     return parser.parse_args()
 
@@ -253,12 +263,13 @@ def main() -> int:
             symbols=[args.databento_symbol],
             stype_in="continuous",
         )
-        client.subscribe(
-            dataset=args.dataset,
-            schema="mbp-10",
-            symbols=[args.databento_symbol],
-            stype_in="continuous",
-        )
+        if depth_stream_enabled():
+            client.subscribe(
+                dataset=args.dataset,
+                schema="mbp-10",
+                symbols=[args.databento_symbol],
+                stype_in="continuous",
+            )
         if firebase_market_data_configured():
             client.subscribe(
                 dataset=args.dataset,

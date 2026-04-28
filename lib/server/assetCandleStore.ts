@@ -30,6 +30,7 @@ type FirestoreCandleDocument = StoredCandle & {
 
 const DEFAULT_MARKET_DATA_COLLECTION = "yazanMarketAssets";
 const MAX_BATCH_SIZE = 450;
+const RECENT_SNAPSHOT_CANDLE_LIMIT = 2_000;
 
 const marketDataCollectionName = () => {
   return (
@@ -87,6 +88,52 @@ const candleFromDocument = (data: FirestoreCandleDocument): StoredCandle | null 
   return normalizeCandle(data);
 };
 
+const mergeStoredCandles = (
+  olderCandles: StoredCandle[],
+  newerCandles: StoredCandle[]
+): StoredCandle[] => {
+  const byTime = new Map<number, StoredCandle>();
+
+  for (const candle of [...olderCandles, ...newerCandles]) {
+    byTime.set(candle.time, candle);
+  }
+
+  return [...byTime.values()].sort((left, right) => left.time - right.time);
+};
+
+const recentCandlesFromTimeframeDocument = (value: unknown): StoredCandle[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((candle) => normalizeCandle(candle as StoredCandle))
+    .filter((candle): candle is StoredCandle => candle !== null)
+    .sort((left, right) => left.time - right.time);
+};
+
+const buildRecentSnapshot = async (
+  symbol: string,
+  timeframe: string,
+  incomingCandles: StoredCandle[]
+) => {
+  const incoming = incomingCandles
+    .map(normalizeCandle)
+    .filter((candle): candle is StoredCandle => candle !== null)
+    .sort((left, right) => left.time - right.time);
+
+  if (incoming.length >= RECENT_SNAPSHOT_CANDLE_LIMIT) {
+    return incoming.slice(-RECENT_SNAPSHOT_CANDLE_LIMIT);
+  }
+
+  const timeframeSnapshot = await timeframeDocumentRef(symbol, timeframe).get();
+  const existing = recentCandlesFromTimeframeDocument(
+    timeframeSnapshot.data()?.recentCandles
+  );
+
+  return mergeStoredCandles(existing, incoming).slice(-RECENT_SNAPSHOT_CANDLE_LIMIT);
+};
+
 export const marketCandleStorageMode = (): "firebase" | "databento" => {
   return hasFirebaseAdmin() ? "firebase" : "databento";
 };
@@ -99,6 +146,19 @@ export const readStoredCandles = async (
 ): Promise<StoredCandle[] | null> => {
   if (!hasFirebaseAdmin()) {
     return null;
+  }
+
+  const timeframeSnapshot = await timeframeDocumentRef(symbol, timeframe).get();
+  const recentCandles = recentCandlesFromTimeframeDocument(
+    timeframeSnapshot.data()?.recentCandles
+  );
+  const filteredRecentCandles =
+    typeof beforeMs === "number" && Number.isFinite(beforeMs)
+      ? recentCandles.filter((candle) => candle.time < Math.floor(beforeMs))
+      : recentCandles;
+
+  if (filteredRecentCandles.length > 0) {
+    return filteredRecentCandles.slice(-Math.max(1, count));
   }
 
   let query = candleCollectionRef(symbol, timeframe)
@@ -114,6 +174,29 @@ export const readStoredCandles = async (
     .map((document) => candleFromDocument(document.data() as FirestoreCandleDocument))
     .filter((candle): candle is StoredCandle => candle !== null)
     .sort((left, right) => left.time - right.time);
+
+  const latestCandle = candles[candles.length - 1];
+
+  if (latestCandle) {
+    await timeframeDocumentRef(symbol, timeframe)
+      .set(
+        {
+          latestCandleTime: latestCandle.time,
+          latestCandleTimeIso: new Date(latestCandle.time).toISOString(),
+          recentCandles: candles.slice(-RECENT_SNAPSHOT_CANDLE_LIMIT),
+          recentCandlesCount: candles.length,
+          recentCandlesUpdatedAt: new Date().toISOString(),
+          serverUpdatedAt: FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      )
+      .catch((error) => {
+        console.warn(
+          `[firebase-candles:${normalizeSymbol(symbol)}:${timeframe}] recent snapshot write failed`,
+          error instanceof Error ? error.message : error
+        );
+      });
+  }
 
   return candles;
 };
@@ -218,6 +301,23 @@ export const upsertStoredCandles = async (
     }
 
     await batch.commit();
+  }
+
+  const recentCandles = await buildRecentSnapshot(asset.symbol, timeframe, normalizedCandles);
+  const recentLatestCandle = recentCandles[recentCandles.length - 1];
+
+  if (recentLatestCandle) {
+    await timeframeRef.set(
+      {
+        latestCandleTime: recentLatestCandle.time,
+        latestCandleTimeIso: new Date(recentLatestCandle.time).toISOString(),
+        recentCandles,
+        recentCandlesCount: recentCandles.length,
+        recentCandlesUpdatedAt: updatedAt,
+        serverUpdatedAt: FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
   }
 };
 

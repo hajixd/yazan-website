@@ -29,6 +29,7 @@ LIVE_REPLAY_WINDOW = timedelta(seconds=5)
 MBO_SNAPSHOT_LEVEL_COUNT = 10
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
+    "not authorized",
     "unauthorized",
     "authentication",
     "401",
@@ -39,20 +40,20 @@ TERMINAL_ERROR_PATTERNS = (
     "subscription plan",
 )
 FUTURES_SYMBOLS = {
-    "ES": "ES.c.0",
-    "NQ": "NQ.c.0",
-    "RTY": "RTY.c.0",
-    "YM": "YM.c.0",
-    "CL": "CL.c.0",
-    "NG": "NG.c.0",
-    "MGC": "MGC.c.0",
-    "SIL": "SIL.c.0",
-    "SI": "SI.c.0",
-    "HG": "HG.c.0",
-    "ZN": "ZN.c.0",
-    "6E": "6E.c.0",
-    "6J": "6J.c.0",
-    "6A": "6A.c.0",
+    "ES": "ES.v.0",
+    "NQ": "NQ.v.0",
+    "RTY": "RTY.v.0",
+    "YM": "YM.v.0",
+    "CL": "CL.v.0",
+    "NG": "NG.v.0",
+    "MGC": "MGC.v.0",
+    "SIL": "SIL.v.0",
+    "SI": "SI.v.0",
+    "HG": "HG.v.0",
+    "ZN": "ZN.v.0",
+    "6E": "6E.v.0",
+    "6J": "6J.v.0",
+    "6A": "6A.v.0",
 }
 DEFAULT_MARKET_DATA_COLLECTION = "yazanMarketAssets"
 
