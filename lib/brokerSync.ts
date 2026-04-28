@@ -116,6 +116,10 @@ export const TRADESYNC_AUTH_URL = "https://www.tradesync.com/developers/authenti
 export const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/brokers-introduction/";
 export const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
 export const TRADESYNC_WEBHOOKS_URL = "https://www.tradesync.com/developers/create-webhook/";
+export const TRADESYNCER_TRADOVATE_CONNECTION_URL =
+  "https://help.tradesyncer.com/en/articles/11746822-how-to-add-a-tradovate-connection";
+export const TRADESYNCER_TRADOVATE_LIMITS_URL =
+  "https://help.tradesyncer.com/en/articles/11110392-tradovate-api-limits";
 
 export const createDefaultSyncDraft = (
   provider: SyncProvider = "tradovate"

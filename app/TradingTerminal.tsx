@@ -46,9 +46,9 @@ import {
   type TradovateTradesResponse,
   type WebhookAuthMode,
   TRADESYNC_AUTH_URL,
-  TRADESYNC_CREATE_ACCOUNT_URL,
-  TRADESYNC_INTRO_BROKER_URL,
   TRADESYNC_WEBHOOKS_URL,
+  TRADESYNCER_TRADOVATE_CONNECTION_URL,
+  TRADESYNCER_TRADOVATE_LIMITS_URL,
   TRADOVATE_API_ACCESS_URL,
   TRADOVATE_AUTH_OPTIONS_URL,
   TRADOVATE_MARKET_DATA_URL,
@@ -549,10 +549,7 @@ const sidebarTabs: Array<{ id: PanelTab; label: string; compactLabel?: boolean }
   { id: "assets", label: "Assets" },
   { id: "models", label: "Models" },
   { id: "history", label: "History" },
-  { id: "actions", label: "Action" },
-  { id: "marketMaker", label: "Market Maker", compactLabel: true },
-  { id: "orderFlow", label: "Order Flow", compactLabel: true },
-  { id: "tradovate", label: "Tradovate", compactLabel: true }
+  { id: "actions", label: "Action" }
 ];
 
 const findAssetSymbolForTradovateContract = (contractSymbol: string): string | null => {
@@ -636,6 +633,9 @@ const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
   "1D": 4,
   "1W": 4
 };
+
+const TRADINGVIEW_CME_GROUP_DELAY_MINUTES = 10;
+const TRADINGVIEW_CME_GROUP_DELAY_MS = TRADINGVIEW_CME_GROUP_DELAY_MINUTES * 60_000;
 
 const multiAssetHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 360,
@@ -1655,6 +1655,34 @@ const mergeCandles = (olderCandles: Candle[], newerCandles: Candle[]): Candle[] 
   }
 
   return merged;
+};
+
+const findCandleAtOrBefore = (candles: Candle[], cutoffMs: number): Candle | null => {
+  if (candles.length === 0 || !Number.isFinite(cutoffMs)) {
+    return null;
+  }
+
+  let low = 0;
+  let high = candles.length - 1;
+  let match: Candle | null = null;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candle = candles[middle];
+
+    if (!candle) {
+      break;
+    }
+
+    if (candle.time <= cutoffMs) {
+      match = candle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return match;
 };
 
 const generateFakeCandles = (
@@ -3998,6 +4026,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     latestCandle && previousCandle && previousCandle.close > 0
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : null;
+  const tradingViewDelayReferenceTime = getProjectedMarketNowMs() - TRADINGVIEW_CME_GROUP_DELAY_MS;
+  const tradingViewDelayCandle = findCandleAtOrBefore(
+    renderedSelectedCandles,
+    tradingViewDelayReferenceTime
+  );
 
   const hoveredCandle = latestCandle
     ? hoveredTime
@@ -8197,6 +8230,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 <span className={quoteChange === null ? "neutral" : quoteChange >= 0 ? "up" : "down"}>
                   {latestCandle ? `$${formatPrice(latestCandle.close)}` : "--"}
                 </span>
+                <div
+                  className="quote-delay-reference"
+                  title={`TradingView free CME Group futures data is delayed by ${TRADINGVIEW_CME_GROUP_DELAY_MINUTES} minutes.`}
+                >
+                  <span>TV {TRADINGVIEW_CME_GROUP_DELAY_MINUTES}m</span>
+                  <strong>
+                    {tradingViewDelayCandle ? formatPrice(tradingViewDelayCandle.close) : "--"}
+                  </strong>
+                  {tradingViewDelayCandle ? (
+                    <small>{formatChartBadgeTime(tradingViewDelayCandle.time)} ET</small>
+                  ) : null}
+                </div>
                 <div className="tf-changes">
                   {timeframeChanges.map(({ timeframe, change }) => (
                     <span
@@ -9169,6 +9214,41 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             Trade Syncer
                           </button>
                         </div>
+                        <div className="sync-research-grid" aria-label="Connection research">
+                          <div className="sync-research-card">
+                            <span>Verified path</span>
+                            <strong>Tradovate direct API</strong>
+                            <p>
+                              Possible with Tradovate API Access, a live account prerequisite, CME license
+                              agreement, and key permissions for account, orders, positions, and market data.
+                            </p>
+                            <div className="sync-doc-links">
+                              <a href={TRADOVATE_API_ACCESS_URL} target="_blank" rel="noreferrer">
+                                API access
+                              </a>
+                              <a href={TRADOVATE_PERMISSIONS_URL} target="_blank" rel="noreferrer">
+                                Permissions
+                              </a>
+                            </div>
+                          </div>
+                          <div className="sync-research-card">
+                            <span>Verified path</span>
+                            <strong>TradeSyncer + Tradovate</strong>
+                            <p>
+                              TradeSyncer can add a Tradovate connection through its Connections page and
+                              redirects to Tradovate OAuth. Avoid repeated reconnects because Tradovate API
+                              limits can block copying.
+                            </p>
+                            <div className="sync-doc-links">
+                              <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
+                                Tradovate OAuth
+                              </a>
+                              <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
+                                API limits
+                              </a>
+                            </div>
+                          </div>
+                        </div>
                         {yazanSyncError ? (
                           <div className="sync-note-card sync-status-card sync-status-card-error">
                             <strong>Connection failed</strong>
@@ -9802,23 +9882,24 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <div className="sync-note-card">
                               <strong>Trade Syncer setup notes</strong>
                               <p>
-                                The official Tradesync developer docs are focused on MT4 and MT5 account onboarding,
-                                broker server IDs, and API key/secret authentication.
+                                This form supports the Trade Sync developer API style fields for MT4/MT5 and
+                                webhooks. TradeSyncer&apos;s Tradovate connection is OAuth-based inside their own
+                                dashboard, so a full in-app TradeSyncer bridge would need a public OAuth callback.
                               </p>
                               <ul className="sync-note-list">
-                                <li>API requests use Basic auth with your API key and secret.</li>
-                                <li>Create-account requests require MT4 or MT5, account number, password, and broker server ID.</li>
-                                <li>Webhook authorization can be none, basic, bearer, or API-key based.</li>
+                                <li>Use TradeSyncer itself for the Tradovate OAuth login path.</li>
+                                <li>Use this section only for Trade Sync API key/secret or webhook setups.</li>
+                                <li>TradeSyncer warns that heavy copying or repeated reconnects can hit Tradovate limits.</li>
                               </ul>
                               <div className="sync-doc-links">
+                                <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
+                                  TradeSyncer Tradovate
+                                </a>
+                                <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
+                                  Tradovate Limits
+                                </a>
                                 <a href={TRADESYNC_AUTH_URL} target="_blank" rel="noreferrer">
-                                  Authentication
-                                </a>
-                                <a href={TRADESYNC_INTRO_BROKER_URL} target="_blank" rel="noreferrer">
-                                  Brokers
-                                </a>
-                                <a href={TRADESYNC_CREATE_ACCOUNT_URL} target="_blank" rel="noreferrer">
-                                  Create Account
+                                  Trade Sync API
                                 </a>
                                 <a href={TRADESYNC_WEBHOOKS_URL} target="_blank" rel="noreferrer">
                                   Webhooks
@@ -9848,10 +9929,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         {canManageConnections ? (
                           <button
                             type="button"
-                            className="panel-action-btn"
+                            className="panel-action-btn model-add-btn"
                             onClick={() => openYazanSyncDraft("add")}
+                            title="Add connection"
+                            aria-label="Add connection"
                           >
-                            Add
+                            <span aria-hidden>+</span>
                           </button>
                         ) : null}
                       </div>

@@ -145,6 +145,40 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
+.quote-delay-reference {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0.08rem 0.34rem;
+  min-width: 112px;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(218, 228, 242, 0.84);
+}
+
+.quote-delay-reference span,
+.quote-delay-reference small {
+  color: rgba(145, 157, 176, 0.76);
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quote-delay-reference strong {
+  color: rgba(238, 244, 252, 0.94);
+  font-size: 0.66rem;
+  font-weight: 650;
+  justify-self: end;
+}
+
+.quote-delay-reference small {
+  grid-column: 1 / -1;
+  letter-spacing: 0.03em;
+  text-transform: none;
+}
+
 .tf-changes {
   display: flex;
   align-items: center;
@@ -863,21 +897,19 @@ button {
   left: var(--chart-left-rail-left);
   z-index: 11;
   display: grid;
-  gap: 9px;
-  width: var(--chart-left-rail-width);
+  gap: 6px;
+  width: 48px;
   max-height: calc(100% - (var(--chart-top-rail-top) * 2));
   overflow-y: auto;
-  padding: 10px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background:
-    linear-gradient(180deg, rgba(21, 29, 40, 0.94), rgba(8, 12, 19, 0.94)),
-    rgba(6, 10, 16, 0.9);
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 184, 212, 0.14);
+  background: rgba(13, 17, 24, 0.94);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 18px 32px rgba(0, 0, 0, 0.36);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 14px 28px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   scrollbar-width: none;
 }
 
@@ -895,28 +927,33 @@ button {
 }
 
 .chart-drawing-toolbar-group-label {
-  color: rgba(199, 213, 230, 0.42);
-  font-size: 0.42rem;
-  letter-spacing: 0.14em;
-  text-align: center;
-  text-transform: uppercase;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .chart-drawing-toolbar-group {
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .chart-drawing-color-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
 }
 
 .chart-drawing-color-swatch {
   width: 100%;
-  height: 20px;
+  height: 18px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
   background: var(--drawing-swatch-color);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
@@ -946,9 +983,10 @@ button {
 
 .chart-drawing-custom-color input[type="color"] {
   width: 100%;
-  height: 24px;
+  height: 22px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
 }
@@ -964,57 +1002,47 @@ button {
 .chart-drawing-toolbar-divider {
   width: 100%;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .chart-drawing-tool-btn {
-  width: 42px;
-  height: 42px;
+  position: relative;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)),
-    rgba(255, 255, 255, 0.02);
-  color: rgba(216, 226, 240, 0.8);
+  background: transparent;
+  color: rgba(203, 214, 229, 0.82);
   cursor: pointer;
   transition:
     background 0.16s ease,
     color 0.16s ease,
     border-color 0.16s ease,
-    transform 0.16s ease,
     box-shadow 0.16s ease;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 6px 14px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .chart-drawing-tool-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 
 .chart-drawing-tool-btn:hover {
-  background:
-    linear-gradient(180deg, rgba(73, 103, 138, 0.22), rgba(27, 39, 56, 0.16)),
-    rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.075);
   color: #f2f7ff;
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 10px 20px rgba(0, 0, 0, 0.24);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
 }
 
 .chart-drawing-tool-btn.active {
-  border-color: rgba(95, 163, 255, 0.5);
-  background:
-    linear-gradient(180deg, rgba(100, 152, 230, 0.36), rgba(46, 85, 135, 0.24)),
-    rgba(79, 142, 244, 0.16);
+  border-color: rgba(104, 157, 234, 0.36);
+  background: rgba(45, 108, 255, 0.18);
   color: #f5f9ff;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 10px 24px rgba(18, 48, 88, 0.34);
+    inset 3px 0 0 rgba(113, 168, 255, 0.82),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .chart-drawing-tool-btn.chart-drawing-tool-btn-danger {
@@ -1041,16 +1069,14 @@ button {
   display: grid;
   gap: 10px;
   padding: 10px;
-  border: 1px solid rgba(218, 231, 248, 0.12);
+  border: 1px solid rgba(168, 184, 212, 0.16);
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(16, 23, 33, 0.96), rgba(7, 11, 17, 0.96)),
-    rgba(7, 11, 17, 0.92);
+  background: rgba(13, 17, 24, 0.96);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 18px 34px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 16px 32px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   scrollbar-width: none;
 }
 
@@ -2753,6 +2779,44 @@ button {
   cursor: not-allowed;
 }
 
+.sync-research-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.sync-research-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.34rem;
+  padding: 0.78rem;
+  border: 1px solid rgba(104, 157, 234, 0.18);
+  border-radius: 12px;
+  background: rgba(45, 108, 255, 0.06);
+}
+
+.sync-research-card span {
+  color: rgba(168, 196, 255, 0.68);
+  font-size: 0.5rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.sync-research-card strong {
+  color: #eef4fc;
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.sync-research-card p {
+  margin: 0;
+  color: rgba(222, 232, 244, 0.72);
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+
 .account-editor-row {
   display: grid;
   gap: 0.42rem;
@@ -2886,6 +2950,21 @@ button {
   height: 38px;
   padding: 0 0.72rem;
   font-size: 0.58rem;
+}
+
+.model-add-btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  justify-self: end;
+  border-radius: 10px;
+}
+
+.model-add-btn span {
+  display: block;
+  font-size: 1.08rem;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 
 .account-editor-submit:disabled,
@@ -3684,6 +3763,10 @@ button {
     flex: 1 1 auto;
   }
 
+  .sync-research-grid {
+    grid-template-columns: 1fr;
+  }
+
   .market-maker-shell {
     padding: 0.72rem 0.62rem 0.84rem;
     gap: 0.82rem;
@@ -4478,6 +4561,14 @@ button {
   .top-controls {
     justify-content: space-between;
     gap: 0.6rem;
+  }
+
+  .live-quote {
+    flex-wrap: wrap;
+  }
+
+  .quote-delay-reference {
+    min-width: 0;
   }
 
   .tf-changes {
