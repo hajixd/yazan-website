@@ -8,6 +8,7 @@ import {
   createEmptySavedConnection,
   sanitizeAccountSyncDraft
 } from "../brokerSync";
+import { createHash } from "crypto";
 
 type ProviderErrorOptions = {
   fieldErrors?: Partial<Record<keyof AccountSyncDraft | "form", string>>;
@@ -116,6 +117,16 @@ const TRADOVATE_BASE_URLS = {
 
 const TRADESYNC_BASE_URL = process.env.TRADESYNC_API_BASE_URL || "https://api.tradesync.com";
 const REQUEST_TIMEOUT_MS = 15_000;
+const TRADOVATE_TOKEN_REFRESH_BUFFER_MS = 15 * 60_000;
+const TRADOVATE_DEFAULT_TOKEN_TTL_MS = 75 * 60_000;
+
+type TradovateAccessTokenCacheEntry = {
+  baseUrl: string;
+  accessToken: string;
+  expiresAt: number;
+};
+
+const tradovateAccessTokenCache = new Map<string, TradovateAccessTokenCacheEntry>();
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -155,6 +166,59 @@ const parseJsonSafely = async (response: Response) => {
   } catch {
     return text;
   }
+};
+
+const getTradovateTokenCacheKey = (draft: AccountSyncDraft) => {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        draft.environment,
+        draft.accessMode,
+        draft.username,
+        draft.apiKey,
+        draft.apiSecret,
+        draft.appId,
+        draft.appVersion,
+        draft.deviceId
+      ])
+    )
+    .digest("hex");
+};
+
+const readCachedTradovateAccessToken = (
+  draft: AccountSyncDraft
+): TradovateAccessTokenCacheEntry | null => {
+  const cacheKey = getTradovateTokenCacheKey(draft);
+  const cached = tradovateAccessTokenCache.get(cacheKey);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt - TRADOVATE_TOKEN_REFRESH_BUFFER_MS <= Date.now()) {
+    tradovateAccessTokenCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached;
+};
+
+const cacheTradovateAccessToken = (
+  draft: AccountSyncDraft,
+  baseUrl: string,
+  accessToken: string,
+  expirationTime?: string | null
+) => {
+  const parsedExpiration = expirationTime ? Date.parse(expirationTime) : Number.NaN;
+  const expiresAt = Number.isFinite(parsedExpiration)
+    ? parsedExpiration
+    : Date.now() + TRADOVATE_DEFAULT_TOKEN_TTL_MS;
+
+  tradovateAccessTokenCache.set(getTradovateTokenCacheKey(draft), {
+    baseUrl,
+    accessToken,
+    expiresAt
+  });
 };
 
 const assertTradovateSuccess = async (response: Response, fallback: string) => {
@@ -279,28 +343,30 @@ const validateDraft = (draft: AccountSyncDraft) => {
       });
     }
 
-    if (!draft.username) {
-      throw new ProviderError("Tradovate needs the account username for validation.", {
-        fieldErrors: {
-          username: "Enter the Tradovate username."
-        }
-      });
-    }
+    if (draft.accessMode === "api_key_password") {
+      if (!draft.username) {
+        throw new ProviderError("Tradovate needs the account username for token requests.", {
+          fieldErrors: {
+            username: "Enter the Tradovate username."
+          }
+        });
+      }
 
-    if (draft.accessMode === "api_key_password" && !draft.apiSecret) {
-      throw new ProviderError("Dedicated-password mode needs the dedicated password.", {
-        fieldErrors: {
-          apiSecret: "Enter the Tradovate dedicated password."
-        }
-      });
-    }
+      if (!draft.apiSecret) {
+        throw new ProviderError("Dedicated-password mode needs the dedicated password.", {
+          fieldErrors: {
+            apiSecret: "Enter the Tradovate dedicated password."
+          }
+        });
+      }
 
-    if (!draft.appId) {
-      throw new ProviderError("Tradovate needs an App ID for access-token requests.", {
-        fieldErrors: {
-          appId: "Enter the Tradovate App ID."
-        }
-      });
+      if (!draft.appId) {
+        throw new ProviderError("Tradovate needs an App ID for access-token requests.", {
+          fieldErrors: {
+            appId: "Enter the Tradovate App ID."
+          }
+        });
+      }
     }
   } else {
     if (!draft.apiKey) {
@@ -363,18 +429,32 @@ const tradovateFetch = async (
 
 const getTradovateAccessToken = async (draft: AccountSyncDraft) => {
   const baseUrl = TRADOVATE_BASE_URLS[draft.environment];
+  const cachedToken = readCachedTradovateAccessToken(draft);
 
-  const directBearerResponse = await tradovateFetch(baseUrl, "/auth/me", {
-    headers: {
-      Authorization: `Bearer ${draft.apiKey}`
-    }
-  });
-
-  if (directBearerResponse.ok) {
+  if (cachedToken) {
     return {
-      baseUrl,
-      accessToken: draft.apiKey
+      baseUrl: cachedToken.baseUrl,
+      accessToken: cachedToken.accessToken
     };
+  }
+
+  if (draft.accessMode === "api_key") {
+    const directBearerResponse = await tradovateFetch(baseUrl, "/auth/me", {
+      headers: {
+        Authorization: `Bearer ${draft.apiKey}`
+      }
+    });
+
+    if (directBearerResponse.ok) {
+      return {
+        baseUrl,
+        accessToken: draft.apiKey
+      };
+    }
+
+    throw new ProviderError(
+      "Tradovate rejected the API key. Confirm the key permissions, or use Key + Dedicated Password for security-key token requests."
+    );
   }
 
   const authPayload: Record<string, string | number> = {
@@ -405,6 +485,8 @@ const getTradovateAccessToken = async (draft: AccountSyncDraft) => {
   if (!authData.accessToken) {
     throw new ProviderError("Tradovate did not return an access token.");
   }
+
+  cacheTradovateAccessToken(draft, baseUrl, authData.accessToken, authData.expirationTime);
 
   return {
     baseUrl,

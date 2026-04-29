@@ -127,7 +127,7 @@ export const createDefaultSyncDraft = (
   if (provider === "tradesyncer") {
     return {
       provider,
-      connectionLabel: "Yazan Trade Syncer",
+      connectionLabel: "Yazan Trade Sync",
       environment: "live",
       accountLabel: "Roman Copier Account",
       accountNumber: "",
@@ -208,7 +208,7 @@ export const sanitizeAccountSyncDraft = (draft: AccountSyncDraft): AccountSyncDr
 };
 
 export const getSyncProviderLabel = (provider: SyncProvider) => {
-  return provider === "tradovate" ? "Tradovate" : "Trade Syncer";
+  return provider === "tradovate" ? "Tradovate" : "Trade Sync";
 };
 
 export const buildDefaultTradesyncWebhookUrl = (origin: string) => {

@@ -7870,6 +7870,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           {yazanSyncFieldErrors.username ? (
             <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
           ) : null}
+          <small className="sync-field-hint">
+            Required for Key + Password mode. Optional when using a direct Bearer API key.
+          </small>
         </label>
         <label className="account-editor-row">
           <span>API / Security Key</span>
@@ -7965,6 +7968,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             Enable API Access in Tradovate, then save the key here to verify the account and
             read recent fills.
           </p>
+          <ul className="sync-note-list">
+            <li>Use API Key for a direct Bearer key from Tradovate.</li>
+            <li>Use Key + Password when you have a security key plus a dedicated API password.</li>
+            <li>This app reuses short-lived Tradovate tokens where possible to avoid session churn.</li>
+          </ul>
           <div className="sync-doc-links">
             <a href={TRADOVATE_API_ACCESS_URL} target="_blank" rel="noreferrer">
               API Access
@@ -9228,7 +9236,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
-                          <p>Connect Tradovate or Trade Syncer to this workspace.</p>
+                          <p>Connect Tradovate or Trade Sync API accounts to this workspace.</p>
                         </div>
                         <button
                           type="button"
@@ -9265,7 +9273,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             onClick={() => updateYazanSyncProvider("tradesyncer")}
                             disabled={yazanSyncSaving}
                           >
-                            Trade Syncer
+                            Trade Sync API
                           </button>
                         </div>
                         <div className="sync-research-grid" aria-label="Connection research">
@@ -9289,7 +9297,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <span>Verified path</span>
                             <strong>TradeSyncer + Tradovate</strong>
                             <p>
-                              TradeSyncer can add a Tradovate connection through its Connections page and
+                              TradeSyncer can add a Tradovate connection through its external Connections page and
                               redirects to Tradovate OAuth. Avoid repeated reconnects because Tradovate API
                               limits can block copying.
                             </p>
@@ -9335,7 +9343,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             placeholder={
                               yazanSyncDraft.provider === "tradovate"
                                 ? "Yazan Tradovate"
-                                : "Yazan Trade Syncer"
+                                : "Yazan Trade Sync"
                             }
                             disabled={yazanSyncSaving}
                           />
@@ -9440,6 +9448,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               {yazanSyncFieldErrors.username ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
                               ) : null}
+                              <small className="sync-field-hint">
+                                Required for API Key + Dedicated Password mode. Optional for a direct Bearer API key.
+                              </small>
                             </label>
                             <label className="account-editor-row">
                               <span>API / Security Key</span>
@@ -9561,6 +9572,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               <ul className="sync-note-list">
                                 <li>Live API usage requires Tradovate&apos;s API add-on and account prerequisites.</li>
                                 <li>Market-data permission is separate from order placement and modification.</li>
+                                <li>This app reuses short-lived Tradovate tokens where possible to avoid session churn.</li>
                                 <li>OAuth exists for public apps, but this local flow stages API-key setups.</li>
                               </ul>
                               <div className="sync-doc-links">
@@ -9706,7 +9718,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("apiKey", event.target.value);
                                 }}
-                                placeholder="Trade Syncer API key"
+                                placeholder="Trade Sync API key"
                                 disabled={yazanSyncSaving}
                               />
                               {yazanSyncFieldErrors.apiKey ? (
@@ -9728,7 +9740,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("apiSecret", event.target.value);
                                 }}
-                                placeholder="Trade Syncer API secret"
+                                placeholder="Trade Sync API secret"
                                 disabled={yazanSyncSaving}
                               />
                               {yazanSyncFieldErrors.apiSecret ? (
@@ -9934,15 +9946,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                               </>
                             ) : null}
                             <div className="sync-note-card">
-                              <strong>Trade Syncer setup notes</strong>
+                              <strong>Trade Sync API setup notes</strong>
                               <p>
-                                This form supports the Trade Sync developer API style fields for MT4/MT5 and
-                                webhooks. TradeSyncer&apos;s Tradovate connection is OAuth-based inside their own
-                                dashboard, so a full in-app TradeSyncer bridge would need a public OAuth callback.
+                                This form supports the Trade Sync developer API fields for MT4/MT5 accounts and
+                                webhooks. TradeSyncer&apos;s Tradovate connection is a separate OAuth-based flow inside
+                                the TradeSyncer dashboard.
                               </p>
                               <ul className="sync-note-list">
-                                <li>Use TradeSyncer itself for the Tradovate OAuth login path.</li>
-                                <li>Use this section only for Trade Sync API key/secret or webhook setups.</li>
+                                <li>Use TradeSyncer itself for the external Tradovate OAuth login path.</li>
+                                <li>Use this section only for Trade Sync API key/secret MT4/MT5 or webhook setups.</li>
                                 <li>TradeSyncer warns that heavy copying or repeated reconnects can hit Tradovate limits.</li>
                               </ul>
                               <div className="sync-doc-links">
