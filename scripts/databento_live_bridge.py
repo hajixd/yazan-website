@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import databento as db
-from databento_dbn import ErrorMsg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
+from databento_dbn import BBOMsg, ErrorMsg, MBP1Msg, MBP10Msg, OHLCVMsg, SymbolMappingMsg, SystemMsg, TradeMsg
 
 PRICE_SCALE = 1_000_000_000
+PRICE_SCHEMAS = {"trades", "mbp-1", "bbo-1s"}
 TERMINAL_ERROR_PATTERNS = (
     "invalid api key",
     "not authorized",
@@ -98,6 +99,17 @@ def coerce_int(value: Any) -> int:
         return 0
 
 
+def enum_code(value: Any) -> str:
+    raw_value = getattr(value, "value", value)
+    code = str(raw_value or "").strip()
+    return code[:1].upper()
+
+
+def get_price_schema() -> str:
+    configured = os.environ.get("DATABENTO_PRICE_SCHEMA", "mbp-1").strip().lower()
+    return configured if configured in PRICE_SCHEMAS else "mbp-1"
+
+
 def firebase_market_data_configured() -> bool:
     return bool(
         os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
@@ -119,7 +131,7 @@ def depth_stream_enabled() -> bool:
     }
 
 
-def build_order_book_snapshot(record: MBP10Msg) -> dict[str, Any]:
+def build_order_book_snapshot(record: MBP1Msg | MBP10Msg | BBOMsg) -> dict[str, Any]:
     levels: list[dict[str, Any]] = []
 
     for level in record.levels:
@@ -178,7 +190,7 @@ def build_order_book_snapshot(record: MBP10Msg) -> dict[str, Any]:
     }
 
 
-def ensure_connected(symbol: str, dataset: str, databento_symbol: str) -> None:
+def ensure_connected(symbol: str, dataset: str, databento_symbol: str, schema: str) -> None:
     global connected
 
     if connected:
@@ -192,7 +204,7 @@ def ensure_connected(symbol: str, dataset: str, databento_symbol: str) -> None:
             "state": "connected",
             "message": "Databento live stream connected.",
             "time": now_ms(),
-            "meta": build_meta("trades", symbol, dataset, databento_symbol),
+            "meta": build_meta(schema, symbol, dataset, databento_symbol),
         }
     )
 
@@ -223,6 +235,7 @@ def main() -> int:
 
     args = parse_args()
     api_key = os.environ.get("DATABENTO_API_KEY") or os.environ.get("DATABENTO_KEY")
+    price_schema = get_price_schema()
 
     if not api_key:
         emit(
@@ -232,7 +245,7 @@ def main() -> int:
                 "message": "Missing DATABENTO_API_KEY. Add it before starting the live bridge.",
                 "retrying": False,
                 "time": now_ms(),
-                "meta": build_meta("trades", args.symbol, args.dataset, args.databento_symbol),
+                "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
             }
         )
         return 1
@@ -247,7 +260,7 @@ def main() -> int:
             "state": "connecting",
             "message": "Connecting to Databento live stream...",
             "time": now_ms(),
-            "meta": build_meta("trades", args.symbol, args.dataset, args.databento_symbol),
+            "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
         }
     )
 
@@ -259,7 +272,7 @@ def main() -> int:
         )
         client.subscribe(
             dataset=args.dataset,
-            schema="trades",
+            schema=price_schema,
             symbols=[args.databento_symbol],
             stype_in="continuous",
         )
@@ -291,14 +304,14 @@ def main() -> int:
                         "state": "connected",
                         "message": f"{args.databento_symbol} mapped to {resolved_symbol}.",
                         "time": now_ms(),
-                        "meta": build_meta("trades", args.symbol, args.dataset, args.databento_symbol),
+                        "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
                     }
                 )
                 continue
 
             if isinstance(record, SystemMsg):
                 if not bool(getattr(record, "is_heartbeat", False)):
-                    ensure_connected(args.symbol, args.dataset, args.databento_symbol)
+                    ensure_connected(args.symbol, args.dataset, args.databento_symbol, price_schema)
                 continue
 
             if isinstance(record, ErrorMsg):
@@ -311,22 +324,43 @@ def main() -> int:
                         "message": message,
                         "retrying": not classify_terminal(message),
                         "time": ns_to_ms(getattr(record, "ts_event", None)),
-                        "meta": build_meta("trades", args.symbol, args.dataset, args.databento_symbol),
+                        "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
                     }
                 )
                 continue
 
-            ensure_connected(args.symbol, args.dataset, args.databento_symbol)
+            ensure_connected(args.symbol, args.dataset, args.databento_symbol, price_schema)
 
-            if isinstance(record, TradeMsg):
+            if isinstance(record, (MBP1Msg, BBOMsg)):
+                emit(
+                    {
+                        "type": "book",
+                        "symbol": args.symbol,
+                        "time": ns_to_ms(getattr(record, "ts_event", None)),
+                        "snapshot": build_order_book_snapshot(record),
+                        "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
+                    }
+                )
+
+            should_emit_trade = isinstance(record, TradeMsg)
+            if isinstance(record, MBP1Msg):
+                should_emit_trade = enum_code(getattr(record, "action", "")) == "T"
+            if isinstance(record, BBOMsg):
+                should_emit_trade = normalise_price(
+                    getattr(record, "pretty_price", None), getattr(record, "price", None)
+                ) > 0
+
+            if should_emit_trade:
                 emit(
                     {
                         "type": "trade",
                         "symbol": args.symbol,
                         "price": normalise_price(getattr(record, "pretty_price", None), getattr(record, "price", None)),
                         "size": coerce_int(getattr(record, "size", 0)),
+                        "side": enum_code(getattr(record, "side", "")) or "N",
+                        "sequence": coerce_int(getattr(record, "sequence", 0)),
                         "time": ns_to_ms(getattr(record, "ts_event", None)),
-                        "meta": build_meta("trades", args.symbol, args.dataset, args.databento_symbol),
+                        "meta": build_meta(price_schema, args.symbol, args.dataset, args.databento_symbol),
                     }
                 )
                 continue

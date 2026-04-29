@@ -29,6 +29,7 @@ type DatabentoLiveBridgeEvent = DatabentoLiveEvent | DatabentoLiveCandleBridgeEv
 
 const SESSION_IDLE_SHUTDOWN_MS = 15_000;
 const SESSION_RESTART_DELAY_MS = 1_500;
+const PRICE_SCHEMAS = new Set(["trades", "mbp-1", "bbo-1s"]);
 const TERMINAL_ERROR_PATTERNS = [
   /invalid api key/i,
   /not authorized/i,
@@ -49,6 +50,11 @@ const getDefaultMeta = (asset: FutureAsset, schema: string): DatabentoLiveMeta =
   databentoSymbol: asset.databentoSymbol,
   updatedAt: new Date().toISOString()
 });
+
+const getConfiguredPriceSchema = () => {
+  const schema = (process.env.DATABENTO_PRICE_SCHEMA ?? "mbp-1").trim().toLowerCase();
+  return PRICE_SCHEMAS.has(schema) ? schema : "mbp-1";
+};
 
 const isTerminalDatabentoError = (message: string): boolean => {
   return TERMINAL_ERROR_PATTERNS.some((pattern) => pattern.test(message));
@@ -120,7 +126,7 @@ class DatabentoLiveSession {
         message: "Missing DATABENTO_API_KEY. Add it to your environment before starting the live feed.",
         retrying: false,
         time: Date.now(),
-        meta: getDefaultMeta(this.asset, "trades")
+        meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
       });
       this.broadcastStatus("stopped", "Databento live feed is waiting for an API key.");
       return;
@@ -166,7 +172,7 @@ class DatabentoLiveSession {
         message: "Failed to open stdout/stderr for the Databento live bridge.",
         retrying: false,
         time: Date.now(),
-        meta: getDefaultMeta(this.asset, "trades")
+        meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
       });
       return;
     }
@@ -196,7 +202,7 @@ class DatabentoLiveSession {
         message,
         retrying: !this.terminalFailure,
         time: Date.now(),
-        meta: getDefaultMeta(this.asset, "trades")
+        meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
       });
     });
 
@@ -254,7 +260,7 @@ class DatabentoLiveSession {
         message,
         retrying: false,
         time: Date.now(),
-        meta: getDefaultMeta(this.asset, "trades")
+        meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
       });
     }
   }
@@ -288,7 +294,7 @@ class DatabentoLiveSession {
           : `Databento live bridge stopped: ${exitSummary}`,
       retrying,
       time: Date.now(),
-      meta: getDefaultMeta(this.asset, "trades")
+      meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
     });
 
     if (!retrying) {
@@ -313,7 +319,7 @@ class DatabentoLiveSession {
       state,
       message,
       time: Date.now(),
-      meta: getDefaultMeta(this.asset, "trades")
+      meta: getDefaultMeta(this.asset, getConfiguredPriceSchema())
     };
     this.latestStatus = statusEvent;
     this.broadcast(statusEvent);
