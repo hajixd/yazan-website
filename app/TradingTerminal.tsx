@@ -46,7 +46,9 @@ import {
   type TradovateTradesResponse,
   type WebhookAuthMode,
   TRADESYNC_AUTH_URL,
+  TRADESYNC_CREATE_ACCOUNT_URL,
   TRADESYNC_WEBHOOKS_URL,
+  TRADESYNC_INTRO_BROKER_URL,
   TRADESYNCER_TRADOVATE_CONNECTION_URL,
   TRADESYNCER_TRADOVATE_LIMITS_URL,
   TRADOVATE_API_ACCESS_URL,
@@ -54,7 +56,7 @@ import {
   TRADOVATE_MARKET_DATA_URL,
   TRADOVATE_PERMISSIONS_URL,
   YAZAN_SYNC_STORAGE_KEY,
-  buildDefaultTradesyncWebhookUrl,
+  buildPublicTradesyncWebhookUrl,
   createDefaultSyncDraft,
   getSyncProviderLabel,
   normalizeSavedAccountSync,
@@ -670,6 +672,7 @@ const watchlistSnapshotCountByTimeframe: Record<Timeframe, number> = {
 
 const TRADINGVIEW_CME_GROUP_DELAY_MINUTES = 10;
 const TRADINGVIEW_CME_GROUP_DELAY_MS = TRADINGVIEW_CME_GROUP_DELAY_MINUTES * 60_000;
+const MARKET_CLOCK_RESYNC_THRESHOLD_MS = 2_000;
 
 const multiAssetHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 360,
@@ -2354,6 +2357,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartDrawingOverlayRef = useRef<SVGSVGElement | null>(null);
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
+  const countdownOverlayStateRef = useRef<{
+    latestCandle: Candle | null;
+    selectedTimeframe: Timeframe;
+    tickSize: number;
+    getProjectedMarketNowMs: () => number;
+  }>({
+    latestCandle: null,
+    selectedTimeframe: "15m",
+    tickSize: 0.25,
+    getProjectedMarketNowMs: () => Date.now()
+  });
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -2568,8 +2582,21 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       return;
     }
 
+    const capturedAtMs = Date.now();
+    const currentAnchor = marketClockAnchorRef.current;
+
+    if (currentAnchor) {
+      const projectedMarketTimeMs =
+        capturedAtMs - (currentAnchor.capturedAtMs - currentAnchor.marketTimeMs);
+      const driftMs = marketTimeMs - projectedMarketTimeMs;
+
+      if (Math.abs(driftMs) < MARKET_CLOCK_RESYNC_THRESHOLD_MS) {
+        return;
+      }
+    }
+
     marketClockAnchorRef.current = {
-      capturedAtMs: Date.now(),
+      capturedAtMs,
       marketTimeMs
     };
   }, []);
@@ -4060,6 +4087,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     latestCandle && previousCandle && previousCandle.close > 0
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : null;
+
+  countdownOverlayStateRef.current = {
+    latestCandle,
+    selectedTimeframe,
+    tickSize: selectedAsset.tickSize,
+    getProjectedMarketNowMs
+  };
+
   const tradingViewDelayReferenceTime = getProjectedMarketNowMs() - TRADINGVIEW_CME_GROUP_DELAY_MS;
   const tradingViewDelayCandle = findCandleAtOrBefore(
     renderedSelectedCandles,
@@ -5244,56 +5279,92 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   useEffect(() => {
     const overlay = countdownOverlayRef.current;
 
-    if (!overlay || !latestCandle) {
-      if (overlay) overlay.style.display = "none";
+    if (!overlay) {
       return;
     }
 
-    const candleMs = getTimeframeMs(selectedTimeframe);
+    const priceNode = overlay.querySelector<HTMLElement>("[data-countdown-price]");
+    const timerNode = overlay.querySelector<HTMLElement>("[data-countdown-timer]");
     let raf = 0;
-    let lastText = "";
+    let lastPrice = "";
+    let lastTimer = "";
+    let lastTone = "";
+    let lastOpacity = "";
+    let lastTransform = "";
+    let lastDisplay = "";
+
+    const setDisplay = (display: "flex" | "none") => {
+      if (display === lastDisplay) {
+        return;
+      }
+
+      overlay.style.display = display;
+      lastDisplay = display;
+    };
 
     const update = () => {
       const candleSeries = candleSeriesRef.current;
+      const { latestCandle, selectedTimeframe, tickSize, getProjectedMarketNowMs } =
+        countdownOverlayStateRef.current;
 
-      if (!candleSeries) {
+      if (!candleSeries || !latestCandle || !priceNode || !timerNode) {
+        setDisplay("none");
         raf = window.requestAnimationFrame(update);
         return;
       }
 
-      const candleEndMs = latestCandle.time + candleMs;
+      const candleMs = getTimeframeMs(selectedTimeframe);
       const nowMs = getProjectedMarketNowMs();
-      const isStale = nowMs >= candleEndMs + candleMs;
-      const remaining = isStale ? null : Math.max(0, Math.floor((candleEndMs - nowMs) / 1000));
-      const h = remaining === null ? 0 : Math.floor(remaining / 3600);
-      const m = remaining === null ? 0 : Math.floor((remaining % 3600) / 60);
-      const s = remaining === null ? 0 : remaining % 60;
+      const currentCandleStartMs = floorToTimeframe(nowMs, selectedTimeframe);
+      const currentCandleEndMs = currentCandleStartMs + candleMs;
+      const isCurrentCandle =
+        latestCandle.time >= currentCandleStartMs && latestCandle.time < currentCandleStartMs + candleMs;
+      const remaining = Math.max(0, Math.ceil((currentCandleEndMs - nowMs) / 1000));
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
       const pad = (n: number) => String(n).padStart(2, "0");
-      const timer =
-        remaining === null
-          ? "--:--"
-          : h > 0
-            ? `${pad(h)}:${pad(m)}:${pad(s)}`
-            : `${pad(m)}:${pad(s)}`;
-      const price = formatPriceByTick(latestCandle.close, selectedAsset.tickSize);
-      const text = `${price}\n${timer}`;
+      const timer = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+      const price = formatPriceByTick(latestCandle.close, tickSize);
 
-      if (text !== lastText) {
-        overlay.textContent = text;
-        lastText = text;
+      if (price !== lastPrice) {
+        priceNode.textContent = price;
+        lastPrice = price;
       }
 
       const isUp = latestCandle.close >= latestCandle.open;
-      overlay.style.background = isUp ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
-      overlay.style.opacity = remaining === null ? "0.68" : "1";
+      const tone = isUp ? "up" : "down";
+      const opacity = isCurrentCandle ? "1" : "0.68";
+
+      if (timer !== lastTimer) {
+        timerNode.textContent = timer;
+        lastTimer = timer;
+      }
+
+      if (tone !== lastTone) {
+        overlay.style.background =
+          tone === "up" ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
+        lastTone = tone;
+      }
+
+      if (opacity !== lastOpacity) {
+        overlay.style.opacity = opacity;
+        lastOpacity = opacity;
+      }
 
       const y = candleSeries.priceToCoordinate(latestCandle.close);
 
       if (y !== null && Number.isFinite(y)) {
-        overlay.style.top = `${y - 9}px`;
-        overlay.style.display = "block";
+        const transform = `translate3d(0, ${Math.round(y - 9)}px, 0)`;
+
+        if (transform !== lastTransform) {
+          overlay.style.transform = transform;
+          lastTransform = transform;
+        }
+
+        setDisplay("flex");
       } else {
-        overlay.style.display = "none";
+        setDisplay("none");
       }
 
       raf = window.requestAnimationFrame(update);
@@ -5302,13 +5373,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     raf = window.requestAnimationFrame(update);
 
     return () => window.cancelAnimationFrame(raf);
-  }, [
-    getProjectedMarketNowMs,
-    latestCandle,
-    selectedAsset.tickSize,
-    selectedTimeframe,
-    renderedSelectedCandles
-  ]);
+  }, [activeAccountRole, chartReadyVersion]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -6037,6 +6102,99 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     tradovateTradeStatus === "loading"
       ? "Loading"
       : `${tradovateTrades.length.toLocaleString("en-US")} fills`;
+  const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const publicTradesyncWebhookUrl = browserOrigin
+    ? buildPublicTradesyncWebhookUrl(browserOrigin)
+    : "";
+  const connectionSetup = useMemo(() => {
+    if (yazanSyncDraft.provider === "tradovate") {
+      const hasCredentialSet =
+        yazanSyncDraft.accessMode === "api_key"
+          ? Boolean(yazanSyncDraft.apiKey)
+          : Boolean(
+              yazanSyncDraft.username &&
+                yazanSyncDraft.apiKey &&
+                yazanSyncDraft.apiSecret &&
+                yazanSyncDraft.appId
+            );
+
+      return {
+        title: "Tradovate direct API",
+        summary: "Verifies the user, loads accounts, then reads recent fills from Tradovate.",
+        steps: [
+          {
+            state: "ready",
+            label: "API access enabled",
+            detail: "Live accounts need Tradovate API Access and the required account prerequisites."
+          },
+          {
+            state: hasCredentialSet ? "ready" : "todo",
+            label: "Credentials ready",
+            detail:
+              yazanSyncDraft.accessMode === "api_key"
+                ? "Paste the API key used as the bearer credential."
+                : "Enter username, security key, dedicated password, and app ID."
+          },
+          {
+            state: "ready",
+            label: "Account target",
+            detail: yazanSyncDraft.accountNumber
+              ? "This connection will verify the exact account you entered."
+              : "Leave account number blank to use the first returned Tradovate account."
+          }
+        ],
+        links: [
+          ["API Access", TRADOVATE_API_ACCESS_URL],
+          ["Auth Options", TRADOVATE_AUTH_OPTIONS_URL],
+          ["REST Auth", "https://partner.tradovate.com/api/rest-api-endpoints/authentication/access-token-request"],
+          ["Fill List", "https://partner.tradovate.com/api/rest-api-endpoints/orders/fill-list"]
+        ]
+      };
+    }
+
+    const webhookReady = Boolean(yazanSyncDraft.webhookUrl || publicTradesyncWebhookUrl);
+
+    return {
+      title: "Trade Sync MT4/MT5 API",
+      summary: "Creates or refreshes a MetaTrader account, then optionally registers the webhook.",
+      steps: [
+        {
+          state: yazanSyncDraft.apiKey && yazanSyncDraft.apiSecret ? "ready" : "todo",
+          label: "API credentials",
+          detail: "Use the Trade Sync key and secret pair, not the web-app login."
+        },
+        {
+          state: yazanSyncDraft.accountNumber && yazanSyncDraft.accountPassword ? "ready" : "todo",
+          label: "MetaTrader login",
+          detail: "Account number and password are sent to Trade Sync to create or refresh the account."
+        },
+        {
+          state: /^\d+$/.test(yazanSyncDraft.brokerServerId.trim()) ? "ready" : "todo",
+          label: "Broker server ID",
+          detail: "Find this numeric ID from Trade Sync broker servers for the selected MT4/MT5 app."
+        },
+        {
+          state: webhookReady ? "ready" : "optional",
+          label: "Webhook",
+          detail: webhookReady
+            ? "A public webhook URL will be registered."
+            : "Skipped locally. Add a public deployed URL or tunnel when webhook delivery is needed."
+        }
+      ],
+      links: [
+        ["Authentication", TRADESYNC_AUTH_URL],
+        ["Broker Servers", TRADESYNC_INTRO_BROKER_URL],
+        ["Create Account", TRADESYNC_CREATE_ACCOUNT_URL],
+        ["Webhooks", TRADESYNC_WEBHOOKS_URL]
+      ]
+    };
+  }, [publicTradesyncWebhookUrl, yazanSyncDraft]);
+  const connectionSubmitLabel =
+    yazanSyncDraft.provider === "tradovate"
+      ? "Verify Tradovate"
+      : yazanSyncDraftMode === "edit" && yazanAccount?.provider === "tradesyncer"
+        ? "Refresh Trade Sync"
+        : "Create Trade Sync";
 
   const loadTradovateTrades = useCallback(async () => {
     if (!tradovateConnection) {
@@ -6133,16 +6291,23 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       }
 
       const next = createDefaultSyncDraft(provider);
+      const currentDefault = createDefaultSyncDraft(current.provider);
       const builtInWebhookUrl =
         provider === "tradesyncer" && typeof window !== "undefined"
-          ? buildDefaultTradesyncWebhookUrl(window.location.origin)
+          ? buildPublicTradesyncWebhookUrl(window.location.origin)
           : "";
 
       return {
         ...next,
-        connectionLabel: current.connectionLabel || next.connectionLabel,
+        connectionLabel:
+          current.connectionLabel && current.connectionLabel !== currentDefault.connectionLabel
+            ? current.connectionLabel
+            : next.connectionLabel,
         environment: current.environment,
-        accountLabel: current.accountLabel || next.accountLabel,
+        accountLabel:
+          current.accountLabel && current.accountLabel !== currentDefault.accountLabel
+            ? current.accountLabel
+            : next.accountLabel,
         accountNumber: current.accountNumber,
         username: current.username,
         webhookUrl:
@@ -6178,9 +6343,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           !nextDraft.webhookUrl &&
           typeof window !== "undefined"
         ) {
+          const builtInWebhookUrl = buildPublicTradesyncWebhookUrl(window.location.origin);
+
+          if (!builtInWebhookUrl) {
+            return nextDraft;
+          }
+
           return {
             ...nextDraft,
-            webhookUrl: buildDefaultTradesyncWebhookUrl(window.location.origin)
+            webhookUrl: builtInWebhookUrl
           };
         }
 
@@ -7780,6 +7951,24 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             <p>{yazanSyncSuccess}</p>
           </div>
         ) : null}
+        <div className="sync-setup-flow" aria-label="Tradovate connection path">
+          <div className="sync-setup-head">
+            <span>Connection path</span>
+            <strong>{connectionSetup.title}</strong>
+            <p>{connectionSetup.summary}</p>
+          </div>
+          <ol className="sync-step-list">
+            {connectionSetup.steps.map((step) => (
+              <li key={step.label} className={`sync-step sync-step-${step.state}`}>
+                <span aria-hidden />
+                <div>
+                  <strong>{step.label}</strong>
+                  <p>{step.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
         <label className="account-editor-row">
           <span>Connection Label</span>
           <input
@@ -7994,7 +8183,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             className="account-submit-btn account-editor-submit"
             disabled={yazanSyncSaving}
           >
-            {yazanSyncSaving ? "Verifying..." : "Save Tradovate"}
+            {yazanSyncSaving ? "Verifying..." : "Verify Tradovate"}
           </button>
         </div>
       </form>
@@ -8707,7 +8896,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 ? chartDrawingsForRender.map((drawing) => renderChartDrawing(drawing))
                 : null}
             </svg>
-            <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
+            <div ref={countdownOverlayRef} className="candle-countdown-overlay" aria-hidden="true">
+              <span data-countdown-price />
+              <span data-countdown-timer />
+            </div>
             <div className="chart-overlay-stack">
               <button
                 type="button"
@@ -9276,39 +9468,39 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             Trade Sync API
                           </button>
                         </div>
-                        <div className="sync-research-grid" aria-label="Connection research">
-                          <div className="sync-research-card">
-                            <span>Verified path</span>
-                            <strong>Tradovate direct API</strong>
-                            <p>
-                              Possible with Tradovate API Access, a live account prerequisite, CME license
-                              agreement, and key permissions for account, orders, positions, and market data.
-                            </p>
-                            <div className="sync-doc-links">
-                              <a href={TRADOVATE_API_ACCESS_URL} target="_blank" rel="noreferrer">
-                                API access
-                              </a>
-                              <a href={TRADOVATE_PERMISSIONS_URL} target="_blank" rel="noreferrer">
-                                Permissions
-                              </a>
-                            </div>
+                        <div className="sync-setup-flow" aria-label="Connection path">
+                          <div className="sync-setup-head">
+                            <span>Connection path</span>
+                            <strong>{connectionSetup.title}</strong>
+                            <p>{connectionSetup.summary}</p>
                           </div>
-                          <div className="sync-research-card">
-                            <span>Verified path</span>
-                            <strong>TradeSyncer + Tradovate</strong>
-                            <p>
-                              TradeSyncer can add a Tradovate connection through its external Connections page and
-                              redirects to Tradovate OAuth. Avoid repeated reconnects because Tradovate API
-                              limits can block copying.
-                            </p>
-                            <div className="sync-doc-links">
-                              <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
-                                Tradovate OAuth
+                          <ol className="sync-step-list">
+                            {connectionSetup.steps.map((step) => (
+                              <li key={step.label} className={`sync-step sync-step-${step.state}`}>
+                                <span aria-hidden />
+                                <div>
+                                  <strong>{step.label}</strong>
+                                  <p>{step.detail}</p>
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                          <div className="sync-doc-links">
+                            {connectionSetup.links.map(([label, href]) => (
+                              <a key={href} href={href} target="_blank" rel="noreferrer">
+                                {label}
                               </a>
-                              <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
-                                API limits
-                              </a>
-                            </div>
+                            ))}
+                            {yazanSyncDraft.provider === "tradesyncer" ? (
+                              <>
+                                <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
+                                  TradeSyncer Tradovate
+                                </a>
+                                <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
+                                  Tradovate Limits
+                                </a>
+                              </>
+                            ) : null}
                           </div>
                         </div>
                         {yazanSyncError ? (
@@ -9770,6 +9962,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 Leave this blank to use this site&apos;s built-in Trade Sync webhook route. If this app
                                 is running only on localhost, Trade Sync will need a public URL or tunnel to reach it.
                               </small>
+                              {!publicTradesyncWebhookUrl && browserOrigin ? (
+                                <small className="sync-field-warning">
+                                  Built-in webhook registration is skipped on localhost. Deploy or use a tunnel for
+                                  Trade Sync delivery.
+                                </small>
+                              ) : null}
                             </label>
                             <div className="account-editor-row">
                               <span>Webhook Auth</span>
@@ -9980,7 +10178,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             className="account-submit-btn account-editor-submit"
                             disabled={yazanSyncSaving}
                           >
-                            {yazanSyncSaving ? "Verifying..." : "Save Connection"}
+                            {yazanSyncSaving ? "Verifying..." : connectionSubmitLabel}
                           </button>
                         </div>
                       </form>

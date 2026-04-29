@@ -215,6 +215,29 @@ export const buildDefaultTradesyncWebhookUrl = (origin: string) => {
   return `${origin.replace(/\/$/, "")}/api/tradesync/webhook`;
 };
 
+export const isPublicBrokerWebhookUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      hostname !== "localhost" &&
+      hostname !== "127.0.0.1" &&
+      hostname !== "0.0.0.0" &&
+      hostname !== "::1" &&
+      !hostname.endsWith(".local")
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const buildPublicTradesyncWebhookUrl = (origin: string) => {
+  const webhookUrl = buildDefaultTradesyncWebhookUrl(origin);
+  return isPublicBrokerWebhookUrl(webhookUrl) ? webhookUrl : "";
+};
+
 export const createEmptySavedConnection = (
   draft: AccountSyncDraft = createDefaultSyncDraft()
 ): SavedAccountSync => {

@@ -4,8 +4,9 @@ import {
   type SavedAccountSync,
   type TradovateTradeRow,
   type TradovateTradesResponse,
-  buildDefaultTradesyncWebhookUrl,
+  buildPublicTradesyncWebhookUrl,
   createEmptySavedConnection,
+  isPublicBrokerWebhookUrl,
   sanitizeAccountSyncDraft
 } from "../brokerSync";
 import { createHash } from "crypto";
@@ -239,6 +240,10 @@ const makeTradesyncAuthHeader = (draft: AccountSyncDraft) => {
   return `Basic ${Buffer.from(`${draft.apiKey}:${draft.apiSecret}`).toString("base64")}`;
 };
 
+const isPositiveIntegerText = (value: string) => {
+  return /^\d+$/.test(value.trim()) && Number(value) > 0;
+};
+
 const assertTradesyncSuccess = async <T>(
   response: Response,
   fallback: string
@@ -262,11 +267,19 @@ const assertTradesyncSuccess = async <T>(
 
 const buildTradesyncWebhookPayload = (draft: AccountSyncDraft, origin?: string | null) => {
   const builtInWebhookUrl =
-    origin && origin.trim() ? buildDefaultTradesyncWebhookUrl(origin.trim()) : null;
+    origin && origin.trim() ? buildPublicTradesyncWebhookUrl(origin.trim()) : "";
   const webhookUrl = draft.webhookUrl || builtInWebhookUrl || "";
 
   if (!webhookUrl) {
     return null;
+  }
+
+  if (!isPublicBrokerWebhookUrl(webhookUrl)) {
+    throw new ProviderError("Trade Sync needs a public webhook URL.", {
+      fieldErrors: {
+        webhookUrl: "Use a deployed URL or public tunnel. Localhost cannot receive Trade Sync webhooks."
+      }
+    });
   }
 
   if (builtInWebhookUrl && webhookUrl === builtInWebhookUrl && draft.webhookAuthMode !== "none") {
@@ -393,6 +406,14 @@ const validateDraft = (draft: AccountSyncDraft) => {
       });
     }
 
+    if (!isPositiveIntegerText(draft.accountNumber)) {
+      throw new ProviderError("Trade Sync account number must be numeric.", {
+        fieldErrors: {
+          accountNumber: "Enter numbers only."
+        }
+      });
+    }
+
     if (!draft.accountPassword) {
       throw new ProviderError("Trade Sync needs the MetaTrader account password.", {
         fieldErrors: {
@@ -405,6 +426,14 @@ const validateDraft = (draft: AccountSyncDraft) => {
       throw new ProviderError("Trade Sync needs the broker server ID.", {
         fieldErrors: {
           brokerServerId: "Enter the broker server ID."
+        }
+      });
+    }
+
+    if (!isPositiveIntegerText(draft.brokerServerId)) {
+      throw new ProviderError("Trade Sync broker server ID must be numeric.", {
+        fieldErrors: {
+          brokerServerId: "Enter the numeric broker_server_id."
         }
       });
     }
@@ -554,27 +583,26 @@ const verifyTradovateConnection = async (draft: AccountSyncDraft): Promise<Saved
     "Tradovate accepted the token but failed to return the user profile."
   )) as TradovateMeResponse;
 
-  let accounts: TradovateAccount[] = [];
   const accountListResponse = await tradovateFetch(baseUrl, "/account/list", {
     headers: {
       Authorization: `Bearer ${accessToken}`
     }
   });
+  const accountPayload = await assertTradovateSuccess(
+    accountListResponse,
+    "Tradovate did not return account access."
+  );
+  let accounts: TradovateAccount[] = [];
 
-  if (accountListResponse.ok) {
-    const accountPayload = await assertTradovateSuccess(
-      accountListResponse,
-      "Tradovate did not return account access."
-    );
-
-    if (Array.isArray(accountPayload)) {
-      accounts = accountPayload as TradovateAccount[];
-    } else if (
-      isObject(accountPayload) &&
-      Array.isArray((accountPayload as { accounts?: unknown[] }).accounts)
-    ) {
-      accounts = (accountPayload as { accounts: TradovateAccount[] }).accounts;
-    }
+  if (Array.isArray(accountPayload)) {
+    accounts = accountPayload as TradovateAccount[];
+  } else if (
+    isObject(accountPayload) &&
+    Array.isArray((accountPayload as { accounts?: unknown[] }).accounts)
+  ) {
+    accounts = (accountPayload as { accounts: TradovateAccount[] }).accounts;
+  } else {
+    throw new ProviderError("Tradovate authenticated, but account access was not returned.");
   }
 
   const selectedAccount = pickTradovateAccount(accounts, draft.accountNumber);
@@ -669,7 +697,7 @@ const readTradovateContracts = async (
   }
 
   const params = new URLSearchParams();
-  params.set("ids", uniqueIds.join(","));
+  params.set("ids", `[${uniqueIds.join(",")}]`);
 
   const response = await tradovateFetch(baseUrl, `/contract/items?${params.toString()}`, {
     headers: {
@@ -996,7 +1024,7 @@ const verifyTradesyncConnection = async (
     ...createEmptySavedConnection({
       ...draft,
       webhookUrl:
-        draft.webhookUrl || (origin && origin.trim() ? buildDefaultTradesyncWebhookUrl(origin.trim()) : "")
+        draft.webhookUrl || (origin && origin.trim() ? buildPublicTradesyncWebhookUrl(origin.trim()) : "")
     }),
     providerConnectionId: syncedAccount.id ? String(syncedAccount.id) : null,
     providerAccountId: syncedAccount.id ? String(syncedAccount.id) : null,

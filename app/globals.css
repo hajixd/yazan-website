@@ -1483,22 +1483,35 @@ button {
 
 .candle-countdown-overlay {
   position: absolute;
+  top: 0;
   right: 0;
   pointer-events: none;
+  display: none;
+  flex-direction: column;
+  justify-content: center;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   font-size: 0.6rem;
   color: #fff;
   text-align: left;
   padding: 2px 6px;
   border-radius: 2px;
-  white-space: pre-line;
   line-height: 1.15;
   width: 12ch;
+  min-height: 26px;
   box-sizing: border-box;
   font-variant-numeric: tabular-nums;
   z-index: 9000;
   letter-spacing: 0.01em;
-  display: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform 90ms linear, opacity 120ms ease, background 120ms ease;
+  contain: layout paint style;
+  will-change: transform, opacity, background;
+}
+
+.candle-countdown-overlay span {
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .chart-stage-actions {
@@ -2847,6 +2860,93 @@ button {
   line-height: 1.5;
 }
 
+.sync-setup-flow {
+  display: grid;
+  gap: 0.68rem;
+  padding: 0.82rem;
+  border: 1px solid rgba(104, 157, 234, 0.18);
+  border-radius: 12px;
+  background: rgba(45, 108, 255, 0.055);
+}
+
+.sync-setup-head {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.sync-setup-head span {
+  color: rgba(168, 196, 255, 0.72);
+  font-size: 0.5rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.sync-setup-head strong {
+  color: #eef4fc;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.sync-setup-head p {
+  margin: 0;
+  color: rgba(222, 232, 244, 0.72);
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+
+.sync-step-list {
+  display: grid;
+  gap: 0.44rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sync-step {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 0.52rem;
+  align-items: start;
+}
+
+.sync-step > span {
+  width: 10px;
+  height: 10px;
+  margin-top: 0.18rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.035);
+}
+
+.sync-step-ready > span {
+  background: #40d79a;
+  box-shadow: 0 0 0 4px rgba(64, 215, 154, 0.1);
+}
+
+.sync-step-todo > span {
+  background: #f3c766;
+  box-shadow: 0 0 0 4px rgba(243, 199, 102, 0.1);
+}
+
+.sync-step-optional > span {
+  background: #7e8ca3;
+  box-shadow: 0 0 0 4px rgba(126, 140, 163, 0.1);
+}
+
+.sync-step strong {
+  display: block;
+  color: #eef4fc;
+  font-size: 0.67rem;
+}
+
+.sync-step p {
+  margin: 0.12rem 0 0;
+  color: rgba(222, 232, 244, 0.64);
+  font-size: 0.61rem;
+  line-height: 1.42;
+}
+
 .account-editor-row {
   display: grid;
   gap: 0.42rem;
@@ -2877,6 +2977,13 @@ button {
 .sync-field-error {
   margin: 0;
   color: #ff9aa7;
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+
+.sync-field-warning {
+  margin: 0;
+  color: #f3c766;
   font-size: 0.62rem;
   line-height: 1.45;
 }
