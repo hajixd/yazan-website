@@ -73,7 +73,16 @@ const server = http.createServer(async (request, response) => {
     if (url.pathname.endsWith("/auth/accesstokenrequest") && request.method === "POST") {
       const body = await readJson(request);
 
-      if (body?.name === "demo-user@tradovate" && body?.password === "dedicated-pass" && body?.sec === "tradovate-key") {
+      const hasDemoLogin =
+        body?.name === "demo-user@tradovate" &&
+        body?.password === "demo-pass" &&
+        !body?.sec;
+      const hasKeyPasswordLogin =
+        body?.name === "demo-user@tradovate" &&
+        body?.password === "dedicated-pass" &&
+        body?.sec === "tradovate-key";
+
+      if (hasDemoLogin || hasKeyPasswordLogin) {
         return sendJson(response, 200, {
           accessToken: "tradovate-access-token",
           expirationTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),

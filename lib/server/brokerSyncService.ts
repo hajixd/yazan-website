@@ -348,7 +348,7 @@ const validateDraft = (draft: AccountSyncDraft) => {
   }
 
   if (draft.provider === "tradovate") {
-    if (!draft.apiKey) {
+    if (draft.accessMode === "api_key" && !draft.apiKey) {
       throw new ProviderError("Tradovate needs an API key or security key.", {
         fieldErrors: {
           apiKey: "Enter the Tradovate API key."
@@ -357,6 +357,8 @@ const validateDraft = (draft: AccountSyncDraft) => {
     }
 
     if (draft.accessMode === "api_key_password") {
+      const usesDemoPasswordLogin = draft.environment === "demo";
+
       if (!draft.username) {
         throw new ProviderError("Tradovate needs the account username for token requests.", {
           fieldErrors: {
@@ -366,14 +368,29 @@ const validateDraft = (draft: AccountSyncDraft) => {
       }
 
       if (!draft.apiSecret) {
-        throw new ProviderError("Dedicated-password mode needs the dedicated password.", {
+        throw new ProviderError(
+          usesDemoPasswordLogin
+            ? "Tradovate Demo needs the account password."
+            : "Dedicated-password mode needs the dedicated password.",
+          {
+            fieldErrors: {
+              apiSecret: usesDemoPasswordLogin
+                ? "Enter the Tradovate Demo password."
+                : "Enter the Tradovate dedicated password."
+            }
+          }
+        );
+      }
+
+      if (!usesDemoPasswordLogin && !draft.apiKey) {
+        throw new ProviderError("Tradovate Live needs an API key or security key.", {
           fieldErrors: {
-            apiSecret: "Enter the Tradovate dedicated password."
+            apiKey: "Enter the Tradovate API key."
           }
         });
       }
 
-      if (!draft.appId) {
+      if (!usesDemoPasswordLogin && !draft.appId) {
         throw new ProviderError("Tradovate needs an App ID for access-token requests.", {
           fieldErrors: {
             appId: "Enter the Tradovate App ID."
@@ -488,15 +505,24 @@ const getTradovateAccessToken = async (draft: AccountSyncDraft) => {
 
   const authPayload: Record<string, string | number> = {
     name: draft.username,
-    password: draft.apiSecret,
-    appId: draft.appId || "roman-capital-terminal",
-    appVersion: draft.appVersion || "1.0.0",
-    cid: 0,
-    sec: draft.apiKey
+    password: draft.apiSecret
   };
+
+  if (draft.appId) {
+    authPayload.appId = draft.appId;
+  }
+
+  if (draft.appVersion) {
+    authPayload.appVersion = draft.appVersion;
+  }
 
   if (draft.deviceId) {
     authPayload.deviceId = draft.deviceId;
+  }
+
+  if (draft.apiKey) {
+    authPayload.cid = 0;
+    authPayload.sec = draft.apiKey;
   }
 
   const authResponse = await tradovateFetch(baseUrl, "/auth/accesstokenrequest", {

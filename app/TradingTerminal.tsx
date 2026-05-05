@@ -6106,11 +6106,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const publicTradesyncWebhookUrl = browserOrigin
     ? buildPublicTradesyncWebhookUrl(browserOrigin)
     : "";
+  const isTradovateDemoLoginMode =
+    yazanSyncDraft.provider === "tradovate" &&
+    yazanSyncDraft.environment === "demo" &&
+    yazanSyncDraft.accessMode === "api_key_password";
+  const shouldShowTradovateApiKeyField =
+    yazanSyncDraft.provider === "tradovate" &&
+    (yazanSyncDraft.accessMode === "api_key" || yazanSyncDraft.environment !== "demo");
+  const tradovateSecondaryAccessModeLabel =
+    yazanSyncDraft.environment === "demo" ? "Demo Login" : "API Key + Dedicated Password";
+  const tradovatePasswordLabel = isTradovateDemoLoginMode ? "Password" : "Dedicated Password";
+  const tradovatePasswordPlaceholder = isTradovateDemoLoginMode
+    ? "Tradovate demo password"
+    : "Dedicated API password";
   const connectionSetup = useMemo(() => {
     if (yazanSyncDraft.provider === "tradovate") {
       const hasCredentialSet =
         yazanSyncDraft.accessMode === "api_key"
           ? Boolean(yazanSyncDraft.apiKey)
+          : isTradovateDemoLoginMode
+            ? Boolean(yazanSyncDraft.username && yazanSyncDraft.apiSecret)
           : Boolean(
               yazanSyncDraft.username &&
                 yazanSyncDraft.apiKey &&
@@ -6124,8 +6139,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         steps: [
           {
             state: "ready",
-            label: "API access enabled",
-            detail: "Live accounts need Tradovate API Access and the required account prerequisites."
+            label: yazanSyncDraft.environment === "demo" ? "Demo endpoint" : "API access enabled",
+            detail:
+              yazanSyncDraft.environment === "demo"
+                ? "Uses the Tradovate demo token endpoint. Username/password login does not need an API key."
+                : "Live accounts need Tradovate API Access and the required account prerequisites."
           },
           {
             state: hasCredentialSet ? "ready" : "todo",
@@ -6133,6 +6151,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             detail:
               yazanSyncDraft.accessMode === "api_key"
                 ? "Paste the API key used as the bearer credential."
+                : isTradovateDemoLoginMode
+                  ? "Enter the Tradovate demo username and password."
                 : "Enter username, security key, dedicated password, and app ID."
           },
           {
@@ -6188,7 +6208,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         ["Webhooks", TRADESYNC_WEBHOOKS_URL]
       ]
     };
-  }, [publicTradesyncWebhookUrl, yazanSyncDraft]);
+  }, [isTradovateDemoLoginMode, publicTradesyncWebhookUrl, yazanSyncDraft]);
   const connectionSubmitLabel =
     yazanSyncDraft.provider === "tradovate"
       ? "Verify Tradovate"
@@ -8017,7 +8037,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </button>
           </div>
           <small className="sync-field-hint">
-            Tradovate API access is configured separately for live and simulation accounts.
+            Demo can connect with your Tradovate username and password. Live API use still needs
+            Tradovate API Access.
           </small>
         </div>
         <div className="account-editor-row">
@@ -8041,9 +8062,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               }
               disabled={yazanSyncSaving}
             >
-              Key + Password
+              {tradovateSecondaryAccessModeLabel}
             </button>
           </div>
+          <small className="sync-field-hint">
+            {isTradovateDemoLoginMode
+              ? "Use Demo Login when there is no Tradovate API key visible for the simulation account."
+              : "Dedicated-password mode is the safer fit when a Live key is used outside Tradovate."}
+          </small>
         </div>
         <label className="account-editor-row">
           <span>Username</span>
@@ -8060,28 +8086,32 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
           ) : null}
           <small className="sync-field-hint">
-            Required for Key + Password mode. Optional when using a direct Bearer API key.
+            {yazanSyncDraft.accessMode === "api_key"
+              ? "Optional when using a direct Bearer API key."
+              : "Required for the Tradovate token request."}
           </small>
         </label>
-        <label className="account-editor-row">
-          <span>API / Security Key</span>
-          <input
-            className={`account-input ${yazanSyncFieldErrors.apiKey ? "input-error" : ""}`}
-            type="password"
-            value={yazanSyncDraft.apiKey}
-            onChange={(event) => {
-              updateYazanSyncDraft("apiKey", event.target.value);
-            }}
-            placeholder="Tradovate API key"
-            disabled={yazanSyncSaving}
-          />
-          {yazanSyncFieldErrors.apiKey ? (
-            <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
-          ) : null}
-        </label>
+        {shouldShowTradovateApiKeyField ? (
+          <label className="account-editor-row">
+            <span>{yazanSyncDraft.accessMode === "api_key" ? "API Key" : "API / Security Key"}</span>
+            <input
+              className={`account-input ${yazanSyncFieldErrors.apiKey ? "input-error" : ""}`}
+              type="password"
+              value={yazanSyncDraft.apiKey}
+              onChange={(event) => {
+                updateYazanSyncDraft("apiKey", event.target.value);
+              }}
+              placeholder="Tradovate API key"
+              disabled={yazanSyncSaving}
+            />
+            {yazanSyncFieldErrors.apiKey ? (
+              <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+            ) : null}
+          </label>
+        ) : null}
         {yazanSyncDraft.accessMode === "api_key_password" ? (
           <label className="account-editor-row">
-            <span>Dedicated Password</span>
+            <span>{tradovatePasswordLabel}</span>
             <input
               className={`account-input ${yazanSyncFieldErrors.apiSecret ? "input-error" : ""}`}
               type="password"
@@ -8089,12 +8119,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               onChange={(event) => {
                 updateYazanSyncDraft("apiSecret", event.target.value);
               }}
-              placeholder="Dedicated API password"
+              placeholder={tradovatePasswordPlaceholder}
               disabled={yazanSyncSaving}
             />
             {yazanSyncFieldErrors.apiSecret ? (
               <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
             ) : null}
+            <small className="sync-field-hint">
+              {isTradovateDemoLoginMode
+                ? "Use the password for the Tradovate demo account."
+                : "Use the dedicated API password paired with the security key."}
+            </small>
           </label>
         ) : null}
         <label className="account-editor-row">
@@ -8154,12 +8189,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <div className="sync-note-card">
           <strong>Tradovate setup notes</strong>
           <p>
-            Enable API Access in Tradovate, then save the key here to verify the account and
-            read recent fills.
+            Demo login uses the Tradovate demo auth endpoint with username and password. Live
+            API-key setups still need API Access enabled in Tradovate.
           </p>
           <ul className="sync-note-list">
+            <li>Use Demo Login when you do not have a separate API key for the simulation account.</li>
             <li>Use API Key for a direct Bearer key from Tradovate.</li>
-            <li>Use Key + Password when you have a security key plus a dedicated API password.</li>
+            <li>Use Key + Password when Live API Access gives you a security key plus a dedicated API password.</li>
             <li>This app reuses short-lived Tradovate tokens where possible to avoid session churn.</li>
           </ul>
           <div className="sync-doc-links">
@@ -9586,7 +9622,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 </button>
                               </div>
                               <small className="sync-field-hint">
-                                Tradovate API access is configured separately for live and simulation accounts.
+                                Demo can connect with your Tradovate username and password. Live API use still needs
+                                Tradovate API Access.
                               </small>
                             </div>
                             <div className="account-editor-row">
@@ -9617,11 +9654,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   }}
                                   disabled={yazanSyncSaving}
                                 >
-                                  API Key + Dedicated Password
+                                  {tradovateSecondaryAccessModeLabel}
                                 </button>
                               </div>
                               <small className="sync-field-hint">
-                                Dedicated-password mode is the safer fit when the key is used outside Tradovate.
+                                {isTradovateDemoLoginMode
+                                  ? "Use Demo Login when there is no Tradovate API key visible for the simulation account."
+                                  : "Dedicated-password mode is the safer fit when a Live key is used outside Tradovate."}
                               </small>
                             </div>
                             <label className="account-editor-row">
@@ -9641,30 +9680,36 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 <small className="sync-field-error">{yazanSyncFieldErrors.username}</small>
                               ) : null}
                               <small className="sync-field-hint">
-                                Required for API Key + Dedicated Password mode. Optional for a direct Bearer API key.
+                                {yazanSyncDraft.accessMode === "api_key"
+                                  ? "Optional for a direct Bearer API key."
+                                  : "Required for the Tradovate token request."}
                               </small>
                             </label>
-                            <label className="account-editor-row">
-                              <span>API / Security Key</span>
-                              <input
-                                className={`account-input ${
-                                  yazanSyncFieldErrors.apiKey ? "input-error" : ""
-                                }`}
-                                type="password"
-                                value={yazanSyncDraft.apiKey}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("apiKey", event.target.value);
-                                }}
-                                placeholder="Tradovate API key"
-                                disabled={yazanSyncSaving}
-                              />
-                              {yazanSyncFieldErrors.apiKey ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
-                              ) : null}
-                            </label>
+                            {shouldShowTradovateApiKeyField ? (
+                              <label className="account-editor-row">
+                                <span>
+                                  {yazanSyncDraft.accessMode === "api_key" ? "API Key" : "API / Security Key"}
+                                </span>
+                                <input
+                                  className={`account-input ${
+                                    yazanSyncFieldErrors.apiKey ? "input-error" : ""
+                                  }`}
+                                  type="password"
+                                  value={yazanSyncDraft.apiKey}
+                                  onChange={(event) => {
+                                    updateYazanSyncDraft("apiKey", event.target.value);
+                                  }}
+                                  placeholder="Tradovate API key"
+                                  disabled={yazanSyncSaving}
+                                />
+                                {yazanSyncFieldErrors.apiKey ? (
+                                  <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+                                ) : null}
+                              </label>
+                            ) : null}
                             {yazanSyncDraft.accessMode === "api_key_password" ? (
                               <label className="account-editor-row">
-                                <span>Dedicated Password</span>
+                                <span>{tradovatePasswordLabel}</span>
                                 <input
                                   className={`account-input ${
                                     yazanSyncFieldErrors.apiSecret ? "input-error" : ""
@@ -9674,12 +9719,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   onChange={(event) => {
                                     updateYazanSyncDraft("apiSecret", event.target.value);
                                   }}
-                                  placeholder="Dedicated API password"
+                                  placeholder={tradovatePasswordPlaceholder}
                                   disabled={yazanSyncSaving}
                                 />
                                 {yazanSyncFieldErrors.apiSecret ? (
                                   <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
                                 ) : null}
+                                <small className="sync-field-hint">
+                                  {isTradovateDemoLoginMode
+                                    ? "Use the password for the Tradovate demo account."
+                                    : "Use the dedicated API password paired with the security key."}
+                                </small>
                               </label>
                             ) : null}
                             <label className="account-editor-row">
@@ -9758,10 +9808,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <div className="sync-note-card">
                               <strong>Tradovate setup notes</strong>
                               <p>
-                                Official Tradovate docs require API Access to be enabled in Application Settings and
-                                the key permissions set for the actions you need.
+                                Demo login uses the Tradovate demo auth endpoint with username and password. Live
+                                API-key setups still need API Access enabled in Tradovate.
                               </p>
                               <ul className="sync-note-list">
+                                <li>Use Demo Login when you do not have a separate API key for the simulation account.</li>
                                 <li>Live API usage requires Tradovate&apos;s API add-on and account prerequisites.</li>
                                 <li>Market-data permission is separate from order placement and modification.</li>
                                 <li>This app reuses short-lived Tradovate tokens where possible to avoid session churn.</li>
