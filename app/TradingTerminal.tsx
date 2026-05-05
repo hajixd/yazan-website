@@ -49,10 +49,10 @@ import {
   TRADESYNC_AUTH_URL,
   TRADESYNC_WEBHOOKS_URL,
   TRADESYNCER_APP_URL,
+  TRADESYNCER_CONNECTION_DETAILS_URL,
   TRADESYNCER_GENERAL_INFO_URL,
-  TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL,
-  TRADESYNCER_TRADOVATE_CONNECTION_URL,
-  TRADESYNCER_TRADOVATE_LIMITS_URL,
+  TRADESYNCER_GROUPS_URL,
+  TRADESYNCER_SETUP_GUIDE_URL,
   TRADOVATE_API_ACCESS_URL,
   TRADOVATE_AUTH_OPTIONS_URL,
   TRADOVATE_MARKET_DATA_URL,
@@ -6183,36 +6183,36 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return {
-      title: "TradeSyncer dashboard setup",
-      summary: "Connect the broker inside TradeSyncer first, then save the workspace reference here.",
+      title: "TradeSyncer existing setup",
+      summary: "Use the account already connected in TradeSyncer, then save a workspace reference here.",
       steps: [
         {
           state: "ready",
-          label: "Open TradeSyncer",
-          detail: "Use the TradeSyncer web app. No desktop app, VPS, or local copier is needed for the cloud copier."
+          label: "Confirm the connection",
+          detail: "Open TradeSyncer and make sure the broker connection already exists and is healthy."
         },
         {
           state: "ready",
-          label: "Add Tradovate in TradeSyncer",
-          detail: "Go to Connections, add Tradovate, choose Live or Demo, then finish the Tradovate OAuth login."
+          label: "Enable the accounts",
+          detail: "In Connection Details, activate the accounts that should appear in the cockpit."
         },
         {
           state: "ready",
-          label: "Choose leader and followers",
-          detail: "TradeSyncer copies leader order events to follower accounts using its broker connection."
+          label: "Set the copier",
+          detail: "Import the contracts, then choose the leader and follower accounts in Cockpit."
         },
         {
           state: yazanSyncDraft.connectionLabel || yazanSyncDraft.accountLabel ? "ready" : "todo",
-          label: "Save this reference",
-          detail: "This app stores only the TradeSyncer label/account reference, not Tradovate credentials."
+          label: "Save the local reference",
+          detail: "This website stores only the TradeSyncer setup name/reference, not broker credentials."
         }
       ],
       links: [
         ["Open TradeSyncer", TRADESYNCER_APP_URL],
-        ["Tradovate OAuth", TRADESYNCER_TRADOVATE_CONNECTION_URL],
+        ["Setup Guide", TRADESYNCER_SETUP_GUIDE_URL],
         ["How Copying Works", TRADESYNCER_GENERAL_INFO_URL],
-        ["Reconnect Help", TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL],
-        ["Tradovate Limits", TRADESYNCER_TRADOVATE_LIMITS_URL]
+        ["Enable Accounts", TRADESYNCER_CONNECTION_DETAILS_URL],
+        ["Groups", TRADESYNCER_GROUPS_URL]
       ]
     };
   }, [isTradovateDemoLoginMode, yazanSyncDraft]);
@@ -9449,7 +9449,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
-                          <p>Connect direct Tradovate details or save the TradeSyncer dashboard setup.</p>
+                          <p>Connect a direct broker feed or save the TradeSyncer dashboard setup.</p>
                         </div>
                         <button
                           type="button"
@@ -9476,7 +9476,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             onClick={() => updateYazanSyncProvider("tradovate")}
                             disabled={yazanSyncSaving}
                           >
-                            Tradovate
+                            {yazanSyncDraft.provider === "tradesyncer" ? "Direct Broker" : "Tradovate"}
                           </button>
                           <button
                             type="button"
@@ -9841,27 +9841,30 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <div className="sync-note-card">
                               <strong>TradeSyncer setup notes</strong>
                               <p>
-                                TradeSyncer handles the broker login in its own dashboard. This website only saves a
-                                local reference to the setup.
+                                TradeSyncer handles the broker connection, account activation, contract setup, and
+                                copying. This website only saves a local reference to that setup.
                               </p>
                               <ul className="sync-note-list">
-                                <li>Add the Tradovate connection from TradeSyncer&apos;s Connections page.</li>
-                                <li>Choose Live or Demo in TradeSyncer, then complete the Tradovate OAuth login.</li>
-                                <li>Keep one copier in control of each account to avoid duplicate orders.</li>
-                                <li>Use simple brackets and avoid repeated reconnects to reduce Tradovate API limits.</li>
+                                <li>Use the account that is already connected in TradeSyncer.</li>
+                                <li>Activate the account in Connection Details before using it in Cockpit.</li>
+                                <li>Import the contracts you plan to trade so TradeSyncer can map orders correctly.</li>
+                                <li>Choose the leader and followers in Cockpit, then keep only one copier in control.</li>
                               </ul>
                               <div className="sync-doc-links">
                                 <a href={TRADESYNCER_APP_URL} target="_blank" rel="noreferrer">
                                   Open TradeSyncer
                                 </a>
-                                <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
-                                  Tradovate OAuth
+                                <a href={TRADESYNCER_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
+                                  Setup Guide
+                                </a>
+                                <a href={TRADESYNCER_CONNECTION_DETAILS_URL} target="_blank" rel="noreferrer">
+                                  Enable Accounts
                                 </a>
                                 <a href={TRADESYNCER_GENERAL_INFO_URL} target="_blank" rel="noreferrer">
                                   How Copying Works
                                 </a>
-                                <a href={TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL} target="_blank" rel="noreferrer">
-                                  Reconnect Help
+                                <a href={TRADESYNCER_GROUPS_URL} target="_blank" rel="noreferrer">
+                                  Groups
                                 </a>
                               </div>
                             </div>
@@ -10220,21 +10223,18 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                   <strong>Trade Sync API setup notes</strong>
                                   <p>
                                     This form supports the Trade Sync developer API fields for MT4/MT5 accounts and
-                                    webhooks. TradeSyncer&apos;s Tradovate connection is a separate OAuth-based flow inside
-                                    the TradeSyncer dashboard.
+                                    webhooks. TradeSyncer broker connections are managed inside the TradeSyncer
+                                    dashboard.
                                   </p>
                                   <ul className="sync-note-list">
-                                    <li>Use TradeSyncer itself for the external Tradovate OAuth login path.</li>
+                                    <li>Use TradeSyncer itself for broker login and reconnects.</li>
                                     <li>Import Existing pulls accounts already added in the TradeSyncer dashboard.</li>
                                     <li>Create / Refresh sends MetaTrader login details from this website.</li>
-                                    <li>TradeSyncer warns that heavy copying or repeated reconnects can hit Tradovate limits.</li>
+                                    <li>Avoid overlapping copier setups and repeated reconnects.</li>
                                   </ul>
                                   <div className="sync-doc-links">
-                                    <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
-                                      TradeSyncer Tradovate
-                                    </a>
-                                    <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
-                                      Tradovate Limits
+                                    <a href={TRADESYNCER_APP_URL} target="_blank" rel="noreferrer">
+                                      Open TradeSyncer
                                     </a>
                                     <a href={TRADESYNC_ACCOUNTS_URL} target="_blank" rel="noreferrer">
                                       Get Accounts

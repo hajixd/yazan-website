@@ -1208,7 +1208,7 @@ const verifyTradesyncerSetup = async (draft: AccountSyncDraft): Promise<SavedAcc
     providerBaseUrl: TRADESYNCER_APP_URL,
     connectionState: "pending",
     connectionMessage:
-      "Saved locally. Complete or confirm the Tradovate broker connection inside TradeSyncer; this app does not store Tradovate credentials.",
+      "Saved locally. Complete or confirm the broker connection inside TradeSyncer; this app does not store broker credentials.",
     lastVerifiedAt: new Date().toISOString(),
     storedInBrowser: true
   };

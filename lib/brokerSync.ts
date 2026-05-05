@@ -120,14 +120,16 @@ export const TRADESYNC_ACCOUNTS_URL = "https://www.tradesync.com/developers/get-
 export const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
 export const TRADESYNC_WEBHOOKS_URL = "https://www.tradesync.com/developers/create-webhook/";
 export const TRADESYNCER_APP_URL = "https://app.tradesyncer.com/";
+export const TRADESYNCER_SETUP_GUIDE_URL =
+  "https://help.tradesyncer.com/en/articles/11108101-how-to-set-up-tradesyncer-quick-guide";
 export const TRADESYNCER_GENERAL_INFO_URL =
   "https://help.tradesyncer.com/en/articles/13905214-general-info";
+export const TRADESYNCER_CONNECTION_DETAILS_URL =
+  "https://help.tradesyncer.com/en/articles/10060197-connection-details-settings-manage-and-activate-your-accounts";
+export const TRADESYNCER_GROUPS_URL =
+  "https://help.tradesyncer.com/en/articles/12332830-how-to-create-and-manage-copy-trading-groups-in-the-cockpit";
 export const TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL =
   "https://help.tradesyncer.com/en/articles/13906150-troubleshoot-connections";
-export const TRADESYNCER_TRADOVATE_CONNECTION_URL =
-  "https://help.tradesyncer.com/en/articles/11746822-how-to-add-a-tradovate-connection";
-export const TRADESYNCER_TRADOVATE_LIMITS_URL =
-  "https://help.tradesyncer.com/en/articles/11110392-tradovate-api-limits";
 
 export const createDefaultSyncDraft = (
   provider: SyncProvider = "tradovate"
