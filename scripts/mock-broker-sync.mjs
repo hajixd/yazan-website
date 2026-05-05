@@ -76,6 +76,9 @@ const server = http.createServer(async (request, response) => {
       const hasDemoLogin =
         body?.name === "demo-user@tradovate" &&
         body?.password === "demo-pass" &&
+        !body?.appId &&
+        !body?.appVersion &&
+        !body?.deviceId &&
         !body?.sec;
       const hasKeyPasswordLogin =
         body?.name === "demo-user@tradovate" &&

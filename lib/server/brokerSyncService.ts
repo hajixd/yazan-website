@@ -129,6 +129,14 @@ type TradovateAccessTokenCacheEntry = {
 
 const tradovateAccessTokenCache = new Map<string, TradovateAccessTokenCacheEntry>();
 
+const usesTradovateDemoPasswordLogin = (draft: AccountSyncDraft) => {
+  return draft.environment === "demo" && draft.accessMode === "api_key_password";
+};
+
+const shouldSendTradovateRegisteredAppFields = (draft: AccountSyncDraft) => {
+  return draft.accessMode === "api_key_password" && !usesTradovateDemoPasswordLogin(draft);
+};
+
 const isObject = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 };
@@ -170,17 +178,19 @@ const parseJsonSafely = async (response: Response) => {
 };
 
 const getTradovateTokenCacheKey = (draft: AccountSyncDraft) => {
+  const sendsRegisteredAppFields = shouldSendTradovateRegisteredAppFields(draft);
+
   return createHash("sha256")
     .update(
       JSON.stringify([
         draft.environment,
         draft.accessMode,
         draft.username,
-        draft.apiKey,
+        (sendsRegisteredAppFields || draft.accessMode === "api_key") ? draft.apiKey : "",
         draft.apiSecret,
-        draft.appId,
-        draft.appVersion,
-        draft.deviceId
+        sendsRegisteredAppFields ? draft.appId : "",
+        sendsRegisteredAppFields ? draft.appVersion : "",
+        sendsRegisteredAppFields ? draft.deviceId : ""
       ])
     )
     .digest("hex");
@@ -357,7 +367,7 @@ const validateDraft = (draft: AccountSyncDraft) => {
     }
 
     if (draft.accessMode === "api_key_password") {
-      const usesDemoPasswordLogin = draft.environment === "demo";
+      const usesDemoPasswordLogin = usesTradovateDemoPasswordLogin(draft);
 
       if (!draft.username) {
         throw new ProviderError("Tradovate needs the account username for token requests.", {
@@ -508,19 +518,21 @@ const getTradovateAccessToken = async (draft: AccountSyncDraft) => {
     password: draft.apiSecret
   };
 
-  if (draft.appId) {
+  const sendsRegisteredAppFields = shouldSendTradovateRegisteredAppFields(draft);
+
+  if (sendsRegisteredAppFields && draft.appId) {
     authPayload.appId = draft.appId;
   }
 
-  if (draft.appVersion) {
+  if (sendsRegisteredAppFields && draft.appVersion) {
     authPayload.appVersion = draft.appVersion;
   }
 
-  if (draft.deviceId) {
+  if (sendsRegisteredAppFields && draft.deviceId) {
     authPayload.deviceId = draft.deviceId;
   }
 
-  if (draft.apiKey) {
+  if (sendsRegisteredAppFields && draft.apiKey) {
     authPayload.cid = 0;
     authPayload.sec = draft.apiKey;
   }

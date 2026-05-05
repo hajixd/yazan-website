@@ -6113,6 +6113,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const shouldShowTradovateApiKeyField =
     yazanSyncDraft.provider === "tradovate" &&
     (yazanSyncDraft.accessMode === "api_key" || yazanSyncDraft.environment !== "demo");
+  const shouldShowTradovateAppFields =
+    yazanSyncDraft.provider === "tradovate" &&
+    yazanSyncDraft.accessMode === "api_key_password" &&
+    !isTradovateDemoLoginMode;
   const tradovateSecondaryAccessModeLabel =
     yazanSyncDraft.environment === "demo" ? "Demo Login" : "API Key + Dedicated Password";
   const tradovatePasswordLabel = isTradovateDemoLoginMode ? "Password" : "Dedicated Password";
@@ -8132,45 +8136,49 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             </small>
           </label>
         ) : null}
-        <label className="account-editor-row">
-          <span>App ID</span>
-          <input
-            className={`account-input ${yazanSyncFieldErrors.appId ? "input-error" : ""}`}
-            value={yazanSyncDraft.appId}
-            onChange={(event) => {
-              updateYazanSyncDraft("appId", event.target.value);
-            }}
-            placeholder="roman-capital-terminal"
-            disabled={yazanSyncSaving}
-          />
-          {yazanSyncFieldErrors.appId ? (
-            <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
-          ) : null}
-        </label>
-        <label className="account-editor-row">
-          <span>App Version</span>
-          <input
-            className="account-input"
-            value={yazanSyncDraft.appVersion}
-            onChange={(event) => {
-              updateYazanSyncDraft("appVersion", event.target.value);
-            }}
-            placeholder="1.0.0"
-            disabled={yazanSyncSaving}
-          />
-        </label>
-        <label className="account-editor-row">
-          <span>Device ID</span>
-          <input
-            className="account-input"
-            value={yazanSyncDraft.deviceId}
-            onChange={(event) => {
-              updateYazanSyncDraft("deviceId", event.target.value);
-            }}
-            placeholder="optional-device-id"
-            disabled={yazanSyncSaving}
-          />
-        </label>
+        {shouldShowTradovateAppFields ? (
+          <>
+            <label className="account-editor-row">
+              <span>App ID</span>
+              <input
+                className={`account-input ${yazanSyncFieldErrors.appId ? "input-error" : ""}`}
+                value={yazanSyncDraft.appId}
+                onChange={(event) => {
+                  updateYazanSyncDraft("appId", event.target.value);
+                }}
+                placeholder="roman-capital-terminal"
+                disabled={yazanSyncSaving}
+              />
+              {yazanSyncFieldErrors.appId ? (
+                <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
+              ) : null}
+            </label>
+            <label className="account-editor-row">
+              <span>App Version</span>
+              <input
+                className="account-input"
+                value={yazanSyncDraft.appVersion}
+                onChange={(event) => {
+                  updateYazanSyncDraft("appVersion", event.target.value);
+                }}
+                placeholder="1.0.0"
+                disabled={yazanSyncSaving}
+              />
+            </label>
+            <label className="account-editor-row">
+              <span>Device ID</span>
+              <input
+                className="account-input"
+                value={yazanSyncDraft.deviceId}
+                onChange={(event) => {
+                  updateYazanSyncDraft("deviceId", event.target.value);
+                }}
+                placeholder="optional-device-id"
+                disabled={yazanSyncSaving}
+              />
+            </label>
+          </>
+        ) : null}
         <label className="account-editor-row">
           <span>Account Number</span>
           <input
@@ -8189,7 +8197,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         <div className="sync-note-card">
           <strong>Tradovate setup notes</strong>
           <p>
-            Demo login uses the Tradovate demo auth endpoint with username and password. Live
+            Demo login sends only username and password to the Tradovate demo auth endpoint. Live
             API-key setups still need API Access enabled in Tradovate.
           </p>
           <ul className="sync-note-list">
@@ -9732,58 +9740,60 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 </small>
                               </label>
                             ) : null}
-                            <label className="account-editor-row">
-                              <span>App ID</span>
-                              <input
-                                className={`account-input ${
-                                  yazanSyncFieldErrors.appId ? "input-error" : ""
-                                }`}
-                                value={yazanSyncDraft.appId}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("appId", event.target.value);
-                                }}
-                                placeholder="roman-capital-terminal"
-                                disabled={yazanSyncSaving}
-                              />
-                              {yazanSyncFieldErrors.appId ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
-                              ) : null}
-                              <small className="sync-field-hint">
-                                This is this app&apos;s client name for Tradovate token requests, not a separate value
-                                shown in your Tradovate settings. The default is fine.
-                              </small>
-                            </label>
-                            <label className="account-editor-row">
-                              <span>App Version</span>
-                              <input
-                                className="account-input"
-                                value={yazanSyncDraft.appVersion}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("appVersion", event.target.value);
-                                }}
-                                placeholder="1.0.0"
-                                disabled={yazanSyncSaving}
-                              />
-                              <small className="sync-field-hint">
-                                Optional app version label used in the Tradovate token request.
-                              </small>
-                            </label>
-                            <label className="account-editor-row">
-                              <span>Device ID</span>
-                              <input
-                                className="account-input"
-                                value={yazanSyncDraft.deviceId}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("deviceId", event.target.value);
-                                }}
-                                placeholder="optional-device-id"
-                                disabled={yazanSyncSaving}
-                              />
-                              <small className="sync-field-hint">
-                                Optional. You usually will not copy this from Tradovate. Leave it blank unless you use
-                                a custom device ID.
-                              </small>
-                            </label>
+                            {shouldShowTradovateAppFields ? (
+                              <>
+                                <label className="account-editor-row">
+                                  <span>App ID</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.appId ? "input-error" : ""
+                                    }`}
+                                    value={yazanSyncDraft.appId}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("appId", event.target.value);
+                                    }}
+                                    placeholder="roman-capital-terminal"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.appId ? (
+                                    <small className="sync-field-error">{yazanSyncFieldErrors.appId}</small>
+                                  ) : null}
+                                  <small className="sync-field-hint">
+                                    Required for live security-key token requests.
+                                  </small>
+                                </label>
+                                <label className="account-editor-row">
+                                  <span>App Version</span>
+                                  <input
+                                    className="account-input"
+                                    value={yazanSyncDraft.appVersion}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("appVersion", event.target.value);
+                                    }}
+                                    placeholder="1.0.0"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  <small className="sync-field-hint">
+                                    Optional app version label used in live Tradovate token requests.
+                                  </small>
+                                </label>
+                                <label className="account-editor-row">
+                                  <span>Device ID</span>
+                                  <input
+                                    className="account-input"
+                                    value={yazanSyncDraft.deviceId}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("deviceId", event.target.value);
+                                    }}
+                                    placeholder="optional-device-id"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  <small className="sync-field-hint">
+                                    Optional. Leave it blank unless you use a custom device ID.
+                                  </small>
+                                </label>
+                              </>
+                            ) : null}
                             <label className="account-editor-row">
                               <span>Account Number</span>
                               <input
@@ -9808,7 +9818,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <div className="sync-note-card">
                               <strong>Tradovate setup notes</strong>
                               <p>
-                                Demo login uses the Tradovate demo auth endpoint with username and password. Live
+                                Demo login sends only username and password to the Tradovate demo auth endpoint. Live
                                 API-key setups still need API Access enabled in Tradovate.
                               </p>
                               <ul className="sync-note-list">
