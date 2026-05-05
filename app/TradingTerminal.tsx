@@ -45,6 +45,7 @@ import {
   type TradovateTradeRow,
   type TradovateTradesResponse,
   type WebhookAuthMode,
+  TRADESYNC_ACCOUNTS_URL,
   TRADESYNC_AUTH_URL,
   TRADESYNC_CREATE_ACCOUNT_URL,
   TRADESYNC_WEBHOOKS_URL,
@@ -6123,6 +6124,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const tradovatePasswordPlaceholder = isTradovateDemoLoginMode
     ? "Tradovate demo password"
     : "Dedicated API password";
+  const isTradesyncImportMode =
+    yazanSyncDraft.provider === "tradesyncer" &&
+    yazanSyncDraft.tradesyncMode !== "create_or_refresh";
   const connectionSetup = useMemo(() => {
     if (yazanSyncDraft.provider === "tradovate") {
       const hasCredentialSet =
@@ -6179,8 +6183,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     const webhookReady = Boolean(yazanSyncDraft.webhookUrl || publicTradesyncWebhookUrl);
 
     return {
-      title: "Trade Sync MT4/MT5 API",
-      summary: "Creates or refreshes a MetaTrader account, then optionally registers the webhook.",
+      title: isTradesyncImportMode ? "Trade Sync account import" : "Trade Sync MT4/MT5 API",
+      summary: isTradesyncImportMode
+        ? "Pulls an account already added in TradeSyncer, then saves it into this workspace."
+        : "Creates or refreshes a MetaTrader account, then optionally registers the webhook.",
       steps: [
         {
           state: yazanSyncDraft.apiKey && yazanSyncDraft.apiSecret ? "ready" : "todo",
@@ -6188,37 +6194,59 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           detail: "Use the Trade Sync key and secret pair, not the web-app login."
         },
         {
-          state: yazanSyncDraft.accountNumber && yazanSyncDraft.accountPassword ? "ready" : "todo",
-          label: "MetaTrader login",
-          detail: "Account number and password are sent to Trade Sync to create or refresh the account."
+          state: isTradesyncImportMode || yazanSyncDraft.accountNumber ? "ready" : "todo",
+          label: "Account target",
+          detail: isTradesyncImportMode
+            ? yazanSyncDraft.accountNumber
+              ? "This will import the matching Trade Sync account number."
+              : "Leave account number blank to import the first account returned by Trade Sync."
+            : "Account number is sent with the MetaTrader password to create or refresh the account."
         },
         {
-          state: /^\d+$/.test(yazanSyncDraft.brokerServerId.trim()) ? "ready" : "todo",
-          label: "Broker server ID",
-          detail: "Find this numeric ID from Trade Sync broker servers for the selected MT4/MT5 app."
+          state: isTradesyncImportMode
+            ? "ready"
+            : /^\d+$/.test(yazanSyncDraft.brokerServerId.trim()) && yazanSyncDraft.accountPassword
+              ? "ready"
+              : "todo",
+          label: isTradesyncImportMode ? "Dashboard account" : "MetaTrader login",
+          detail: isTradesyncImportMode
+            ? "The account must already exist in TradeSyncer."
+            : "Broker server ID and MetaTrader password are only needed when this website creates or refreshes the account."
         },
-        {
-          state: webhookReady ? "ready" : "optional",
-          label: "Webhook",
-          detail: webhookReady
-            ? "A public webhook URL will be registered."
-            : "Skipped locally. Add a public deployed URL or tunnel when webhook delivery is needed."
-        }
+        ...(isTradesyncImportMode
+          ? []
+          : [
+              {
+                state: webhookReady ? "ready" : "optional",
+                label: "Webhook",
+                detail: webhookReady
+                  ? "A public webhook URL will be registered."
+                  : "Skipped locally. Add a public deployed URL or tunnel when webhook delivery is needed."
+              }
+            ])
       ],
-      links: [
-        ["Authentication", TRADESYNC_AUTH_URL],
-        ["Broker Servers", TRADESYNC_INTRO_BROKER_URL],
-        ["Create Account", TRADESYNC_CREATE_ACCOUNT_URL],
-        ["Webhooks", TRADESYNC_WEBHOOKS_URL]
-      ]
+      links: isTradesyncImportMode
+        ? [
+            ["Authentication", TRADESYNC_AUTH_URL],
+            ["Get Accounts", TRADESYNC_ACCOUNTS_URL]
+          ]
+        : [
+            ["Authentication", TRADESYNC_AUTH_URL],
+            ["Get Accounts", TRADESYNC_ACCOUNTS_URL],
+            ["Broker Servers", TRADESYNC_INTRO_BROKER_URL],
+            ["Create Account", TRADESYNC_CREATE_ACCOUNT_URL],
+            ["Webhooks", TRADESYNC_WEBHOOKS_URL]
+          ]
     };
-  }, [isTradovateDemoLoginMode, publicTradesyncWebhookUrl, yazanSyncDraft]);
+  }, [isTradovateDemoLoginMode, isTradesyncImportMode, publicTradesyncWebhookUrl, yazanSyncDraft]);
   const connectionSubmitLabel =
     yazanSyncDraft.provider === "tradovate"
       ? "Verify Tradovate"
-      : yazanSyncDraftMode === "edit" && yazanAccount?.provider === "tradesyncer"
-        ? "Refresh Trade Sync"
-        : "Create Trade Sync";
+      : isTradesyncImportMode
+        ? "Sync Trade Sync"
+        : yazanSyncDraftMode === "edit" && yazanAccount?.provider === "tradesyncer"
+          ? "Refresh Trade Sync"
+          : "Create Trade Sync";
 
   const loadTradovateTrades = useCallback(async () => {
     if (!tradovateConnection) {
@@ -9559,46 +9587,50 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <p>{yazanSyncSuccess}</p>
                           </div>
                         ) : null}
-                        <div className="sync-note-card sync-storage-card">
-                          <strong>Storage</strong>
-                          <p>
-                            Verified broker connections are stored in this browser so the admin panel can
-                            reopen them after refresh.
-                          </p>
-                        </div>
-                        <label className="account-editor-row">
-                          <span>Connection Label</span>
-                          <input
-                            className={`account-input ${
-                              yazanSyncFieldErrors.connectionLabel ? "input-error" : ""
-                            }`}
-                            value={yazanSyncDraft.connectionLabel}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("connectionLabel", event.target.value);
-                            }}
-                            placeholder={
-                              yazanSyncDraft.provider === "tradovate"
-                                ? "Yazan Tradovate"
-                                : "Yazan Trade Sync"
-                            }
-                            disabled={yazanSyncSaving}
-                          />
-                          {yazanSyncFieldErrors.connectionLabel ? (
-                            <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
-                          ) : null}
-                        </label>
-                        <label className="account-editor-row">
-                          <span>Account Name</span>
-                          <input
-                            className="account-input"
-                            value={yazanSyncDraft.accountLabel}
-                            onChange={(event) => {
-                              updateYazanSyncDraft("accountLabel", event.target.value);
-                            }}
-                            placeholder="Roman Capital Primary"
-                            disabled={yazanSyncSaving}
-                          />
-                        </label>
+                        {!isTradesyncImportMode ? (
+                          <>
+                            <div className="sync-note-card sync-storage-card">
+                              <strong>Storage</strong>
+                              <p>
+                                Verified broker connections are stored in this browser so the admin panel can
+                                reopen them after refresh.
+                              </p>
+                            </div>
+                            <label className="account-editor-row">
+                              <span>Connection Label</span>
+                              <input
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.connectionLabel ? "input-error" : ""
+                                }`}
+                                value={yazanSyncDraft.connectionLabel}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("connectionLabel", event.target.value);
+                                }}
+                                placeholder={
+                                  yazanSyncDraft.provider === "tradovate"
+                                    ? "Yazan Tradovate"
+                                    : "Yazan Trade Sync"
+                                }
+                                disabled={yazanSyncSaving}
+                              />
+                              {yazanSyncFieldErrors.connectionLabel ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
+                              ) : null}
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Account Name</span>
+                              <input
+                                className="account-input"
+                                value={yazanSyncDraft.accountLabel}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("accountLabel", event.target.value);
+                                }}
+                                placeholder="Roman Capital Primary"
+                                disabled={yazanSyncSaving}
+                              />
+                            </label>
+                          </>
+                        ) : null}
                         {yazanSyncDraft.provider === "tradovate" ? (
                           <>
                             <div className="account-editor-row">
@@ -9847,7 +9879,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         ) : (
                           <>
                             <label className="account-editor-row">
-                              <span>Account Number</span>
+                              <span>{isTradesyncImportMode ? "Account Number (optional)" : "Account Number"}</span>
                               <input
                                 className={`account-input ${
                                   yazanSyncFieldErrors.accountNumber ? "input-error" : ""
@@ -9856,110 +9888,123 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountNumber", event.target.value);
                                 }}
-                                placeholder="MT4 / MT5 account number"
+                                placeholder={
+                                  isTradesyncImportMode
+                                    ? "Optional: exact Trade Sync account number"
+                                    : "MT4 / MT5 account number"
+                                }
                                 disabled={yazanSyncSaving}
                               />
                               {yazanSyncFieldErrors.accountNumber ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
                               ) : null}
-                            </label>
-                            <label className="account-editor-row">
-                              <span>Account Password</span>
-                              <input
-                                className={`account-input ${
-                                  yazanSyncFieldErrors.accountPassword ? "input-error" : ""
-                                }`}
-                                type="password"
-                                value={yazanSyncDraft.accountPassword}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("accountPassword", event.target.value);
-                                }}
-                                placeholder="MetaTrader account password"
-                                disabled={yazanSyncSaving}
-                              />
-                              {yazanSyncFieldErrors.accountPassword ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.accountPassword}</small>
+                              {isTradesyncImportMode ? (
+                                <small className="sync-field-hint">
+                                  Leave blank to import the first account returned by Trade Sync.
+                                </small>
                               ) : null}
                             </label>
-                            <div className="account-editor-row">
-                              <span>Application</span>
-                              <div className="sync-mode-row">
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.application === "mt4" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, application: "mt4" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  MT4
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.application === "mt5" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, application: "mt5" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  MT5
-                                </button>
-                              </div>
-                            </div>
-                            <label className="account-editor-row">
-                              <span>Broker Server ID</span>
-                              <input
-                                className={`account-input ${
-                                  yazanSyncFieldErrors.brokerServerId ? "input-error" : ""
-                                }`}
-                                value={yazanSyncDraft.brokerServerId}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("brokerServerId", event.target.value);
-                                }}
-                                placeholder="Tradesync broker_server_id"
-                                disabled={yazanSyncSaving}
-                              />
-                              {yazanSyncFieldErrors.brokerServerId ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.brokerServerId}</small>
-                              ) : null}
-                              <small className="sync-field-hint">
-                                This is a Trade Sync broker-server ID, not the plain MetaTrader server name. Match your
-                                MT4 or MT5 server name to Trade Sync&apos;s `/broker-servers` list to find it.
-                              </small>
-                            </label>
-                            <div className="account-editor-row">
-                              <span>Account Type</span>
-                              <div className="sync-mode-row">
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.accountType === "readonly" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, accountType: "readonly" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  Read-only
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.accountType === "full" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, accountType: "full" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  Full
-                                </button>
-                              </div>
-                            </div>
+                            {!isTradesyncImportMode ? (
+                              <>
+                                <label className="account-editor-row">
+                                  <span>Account Password</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.accountPassword ? "input-error" : ""
+                                    }`}
+                                    type="password"
+                                    value={yazanSyncDraft.accountPassword}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("accountPassword", event.target.value);
+                                    }}
+                                    placeholder="MetaTrader account password"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.accountPassword ? (
+                                    <small className="sync-field-error">{yazanSyncFieldErrors.accountPassword}</small>
+                                  ) : null}
+                                </label>
+                                <div className="account-editor-row">
+                                  <span>Application</span>
+                                  <div className="sync-mode-row">
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.application === "mt4" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, application: "mt4" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      MT4
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.application === "mt5" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, application: "mt5" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      MT5
+                                    </button>
+                                  </div>
+                                </div>
+                                <label className="account-editor-row">
+                                  <span>Broker Server ID</span>
+                                  <input
+                                    className={`account-input ${
+                                      yazanSyncFieldErrors.brokerServerId ? "input-error" : ""
+                                    }`}
+                                    value={yazanSyncDraft.brokerServerId}
+                                    onChange={(event) => {
+                                      updateYazanSyncDraft("brokerServerId", event.target.value);
+                                    }}
+                                    placeholder="Tradesync broker_server_id"
+                                    disabled={yazanSyncSaving}
+                                  />
+                                  {yazanSyncFieldErrors.brokerServerId ? (
+                                    <small className="sync-field-error">{yazanSyncFieldErrors.brokerServerId}</small>
+                                  ) : null}
+                                  <small className="sync-field-hint">
+                                    This is a Trade Sync broker-server ID, not the plain MetaTrader server name. Match
+                                    your MT4 or MT5 server name to Trade Sync&apos;s `/broker-servers` list to find it.
+                                  </small>
+                                </label>
+                                <div className="account-editor-row">
+                                  <span>Account Type</span>
+                                  <div className="sync-mode-row">
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.accountType === "readonly" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, accountType: "readonly" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      Read-only
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.accountType === "full" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, accountType: "full" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      Full
+                                    </button>
+                                  </div>
+                                </div>
+                              </>
+                            ) : null}
                             <label className="account-editor-row">
                               <span>API Key</span>
                               <input
@@ -10003,234 +10048,242 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 Pair this with the Trade Sync API key from the same API credential entry.
                               </small>
                             </label>
-                            <label className="account-editor-row">
-                              <span>Webhook URL</span>
-                              <input
-                                className={`account-input ${
-                                  yazanSyncFieldErrors.webhookUrl ? "input-error" : ""
-                                }`}
-                                value={yazanSyncDraft.webhookUrl}
-                                onChange={(event) => {
-                                  updateYazanSyncDraft("webhookUrl", event.target.value);
-                                }}
-                                placeholder="Leave blank to use this app's built-in webhook"
-                                disabled={yazanSyncSaving}
-                              />
-                              {yazanSyncFieldErrors.webhookUrl ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.webhookUrl}</small>
-                              ) : null}
-                              <small className="sync-field-hint">
-                                Leave this blank to use this site&apos;s built-in Trade Sync webhook route. If this app
-                                is running only on localhost, Trade Sync will need a public URL or tunnel to reach it.
-                              </small>
-                              {!publicTradesyncWebhookUrl && browserOrigin ? (
-                                <small className="sync-field-warning">
-                                  Built-in webhook registration is skipped on localhost. Deploy or use a tunnel for
-                                  Trade Sync delivery.
-                                </small>
-                              ) : null}
-                            </label>
-                            <div className="account-editor-row">
-                              <span>Webhook Auth</span>
-                              <div className="sync-mode-row compact">
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.webhookAuthMode === "none" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "none" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  None
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.webhookAuthMode === "basic_auth" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({
-                                      ...prev,
-                                      webhookAuthMode: "basic_auth"
-                                    }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  Basic
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.webhookAuthMode === "bearer_token" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({
-                                      ...prev,
-                                      webhookAuthMode: "bearer_token"
-                                    }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  Bearer
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`sync-mode-btn ${
-                                    yazanSyncDraft.webhookAuthMode === "api_key" ? "active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "api_key" }));
-                                  }}
-                                  disabled={yazanSyncSaving}
-                                >
-                                  API Key
-                                </button>
-                              </div>
-                              {yazanSyncFieldErrors.webhookAuthMode ? (
-                                <small className="sync-field-error">{yazanSyncFieldErrors.webhookAuthMode}</small>
-                              ) : null}
-                              <small className="sync-field-hint">
-                                Use `None` when you use the built-in webhook. Auth options are only for your own custom
-                                webhook URL.
-                              </small>
-                            </div>
-                            {yazanSyncDraft.webhookAuthMode === "basic_auth" ? (
+                            {!isTradesyncImportMode ? (
                               <>
                                 <label className="account-editor-row">
-                                  <span>Webhook Username</span>
+                                  <span>Webhook URL</span>
                                   <input
                                     className={`account-input ${
-                                      yazanSyncFieldErrors.webhookUsername ? "input-error" : ""
+                                      yazanSyncFieldErrors.webhookUrl ? "input-error" : ""
                                     }`}
-                                    value={yazanSyncDraft.webhookUsername}
+                                    value={yazanSyncDraft.webhookUrl}
                                     onChange={(event) => {
-                                      updateYazanSyncDraft("webhookUsername", event.target.value);
+                                      updateYazanSyncDraft("webhookUrl", event.target.value);
                                     }}
-                                    placeholder="Webhook username"
+                                    placeholder="Leave blank to use this app's built-in webhook"
                                     disabled={yazanSyncSaving}
                                   />
-                                  {yazanSyncFieldErrors.webhookUsername ? (
-                                    <small className="sync-field-error">
-                                      {yazanSyncFieldErrors.webhookUsername}
-                                    </small>
+                                  {yazanSyncFieldErrors.webhookUrl ? (
+                                    <small className="sync-field-error">{yazanSyncFieldErrors.webhookUrl}</small>
                                   ) : null}
-                                </label>
-                                <label className="account-editor-row">
-                                  <span>Webhook Password</span>
-                                  <input
-                                    className={`account-input ${
-                                      yazanSyncFieldErrors.webhookPassword ? "input-error" : ""
-                                    }`}
-                                    type="password"
-                                    value={yazanSyncDraft.webhookPassword}
-                                    onChange={(event) => {
-                                      updateYazanSyncDraft("webhookPassword", event.target.value);
-                                    }}
-                                    placeholder="Webhook password"
-                                    disabled={yazanSyncSaving}
-                                  />
-                                  {yazanSyncFieldErrors.webhookPassword ? (
-                                    <small className="sync-field-error">
-                                      {yazanSyncFieldErrors.webhookPassword}
-                                    </small>
-                                  ) : null}
-                                </label>
-                              </>
-                            ) : null}
-                            {yazanSyncDraft.webhookAuthMode === "bearer_token" ? (
-                              <label className="account-editor-row">
-                                <span>Webhook Token</span>
-                                <input
-                                  className={`account-input ${
-                                    yazanSyncFieldErrors.webhookToken ? "input-error" : ""
-                                  }`}
-                                  type="password"
-                                  value={yazanSyncDraft.webhookToken}
-                                  onChange={(event) => {
-                                    updateYazanSyncDraft("webhookToken", event.target.value);
-                                  }}
-                                  placeholder="Webhook bearer token"
-                                  disabled={yazanSyncSaving}
-                                />
-                                {yazanSyncFieldErrors.webhookToken ? (
-                                  <small className="sync-field-error">
-                                    {yazanSyncFieldErrors.webhookToken}
+                                  <small className="sync-field-hint">
+                                    Leave this blank to use this site&apos;s built-in Trade Sync webhook route. If this app
+                                    is running only on localhost, Trade Sync will need a public URL or tunnel to reach it.
                                   </small>
+                                  {!publicTradesyncWebhookUrl && browserOrigin ? (
+                                    <small className="sync-field-warning">
+                                      Built-in webhook registration is skipped on localhost. Deploy or use a tunnel for
+                                      Trade Sync delivery.
+                                    </small>
+                                  ) : null}
+                                </label>
+                                <div className="account-editor-row">
+                                  <span>Webhook Auth</span>
+                                  <div className="sync-mode-row compact">
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.webhookAuthMode === "none" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "none" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      None
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.webhookAuthMode === "basic_auth" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({
+                                          ...prev,
+                                          webhookAuthMode: "basic_auth"
+                                        }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      Basic
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.webhookAuthMode === "bearer_token" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({
+                                          ...prev,
+                                          webhookAuthMode: "bearer_token"
+                                        }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      Bearer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`sync-mode-btn ${
+                                        yazanSyncDraft.webhookAuthMode === "api_key" ? "active" : ""
+                                      }`}
+                                      onClick={() => {
+                                        setYazanSyncDraft((prev) => ({ ...prev, webhookAuthMode: "api_key" }));
+                                      }}
+                                      disabled={yazanSyncSaving}
+                                    >
+                                      API Key
+                                    </button>
+                                  </div>
+                                  {yazanSyncFieldErrors.webhookAuthMode ? (
+                                    <small className="sync-field-error">{yazanSyncFieldErrors.webhookAuthMode}</small>
+                                  ) : null}
+                                  <small className="sync-field-hint">
+                                    Use `None` when you use the built-in webhook. Auth options are only for your own custom
+                                    webhook URL.
+                                  </small>
+                                </div>
+                                {yazanSyncDraft.webhookAuthMode === "basic_auth" ? (
+                                  <>
+                                    <label className="account-editor-row">
+                                      <span>Webhook Username</span>
+                                      <input
+                                        className={`account-input ${
+                                          yazanSyncFieldErrors.webhookUsername ? "input-error" : ""
+                                        }`}
+                                        value={yazanSyncDraft.webhookUsername}
+                                        onChange={(event) => {
+                                          updateYazanSyncDraft("webhookUsername", event.target.value);
+                                        }}
+                                        placeholder="Webhook username"
+                                        disabled={yazanSyncSaving}
+                                      />
+                                      {yazanSyncFieldErrors.webhookUsername ? (
+                                        <small className="sync-field-error">
+                                          {yazanSyncFieldErrors.webhookUsername}
+                                        </small>
+                                      ) : null}
+                                    </label>
+                                    <label className="account-editor-row">
+                                      <span>Webhook Password</span>
+                                      <input
+                                        className={`account-input ${
+                                          yazanSyncFieldErrors.webhookPassword ? "input-error" : ""
+                                        }`}
+                                        type="password"
+                                        value={yazanSyncDraft.webhookPassword}
+                                        onChange={(event) => {
+                                          updateYazanSyncDraft("webhookPassword", event.target.value);
+                                        }}
+                                        placeholder="Webhook password"
+                                        disabled={yazanSyncSaving}
+                                      />
+                                      {yazanSyncFieldErrors.webhookPassword ? (
+                                        <small className="sync-field-error">
+                                          {yazanSyncFieldErrors.webhookPassword}
+                                        </small>
+                                      ) : null}
+                                    </label>
+                                  </>
                                 ) : null}
-                              </label>
-                            ) : null}
-                            {yazanSyncDraft.webhookAuthMode === "api_key" ? (
-                              <>
-                                <label className="account-editor-row">
-                                  <span>Webhook Header Key</span>
-                                  <input
-                                    className={`account-input ${
-                                      yazanSyncFieldErrors.webhookHeaderKey ? "input-error" : ""
-                                    }`}
-                                    value={yazanSyncDraft.webhookHeaderKey}
-                                    onChange={(event) => {
-                                      updateYazanSyncDraft("webhookHeaderKey", event.target.value);
-                                    }}
-                                    placeholder="x-api-key"
-                                    disabled={yazanSyncSaving}
-                                  />
-                                  {yazanSyncFieldErrors.webhookHeaderKey ? (
-                                    <small className="sync-field-error">
-                                      {yazanSyncFieldErrors.webhookHeaderKey}
-                                    </small>
-                                  ) : null}
-                                </label>
-                                <label className="account-editor-row">
-                                  <span>Webhook Header Value</span>
-                                  <input
-                                    className={`account-input ${
-                                      yazanSyncFieldErrors.webhookHeaderValue ? "input-error" : ""
-                                    }`}
-                                    type="password"
-                                    value={yazanSyncDraft.webhookHeaderValue}
-                                    onChange={(event) => {
-                                      updateYazanSyncDraft("webhookHeaderValue", event.target.value);
-                                    }}
-                                    placeholder="your-webhook-key"
-                                    disabled={yazanSyncSaving}
-                                  />
-                                  {yazanSyncFieldErrors.webhookHeaderValue ? (
-                                    <small className="sync-field-error">
-                                      {yazanSyncFieldErrors.webhookHeaderValue}
-                                    </small>
-                                  ) : null}
-                                </label>
+                                {yazanSyncDraft.webhookAuthMode === "bearer_token" ? (
+                                  <label className="account-editor-row">
+                                    <span>Webhook Token</span>
+                                    <input
+                                      className={`account-input ${
+                                        yazanSyncFieldErrors.webhookToken ? "input-error" : ""
+                                      }`}
+                                      type="password"
+                                      value={yazanSyncDraft.webhookToken}
+                                      onChange={(event) => {
+                                        updateYazanSyncDraft("webhookToken", event.target.value);
+                                      }}
+                                      placeholder="Webhook bearer token"
+                                      disabled={yazanSyncSaving}
+                                    />
+                                    {yazanSyncFieldErrors.webhookToken ? (
+                                      <small className="sync-field-error">
+                                        {yazanSyncFieldErrors.webhookToken}
+                                      </small>
+                                    ) : null}
+                                  </label>
+                                ) : null}
+                                {yazanSyncDraft.webhookAuthMode === "api_key" ? (
+                                  <>
+                                    <label className="account-editor-row">
+                                      <span>Webhook Header Key</span>
+                                      <input
+                                        className={`account-input ${
+                                          yazanSyncFieldErrors.webhookHeaderKey ? "input-error" : ""
+                                        }`}
+                                        value={yazanSyncDraft.webhookHeaderKey}
+                                        onChange={(event) => {
+                                          updateYazanSyncDraft("webhookHeaderKey", event.target.value);
+                                        }}
+                                        placeholder="x-api-key"
+                                        disabled={yazanSyncSaving}
+                                      />
+                                      {yazanSyncFieldErrors.webhookHeaderKey ? (
+                                        <small className="sync-field-error">
+                                          {yazanSyncFieldErrors.webhookHeaderKey}
+                                        </small>
+                                      ) : null}
+                                    </label>
+                                    <label className="account-editor-row">
+                                      <span>Webhook Header Value</span>
+                                      <input
+                                        className={`account-input ${
+                                          yazanSyncFieldErrors.webhookHeaderValue ? "input-error" : ""
+                                        }`}
+                                        type="password"
+                                        value={yazanSyncDraft.webhookHeaderValue}
+                                        onChange={(event) => {
+                                          updateYazanSyncDraft("webhookHeaderValue", event.target.value);
+                                        }}
+                                        placeholder="your-webhook-key"
+                                        disabled={yazanSyncSaving}
+                                      />
+                                      {yazanSyncFieldErrors.webhookHeaderValue ? (
+                                        <small className="sync-field-error">
+                                          {yazanSyncFieldErrors.webhookHeaderValue}
+                                        </small>
+                                      ) : null}
+                                    </label>
+                                  </>
+                                ) : null}
+                                <div className="sync-note-card">
+                                  <strong>Trade Sync API setup notes</strong>
+                                  <p>
+                                    This form supports the Trade Sync developer API fields for MT4/MT5 accounts and
+                                    webhooks. TradeSyncer&apos;s Tradovate connection is a separate OAuth-based flow inside
+                                    the TradeSyncer dashboard.
+                                  </p>
+                                  <ul className="sync-note-list">
+                                    <li>Use TradeSyncer itself for the external Tradovate OAuth login path.</li>
+                                    <li>Import Existing pulls accounts already added in the TradeSyncer dashboard.</li>
+                                    <li>Create / Refresh sends MetaTrader login details from this website.</li>
+                                    <li>TradeSyncer warns that heavy copying or repeated reconnects can hit Tradovate limits.</li>
+                                  </ul>
+                                  <div className="sync-doc-links">
+                                    <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
+                                      TradeSyncer Tradovate
+                                    </a>
+                                    <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
+                                      Tradovate Limits
+                                    </a>
+                                    <a href={TRADESYNC_ACCOUNTS_URL} target="_blank" rel="noreferrer">
+                                      Get Accounts
+                                    </a>
+                                    <a href={TRADESYNC_AUTH_URL} target="_blank" rel="noreferrer">
+                                      Trade Sync API
+                                    </a>
+                                    <a href={TRADESYNC_WEBHOOKS_URL} target="_blank" rel="noreferrer">
+                                      Webhooks
+                                    </a>
+                                  </div>
+                                </div>
                               </>
                             ) : null}
-                            <div className="sync-note-card">
-                              <strong>Trade Sync API setup notes</strong>
-                              <p>
-                                This form supports the Trade Sync developer API fields for MT4/MT5 accounts and
-                                webhooks. TradeSyncer&apos;s Tradovate connection is a separate OAuth-based flow inside
-                                the TradeSyncer dashboard.
-                              </p>
-                              <ul className="sync-note-list">
-                                <li>Use TradeSyncer itself for the external Tradovate OAuth login path.</li>
-                                <li>Use this section only for Trade Sync API key/secret MT4/MT5 or webhook setups.</li>
-                                <li>TradeSyncer warns that heavy copying or repeated reconnects can hit Tradovate limits.</li>
-                              </ul>
-                              <div className="sync-doc-links">
-                                <a href={TRADESYNCER_TRADOVATE_CONNECTION_URL} target="_blank" rel="noreferrer">
-                                  TradeSyncer Tradovate
-                                </a>
-                                <a href={TRADESYNCER_TRADOVATE_LIMITS_URL} target="_blank" rel="noreferrer">
-                                  Tradovate Limits
-                                </a>
-                                <a href={TRADESYNC_AUTH_URL} target="_blank" rel="noreferrer">
-                                  Trade Sync API
-                                </a>
-                                <a href={TRADESYNC_WEBHOOKS_URL} target="_blank" rel="noreferrer">
-                                  Webhooks
-                                </a>
-                              </div>
-                            </div>
                           </>
                         )}
                         <div className="account-editor-actions">
@@ -10273,6 +10326,34 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <div className="sync-note-card sync-storage-card">
                           <strong>{yazanAccount.connectionState === "connected" ? "Connection healthy" : "Connection status"}</strong>
                           <p>{yazanAccount.connectionMessage}</p>
+                          <div className="sync-account-facts" aria-label="Connected broker account">
+                            <span>Provider</span>
+                            <strong>{getSyncProviderLabel(yazanAccount.provider)}</strong>
+                            <span>Account</span>
+                            <strong>
+                              {yazanAccount.providerAccountName ||
+                                yazanAccount.accountLabel ||
+                                yazanAccount.connectionLabel}
+                            </strong>
+                            {yazanAccount.providerAccountNumber || yazanAccount.accountNumber ? (
+                              <>
+                                <span>Number</span>
+                                <strong>{yazanAccount.providerAccountNumber || yazanAccount.accountNumber}</strong>
+                              </>
+                            ) : null}
+                            {yazanAccount.brokerServerName ? (
+                              <>
+                                <span>Server</span>
+                                <strong>{yazanAccount.brokerServerName}</strong>
+                              </>
+                            ) : null}
+                            {yazanAccount.providerAccountStatus ? (
+                              <>
+                                <span>Status</span>
+                                <strong>{yazanAccount.providerAccountStatus.replace(/_/g, " ")}</strong>
+                              </>
+                            ) : null}
+                          </div>
                           {yazanAccount.lastVerifiedAt ? (
                             <small className="sync-field-hint">
                               Last checked {new Date(yazanAccount.lastVerifiedAt).toLocaleString("en-US")}

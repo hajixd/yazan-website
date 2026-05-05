@@ -97,6 +97,10 @@ type TradesyncAccount = {
   broker?: string;
   server?: string;
   client_name?: string;
+  trade_mode?: string;
+  currency?: string;
+  balance?: number | string;
+  equity?: number | string;
 };
 
 type TradesyncBrokerServer = {
@@ -252,6 +256,20 @@ const makeTradesyncAuthHeader = (draft: AccountSyncDraft) => {
 
 const isPositiveIntegerText = (value: string) => {
   return /^\d+$/.test(value.trim()) && Number(value) > 0;
+};
+
+const isTradesyncImportMode = (draft: AccountSyncDraft) => {
+  return draft.tradesyncMode !== "create_or_refresh";
+};
+
+const toTradesyncApplication = (value: unknown, fallback: AccountSyncDraft["application"]) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "mt4" || normalized === "mt5" ? normalized : fallback;
+};
+
+const toTradesyncAccountType = (value: unknown, fallback: AccountSyncDraft["accountType"]) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "readonly" || normalized === "full" ? normalized : fallback;
 };
 
 const assertTradesyncSuccess = async <T>(
@@ -425,15 +443,7 @@ const validateDraft = (draft: AccountSyncDraft) => {
       });
     }
 
-    if (!draft.accountNumber) {
-      throw new ProviderError("Trade Sync needs the MetaTrader account number.", {
-        fieldErrors: {
-          accountNumber: "Enter the MetaTrader account number."
-        }
-      });
-    }
-
-    if (!isPositiveIntegerText(draft.accountNumber)) {
+    if (draft.accountNumber && !isPositiveIntegerText(draft.accountNumber)) {
       throw new ProviderError("Trade Sync account number must be numeric.", {
         fieldErrors: {
           accountNumber: "Enter numbers only."
@@ -441,28 +451,38 @@ const validateDraft = (draft: AccountSyncDraft) => {
       });
     }
 
-    if (!draft.accountPassword) {
-      throw new ProviderError("Trade Sync needs the MetaTrader account password.", {
-        fieldErrors: {
-          accountPassword: "Enter the MetaTrader account password."
-        }
-      });
-    }
+    if (!isTradesyncImportMode(draft)) {
+      if (!draft.accountNumber) {
+        throw new ProviderError("Trade Sync needs the MetaTrader account number.", {
+          fieldErrors: {
+            accountNumber: "Enter the MetaTrader account number."
+          }
+        });
+      }
 
-    if (!draft.brokerServerId) {
-      throw new ProviderError("Trade Sync needs the broker server ID.", {
-        fieldErrors: {
-          brokerServerId: "Enter the broker server ID."
-        }
-      });
-    }
+      if (!draft.accountPassword) {
+        throw new ProviderError("Trade Sync needs the MetaTrader account password.", {
+          fieldErrors: {
+            accountPassword: "Enter the MetaTrader account password."
+          }
+        });
+      }
 
-    if (!isPositiveIntegerText(draft.brokerServerId)) {
-      throw new ProviderError("Trade Sync broker server ID must be numeric.", {
-        fieldErrors: {
-          brokerServerId: "Enter the numeric broker_server_id."
-        }
-      });
+      if (!draft.brokerServerId) {
+        throw new ProviderError("Trade Sync needs the broker server ID.", {
+          fieldErrors: {
+            brokerServerId: "Enter the broker server ID."
+          }
+        });
+      }
+
+      if (!isPositiveIntegerText(draft.brokerServerId)) {
+        throw new ProviderError("Trade Sync broker server ID must be numeric.", {
+          fieldErrors: {
+            brokerServerId: "Enter the numeric broker_server_id."
+          }
+        });
+      }
     }
   }
 };
@@ -925,6 +945,97 @@ const pickTradesyncAccount = (accounts: TradesyncAccount[], draft: AccountSyncDr
   );
 };
 
+const pickImportedTradesyncAccount = (
+  accounts: TradesyncAccount[],
+  draft: AccountSyncDraft
+) => {
+  const normalizedNumber = draft.accountNumber.trim();
+
+  if (normalizedNumber) {
+    return (
+      accounts.find((account) => {
+        return String(account.account_number ?? "").trim() === normalizedNumber;
+      }) ?? null
+    );
+  }
+
+  return accounts[0] ?? null;
+};
+
+const getTradesyncConnectionState = (account: TradesyncAccount): SavedAccountSync["connectionState"] => {
+  return account.status === "connection_ok" || account.status === "login_success"
+    ? "connected"
+    : account.status === "attempt_failed" || account.login_response === "invalid_account"
+      ? "error"
+      : "pending";
+};
+
+const getTradesyncConnectionMessage = (
+  account: TradesyncAccount,
+  imported: boolean,
+  webhook?: TradesyncWebhook | null
+) => {
+  const accountMessage =
+    account.login_response && account.login_response !== "login_success"
+      ? account.login_response.replace(/_/g, " ")
+      : account.status
+        ? account.status.replace(/_/g, " ")
+        : imported
+          ? "Imported from Trade Sync."
+          : "Trade Sync accepted the account.";
+  const message = imported && accountMessage !== "Imported from Trade Sync."
+    ? `Imported from Trade Sync: ${accountMessage}`
+    : accountMessage;
+
+  return webhook?.id && message ? `${message}. Webhook ${webhook.id} is configured.` : message;
+};
+
+const buildSavedTradesyncConnection = (
+  draft: AccountSyncDraft,
+  account: TradesyncAccount,
+  brokerServer: TradesyncBrokerServer | null,
+  webhook: TradesyncWebhook | null,
+  origin: string | null | undefined,
+  imported: boolean
+): SavedAccountSync => {
+  const accountNumber =
+    account.account_number !== undefined && account.account_number !== null
+      ? String(account.account_number)
+      : draft.accountNumber;
+  const accountName = account.account_name ?? draft.accountLabel ?? draft.connectionLabel;
+  const brokerServerId =
+    account.broker_server_id !== undefined && account.broker_server_id !== null
+      ? String(account.broker_server_id)
+      : draft.brokerServerId;
+
+  return {
+    ...createEmptySavedConnection({
+      ...draft,
+      accountLabel: accountName,
+      accountNumber,
+      tradesyncMode: draft.tradesyncMode,
+      application: toTradesyncApplication(account.application, draft.application),
+      accountType: toTradesyncAccountType(account.type, draft.accountType),
+      brokerServerId,
+      webhookUrl:
+        draft.webhookUrl || (origin && origin.trim() ? buildPublicTradesyncWebhookUrl(origin.trim()) : "")
+    }),
+    providerConnectionId: account.id ? String(account.id) : null,
+    providerAccountId: account.id ? String(account.id) : null,
+    providerAccountName: accountName,
+    providerAccountNumber: accountNumber || null,
+    providerAccountStatus: account.status ?? null,
+    providerUserName: account.client_name ?? null,
+    providerBaseUrl: TRADESYNC_BASE_URL,
+    brokerServerName: account.server ?? brokerServer?.name ?? account.broker ?? null,
+    webhookId: webhook?.id ? String(webhook.id) : null,
+    connectionState: getTradesyncConnectionState(account),
+    connectionMessage: getTradesyncConnectionMessage(account, imported, webhook),
+    lastVerifiedAt: new Date().toISOString(),
+    storedInBrowser: true
+  };
+};
+
 const upsertTradesyncWebhook = async (
   draft: AccountSyncDraft,
   authHeader: string,
@@ -973,6 +1084,43 @@ const verifyTradesyncConnection = async (
   origin?: string | null
 ): Promise<SavedAccountSync> => {
   const authHeader = makeTradesyncAuthHeader(draft);
+  const listResponse = await tradesyncFetch("/accounts/", authHeader);
+  const accountListData = await assertTradesyncSuccess<TradesyncAccount[]>(
+    listResponse,
+    "Trade Sync rejected the API credentials."
+  );
+  const accounts = Array.isArray(accountListData.data) ? accountListData.data : [];
+
+  if (isTradesyncImportMode(draft)) {
+    const importedAccount = pickImportedTradesyncAccount(accounts, draft);
+
+    if (!importedAccount) {
+      throw new ProviderError(
+        draft.accountNumber
+          ? "Trade Sync authenticated, but that account was not found."
+          : "Trade Sync authenticated, but no accounts were returned.",
+        draft.accountNumber
+          ? {
+              fieldErrors: {
+                accountNumber: "That account was not returned by Trade Sync."
+              }
+            }
+          : undefined
+      );
+    }
+
+    const webhook = await upsertTradesyncWebhook(draft, authHeader, origin);
+
+    return buildSavedTradesyncConnection(
+      draft,
+      importedAccount,
+      null,
+      webhook,
+      origin,
+      true
+    );
+  }
+
   const brokerServerResponse = await tradesyncFetch(
     `/broker-servers/${draft.brokerServerId}`,
     authHeader
@@ -993,13 +1141,8 @@ const verifyTradesyncConnection = async (
     });
   }
 
-  const listResponse = await tradesyncFetch("/accounts/", authHeader);
-  const accountListData = await assertTradesyncSuccess<TradesyncAccount[]>(
-    listResponse,
-    "Trade Sync rejected the API credentials."
-  );
-  const existingAccount = Array.isArray(accountListData.data)
-    ? pickTradesyncAccount(accountListData.data, draft)
+  const existingAccount = accounts.length > 0
+    ? pickTradesyncAccount(accounts, draft)
     : null;
 
   let syncedAccount: TradesyncAccount | null = null;
@@ -1045,45 +1188,15 @@ const verifyTradesyncConnection = async (
   }
 
   const webhook = await upsertTradesyncWebhook(draft, authHeader, origin);
-  const connectionState =
-    syncedAccount.status === "connection_ok" || syncedAccount.status === "login_success"
-      ? "connected"
-      : syncedAccount.status === "attempt_failed" || syncedAccount.login_response === "invalid_account"
-        ? "error"
-        : "pending";
-  const connectionMessage =
-    syncedAccount.login_response && syncedAccount.login_response !== "login_success"
-      ? syncedAccount.login_response.replace(/_/g, " ")
-      : syncedAccount.status
-        ? syncedAccount.status.replace(/_/g, " ")
-        : "Trade Sync accepted the account.";
 
-  return {
-    ...createEmptySavedConnection({
-      ...draft,
-      webhookUrl:
-        draft.webhookUrl || (origin && origin.trim() ? buildPublicTradesyncWebhookUrl(origin.trim()) : "")
-    }),
-    providerConnectionId: syncedAccount.id ? String(syncedAccount.id) : null,
-    providerAccountId: syncedAccount.id ? String(syncedAccount.id) : null,
-    providerAccountName: syncedAccount.account_name ?? draft.accountLabel ?? null,
-    providerAccountNumber:
-      syncedAccount.account_number !== undefined && syncedAccount.account_number !== null
-        ? String(syncedAccount.account_number)
-        : draft.accountNumber,
-    providerAccountStatus: syncedAccount.status ?? null,
-    providerUserName: syncedAccount.client_name ?? null,
-    providerBaseUrl: TRADESYNC_BASE_URL,
-    brokerServerName: syncedAccount.server ?? brokerServerData.data?.name ?? null,
-    webhookId: webhook?.id ? String(webhook.id) : null,
-    connectionState,
-    connectionMessage:
-      webhook?.id && connectionMessage
-        ? `${connectionMessage}. Webhook ${webhook.id} is configured.`
-        : connectionMessage,
-    lastVerifiedAt: new Date().toISOString(),
-    storedInBrowser: true
-  };
+  return buildSavedTradesyncConnection(
+    draft,
+    syncedAccount,
+    brokerServerData.data ?? null,
+    webhook,
+    origin,
+    false
+  );
 };
 
 export const verifyBrokerSyncConnection = async (

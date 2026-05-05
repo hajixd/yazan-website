@@ -1,6 +1,7 @@
 export type SyncProvider = "tradovate" | "tradesyncer";
 export type SyncEnvironment = "live" | "demo";
 export type TradovateAccessMode = "api_key" | "api_key_password";
+export type TradesyncMode = "import_existing" | "create_or_refresh";
 export type TradesyncApplication = "mt4" | "mt5";
 export type TradesyncAccountType = "readonly" | "full";
 export type WebhookAuthMode = "none" | "basic_auth" | "bearer_token" | "api_key";
@@ -19,6 +20,7 @@ export type AccountSyncDraft = {
   appId: string;
   appVersion: string;
   deviceId: string;
+  tradesyncMode: TradesyncMode;
   application: TradesyncApplication;
   accountType: TradesyncAccountType;
   brokerServerId: string;
@@ -114,6 +116,7 @@ export const TRADOVATE_MARKET_DATA_URL =
 
 export const TRADESYNC_AUTH_URL = "https://www.tradesync.com/developers/authentication/";
 export const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/brokers-introduction/";
+export const TRADESYNC_ACCOUNTS_URL = "https://www.tradesync.com/developers/get-multiple-accounts/";
 export const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
 export const TRADESYNC_WEBHOOKS_URL = "https://www.tradesync.com/developers/create-webhook/";
 export const TRADESYNCER_TRADOVATE_CONNECTION_URL =
@@ -138,6 +141,7 @@ export const createDefaultSyncDraft = (
       appId: "",
       appVersion: "",
       deviceId: "",
+      tradesyncMode: "import_existing",
       application: "mt5",
       accountType: "readonly",
       brokerServerId: "",
@@ -165,6 +169,7 @@ export const createDefaultSyncDraft = (
     appId: "roman-capital-terminal",
     appVersion: "1.0.0",
     deviceId: "",
+    tradesyncMode: "import_existing",
     application: "mt5",
     accountType: "readonly",
     brokerServerId: "",
@@ -193,6 +198,8 @@ export const sanitizeAccountSyncDraft = (draft: AccountSyncDraft): AccountSyncDr
     appId: draft.appId.trim(),
     appVersion: draft.appVersion.trim(),
     deviceId: draft.deviceId.trim(),
+    tradesyncMode:
+      draft.tradesyncMode === "create_or_refresh" ? "create_or_refresh" : "import_existing",
     application: draft.application,
     accountType: draft.accountType,
     brokerServerId: draft.brokerServerId.trim(),

@@ -3028,6 +3028,31 @@ button {
   gap: 0.3rem;
 }
 
+.sync-account-facts {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) 1fr;
+  gap: 0.28rem 0.65rem;
+  padding-top: 0.15rem;
+}
+
+.sync-account-facts span,
+.sync-account-facts strong {
+  min-width: 0;
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.sync-account-facts span {
+  color: rgba(164, 178, 198, 0.72);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sync-account-facts strong {
+  color: rgba(238, 244, 252, 0.92);
+  overflow-wrap: anywhere;
+}
+
 .sync-note-list {
   margin: 0;
   padding-left: 1rem;
