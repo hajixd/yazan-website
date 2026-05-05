@@ -4,6 +4,7 @@ import {
   type SavedAccountSync,
   type TradovateTradeRow,
   type TradovateTradesResponse,
+  TRADESYNCER_APP_URL,
   buildPublicTradesyncWebhookUrl,
   createEmptySavedConnection,
   isPublicBrokerWebhookUrl,
@@ -426,63 +427,37 @@ const validateDraft = (draft: AccountSyncDraft) => {
         });
       }
     }
-  } else {
-    if (!draft.apiKey) {
-      throw new ProviderError("Trade Sync needs an API key.", {
+  } else if (!isTradesyncImportMode(draft)) {
+    if (!draft.accountNumber) {
+      throw new ProviderError("Trade Sync needs the MetaTrader account number.", {
         fieldErrors: {
-          apiKey: "Enter the Trade Sync API key."
+          accountNumber: "Enter the MetaTrader account number."
         }
       });
     }
 
-    if (!draft.apiSecret) {
-      throw new ProviderError("Trade Sync needs an API secret.", {
+    if (!draft.accountPassword) {
+      throw new ProviderError("Trade Sync needs the MetaTrader account password.", {
         fieldErrors: {
-          apiSecret: "Enter the Trade Sync API secret."
+          accountPassword: "Enter the MetaTrader account password."
         }
       });
     }
 
-    if (draft.accountNumber && !isPositiveIntegerText(draft.accountNumber)) {
-      throw new ProviderError("Trade Sync account number must be numeric.", {
+    if (!draft.brokerServerId) {
+      throw new ProviderError("Trade Sync needs the broker server ID.", {
         fieldErrors: {
-          accountNumber: "Enter numbers only."
+          brokerServerId: "Enter the broker server ID."
         }
       });
     }
 
-    if (!isTradesyncImportMode(draft)) {
-      if (!draft.accountNumber) {
-        throw new ProviderError("Trade Sync needs the MetaTrader account number.", {
-          fieldErrors: {
-            accountNumber: "Enter the MetaTrader account number."
-          }
-        });
-      }
-
-      if (!draft.accountPassword) {
-        throw new ProviderError("Trade Sync needs the MetaTrader account password.", {
-          fieldErrors: {
-            accountPassword: "Enter the MetaTrader account password."
-          }
-        });
-      }
-
-      if (!draft.brokerServerId) {
-        throw new ProviderError("Trade Sync needs the broker server ID.", {
-          fieldErrors: {
-            brokerServerId: "Enter the broker server ID."
-          }
-        });
-      }
-
-      if (!isPositiveIntegerText(draft.brokerServerId)) {
-        throw new ProviderError("Trade Sync broker server ID must be numeric.", {
-          fieldErrors: {
-            brokerServerId: "Enter the numeric broker_server_id."
-          }
-        });
-      }
+    if (!isPositiveIntegerText(draft.brokerServerId)) {
+      throw new ProviderError("Trade Sync broker server ID must be numeric.", {
+        fieldErrors: {
+          brokerServerId: "Enter the numeric broker_server_id."
+        }
+      });
     }
   }
 };
@@ -1199,6 +1174,46 @@ const verifyTradesyncConnection = async (
   );
 };
 
+const verifyTradesyncerSetup = async (draft: AccountSyncDraft): Promise<SavedAccountSync> => {
+  const savedDraft = sanitizeAccountSyncDraft({
+    ...draft,
+    provider: "tradesyncer",
+    username: "",
+    apiKey: "",
+    apiSecret: "",
+    appId: "",
+    appVersion: "",
+    deviceId: "",
+    tradesyncMode: "import_existing",
+    brokerServerId: "",
+    accountPassword: "",
+    webhookUrl: "",
+    webhookAuthMode: "none",
+    webhookUsername: "",
+    webhookPassword: "",
+    webhookToken: "",
+    webhookHeaderKey: "",
+    webhookHeaderValue: ""
+  });
+  const setupName = savedDraft.accountLabel || savedDraft.connectionLabel;
+  const setupReference = savedDraft.accountNumber || null;
+
+  return {
+    ...createEmptySavedConnection(savedDraft),
+    providerConnectionId: setupReference,
+    providerAccountId: setupReference,
+    providerAccountName: setupName,
+    providerAccountNumber: setupReference,
+    providerAccountStatus: "configured_in_tradesyncer",
+    providerBaseUrl: TRADESYNCER_APP_URL,
+    connectionState: "pending",
+    connectionMessage:
+      "Saved locally. Complete or confirm the Tradovate broker connection inside TradeSyncer; this app does not store Tradovate credentials.",
+    lastVerifiedAt: new Date().toISOString(),
+    storedInBrowser: true
+  };
+};
+
 export const verifyBrokerSyncConnection = async (
   rawDraft: AccountSyncDraft,
   origin?: string | null
@@ -1210,7 +1225,7 @@ export const verifyBrokerSyncConnection = async (
     const connection =
       draft.provider === "tradovate"
         ? await verifyTradovateConnection(draft)
-        : await verifyTradesyncConnection(draft, origin);
+        : await verifyTradesyncerSetup(draft);
 
     return {
       ok: true,

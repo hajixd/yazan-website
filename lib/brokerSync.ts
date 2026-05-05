@@ -119,6 +119,11 @@ export const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/
 export const TRADESYNC_ACCOUNTS_URL = "https://www.tradesync.com/developers/get-multiple-accounts/";
 export const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
 export const TRADESYNC_WEBHOOKS_URL = "https://www.tradesync.com/developers/create-webhook/";
+export const TRADESYNCER_APP_URL = "https://app.tradesyncer.com/";
+export const TRADESYNCER_GENERAL_INFO_URL =
+  "https://help.tradesyncer.com/en/articles/13905214-general-info";
+export const TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL =
+  "https://help.tradesyncer.com/en/articles/13906150-troubleshoot-connections";
 export const TRADESYNCER_TRADOVATE_CONNECTION_URL =
   "https://help.tradesyncer.com/en/articles/11746822-how-to-add-a-tradovate-connection";
 export const TRADESYNCER_TRADOVATE_LIMITS_URL =
@@ -130,9 +135,9 @@ export const createDefaultSyncDraft = (
   if (provider === "tradesyncer") {
     return {
       provider,
-      connectionLabel: "Yazan Trade Sync",
+      connectionLabel: "Yazan TradeSyncer",
       environment: "live",
-      accountLabel: "Roman Copier Account",
+      accountLabel: "TradeSyncer Copy Group",
       accountNumber: "",
       username: "",
       accessMode: "api_key_password",
@@ -199,7 +204,11 @@ export const sanitizeAccountSyncDraft = (draft: AccountSyncDraft): AccountSyncDr
     appVersion: draft.appVersion.trim(),
     deviceId: draft.deviceId.trim(),
     tradesyncMode:
-      draft.tradesyncMode === "create_or_refresh" ? "create_or_refresh" : "import_existing",
+      draft.provider === "tradesyncer"
+        ? "import_existing"
+        : draft.tradesyncMode === "create_or_refresh"
+          ? "create_or_refresh"
+          : "import_existing",
     application: draft.application,
     accountType: draft.accountType,
     brokerServerId: draft.brokerServerId.trim(),
@@ -215,7 +224,7 @@ export const sanitizeAccountSyncDraft = (draft: AccountSyncDraft): AccountSyncDr
 };
 
 export const getSyncProviderLabel = (provider: SyncProvider) => {
-  return provider === "tradovate" ? "Tradovate" : "Trade Sync";
+  return provider === "tradovate" ? "Tradovate" : "TradeSyncer";
 };
 
 export const buildDefaultTradesyncWebhookUrl = (origin: string) => {
