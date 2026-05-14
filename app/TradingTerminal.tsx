@@ -2469,6 +2469,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     placement: AssetDropPlacement;
   } | null>(null);
   const [assetSearchQuery, setAssetSearchQuery] = useState("");
+  const [showAssetAddOptions, setShowAssetAddOptions] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(
     modelProfiles[0]?.id ?? INTERNAL_SIMULATION_MODEL.id
   );
@@ -2852,6 +2853,17 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       })
       .slice(0, query ? 8 : 6);
   }, [assetSearchQuery, hiddenAssets]);
+
+  useEffect(() => {
+    if (!showAssetAddOptions) {
+      return;
+    }
+
+    if (activePanelTab !== "assets" || hiddenAssets.length === 0) {
+      setShowAssetAddOptions(false);
+      setAssetSearchQuery("");
+    }
+  }, [activePanelTab, hiddenAssets.length, showAssetAddOptions]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
   const currentChartDrawings = useMemo(() => {
@@ -6779,6 +6791,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
     setAssetOrder([...normalized, symbol]);
     setAssetSearchQuery("");
+    setShowAssetAddOptions(false);
     setSelectedSymbol(symbol);
     setSelectedHistoryId(null);
     setShowAllTradesOnChart(false);
@@ -9583,63 +9596,82 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <div>
                       <h2>Assets</h2>
                       <p>
-                        Drag rows to rearrange your symbols. Search hidden contracts to add them
+                        Drag rows to rearrange your symbols. Press Add to bring hidden contracts
                         back.
                       </p>
                     </div>
                     <div className="panel-head-actions asset-search-stack">
-                      <span className="asset-search-count">
-                        {orderedAssets.length} of {futuresAssets.length} symbols added
-                      </span>
-                      <input
-                        type="search"
-                        className="account-input asset-search-input"
-                        placeholder={
-                          hiddenAssets.length === 0
-                            ? "All catalog symbols are already added"
-                            : "Search hidden symbols to add"
-                        }
-                        value={assetSearchQuery}
-                        onChange={(event) => setAssetSearchQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") {
-                            return;
-                          }
+                      <div className="asset-search-toolbar">
+                        <span className="asset-search-count">
+                          {orderedAssets.length} of {futuresAssets.length} symbols added
+                        </span>
+                        <button
+                          type="button"
+                          className={`panel-action-btn asset-add-toggle${
+                            showAssetAddOptions ? " active" : ""
+                          }`}
+                          onClick={() => {
+                            setShowAssetAddOptions((current) => {
+                              const next = !current;
 
-                          const firstMatch = filteredHiddenAssets[0];
+                              if (!next) {
+                                setAssetSearchQuery("");
+                              }
 
-                          if (!firstMatch) {
-                            return;
-                          }
+                              return next;
+                            });
+                          }}
+                          disabled={hiddenAssets.length === 0}
+                        >
+                          {showAssetAddOptions ? "Done" : "Add"}
+                        </button>
+                      </div>
+                      {showAssetAddOptions ? (
+                        <>
+                          <input
+                            type="search"
+                            className="account-input asset-search-input"
+                            placeholder="Search hidden symbols to add"
+                            value={assetSearchQuery}
+                            onChange={(event) => setAssetSearchQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter") {
+                                return;
+                              }
 
-                          event.preventDefault();
-                          addAssetSymbol(firstMatch.symbol);
-                        }}
-                        disabled={hiddenAssets.length === 0}
-                      />
-                      {hiddenAssets.length === 0 ? (
-                        <p className="asset-search-empty">All catalog symbols are already active.</p>
-                      ) : filteredHiddenAssets.length > 0 ? (
-                        <ul className="asset-search-results">
-                          {filteredHiddenAssets.map((asset) => (
-                            <li key={asset.symbol}>
-                              <button
-                                type="button"
-                                className="asset-search-result"
-                                onClick={() => addAssetSymbol(asset.symbol)}
-                              >
-                                <span className="asset-search-symbol">{asset.symbol}</span>
-                                <span className="asset-search-meta">
-                                  {asset.name} - {asset.category}
-                                </span>
-                                <span className="asset-search-action">Add</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="asset-search-empty">No hidden symbols match that search.</p>
-                      )}
+                              const firstMatch = filteredHiddenAssets[0];
+
+                              if (!firstMatch) {
+                                return;
+                              }
+
+                              event.preventDefault();
+                              addAssetSymbol(firstMatch.symbol);
+                            }}
+                          />
+                          {filteredHiddenAssets.length > 0 ? (
+                            <ul className="asset-search-results">
+                              {filteredHiddenAssets.map((asset) => (
+                                <li key={asset.symbol}>
+                                  <button
+                                    type="button"
+                                    className="asset-search-result"
+                                    onClick={() => addAssetSymbol(asset.symbol)}
+                                  >
+                                    <span className="asset-search-symbol">{asset.symbol}</span>
+                                    <span className="asset-search-meta">
+                                      {asset.name} - {asset.category}
+                                    </span>
+                                    <span className="asset-search-action">Add</span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="asset-search-empty">No hidden symbols match that search.</p>
+                          )}
+                        </>
+                      ) : null}
                     </div>
                   </div>
 

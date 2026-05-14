@@ -2024,12 +2024,31 @@ button {
   gap: 0.44rem;
 }
 
+.asset-search-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
 .asset-search-count {
   color: rgba(194, 208, 230, 0.76);
   font-size: 0.56rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.asset-add-toggle {
+  min-width: 58px;
+  height: 30px;
+  justify-content: center;
+}
+
+.asset-add-toggle.active {
+  border-color: rgba(120, 155, 220, 0.74);
+  background: rgba(40, 67, 112, 0.42);
+  color: #f6fbff;
 }
 
 .asset-search-input {
