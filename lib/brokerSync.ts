@@ -69,7 +69,33 @@ export type TradovateTradeRow = {
   active: boolean | null;
 };
 
+export type TradesyncTradeRow = {
+  id: string;
+  accountId: string | null;
+  ticket: string | null;
+  state: string;
+  symbol: string;
+  side: "Buy" | "Sell" | "Unknown";
+  quantity: number;
+  openTime: string;
+  openPrice: number;
+  closeTime: string | null;
+  closePrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  profit: number;
+  commission: number;
+  swap: number;
+  status: string;
+  active: boolean;
+};
+
 export type TradovateTradesRequest = {
+  draft: AccountSyncDraft;
+  limit?: number;
+};
+
+export type TradesyncTradesRequest = {
   draft: AccountSyncDraft;
   limit?: number;
 };
@@ -103,6 +129,23 @@ export type TradovateTradesResponse =
       fieldErrors?: Partial<Record<keyof AccountSyncDraft | "form", string>>;
     };
 
+export type TradesyncTradesResponse =
+  | {
+      ok: true;
+      trades: TradesyncTradeRow[];
+      meta: {
+        accountLabel: string;
+        accountId: string | null;
+        fetchedAt: string;
+        totalTrades: number;
+      };
+    }
+  | {
+      ok: false;
+      error: string;
+      fieldErrors?: Partial<Record<keyof AccountSyncDraft | "form", string>>;
+    };
+
 export const YAZAN_SYNC_STORAGE_KEY = "roman-yazan-sync-connection";
 
 export const TRADOVATE_API_ACCESS_URL =
@@ -118,6 +161,7 @@ export const TRADESYNC_AUTH_URL = "https://www.tradesync.com/developers/authenti
 export const TRADESYNC_INTRO_BROKER_URL = "https://www.tradesync.com/developers/brokers-introduction/";
 export const TRADESYNC_ACCOUNTS_URL = "https://www.tradesync.com/developers/get-multiple-accounts/";
 export const TRADESYNC_CREATE_ACCOUNT_URL = "https://www.tradesync.com/developers/create-account/";
+export const TRADESYNC_TRADES_URL = "https://www.tradesync.com/developers/get-multiple-trades/";
 export const TRADESYNC_WEBHOOKS_URL = "https://www.tradesync.com/developers/create-webhook/";
 export const TRADESYNCER_APP_URL = "https://app.tradesyncer.com/";
 export const TRADESYNCER_SETUP_GUIDE_URL =

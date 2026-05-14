@@ -4,6 +4,8 @@ import {
   type SavedAccountSync,
   type TradovateTradeRow,
   type TradovateTradesResponse,
+  type TradesyncTradeRow,
+  type TradesyncTradesResponse,
   TRADESYNCER_APP_URL,
   buildPublicTradesyncWebhookUrl,
   createEmptySavedConnection,
@@ -114,6 +116,25 @@ type TradesyncWebhook = {
   id?: number | string;
   url?: string;
   authentication?: string;
+};
+
+type TradesyncTrade = {
+  id?: number | string;
+  account_id?: number | string;
+  ticket?: number | string;
+  state?: string;
+  type?: string;
+  symbol?: string;
+  lots?: number | string;
+  open_time?: string;
+  open_price?: number | string;
+  stop_loss?: number | string;
+  take_profit?: number | string;
+  close_time?: string | null;
+  close_price?: number | string;
+  commission?: number | string;
+  swap?: number | string;
+  profit?: number | string;
 };
 
 const TRADOVATE_BASE_URLS = {
@@ -387,10 +408,18 @@ const validateDraft = (draft: AccountSyncDraft) => {
     );
   }
 
-  if (!draft.accountLabel) {
-    throw new ProviderError("Add the TradeSyncer setup name before saving.", {
+  if (!draft.apiKey) {
+    throw new ProviderError("Enter the Trade Sync API key before saving.", {
       fieldErrors: {
-        accountLabel: "Enter the exact TradeSyncer connection or Cockpit group name."
+        apiKey: "Enter the Trade Sync API key."
+      }
+    });
+  }
+
+  if (!draft.apiSecret) {
+    throw new ProviderError("Enter the Trade Sync API secret before saving.", {
+      fieldErrors: {
+        apiSecret: "Enter the Trade Sync API secret."
       }
     });
   }
@@ -892,17 +921,210 @@ const pickImportedTradesyncAccount = (
   accounts: TradesyncAccount[],
   draft: AccountSyncDraft
 ) => {
-  const normalizedNumber = draft.accountNumber.trim();
+  const selector = (draft.accountNumber || draft.accountLabel).trim().toLowerCase();
 
-  if (normalizedNumber) {
+  if (selector) {
     return (
       accounts.find((account) => {
-        return String(account.account_number ?? "").trim() === normalizedNumber;
+        const candidates = [
+          account.id,
+          account.account_number,
+          account.account_name,
+          account.client_name,
+          account.server,
+          account.broker
+        ];
+
+        return candidates.some((candidate) => String(candidate ?? "").trim().toLowerCase() === selector);
       }) ?? null
     );
   }
 
   return accounts[0] ?? null;
+};
+
+const readTradesyncAccounts = async (
+  authHeader: string,
+  fallback = "Trade Sync did not return accounts."
+) => {
+  const listResponse = await tradesyncFetch("/accounts/", authHeader);
+  const accountListData = await assertTradesyncSuccess<TradesyncAccount[]>(listResponse, fallback);
+
+  return Array.isArray(accountListData.data) ? accountListData.data : [];
+};
+
+const getRequestedTradesyncAccountId = async (
+  rawDraft: AccountSyncDraft,
+  draft: AccountSyncDraft,
+  authHeader: string
+) => {
+  const savedFields = rawDraft as Partial<SavedAccountSync>;
+  const savedAccountId = toStableId(savedFields.providerAccountId);
+
+  if (savedAccountId) {
+    return {
+      accountId: savedAccountId,
+      account: null as TradesyncAccount | null
+    };
+  }
+
+  const accounts = await readTradesyncAccounts(authHeader, "Trade Sync authenticated, but accounts could not be loaded.");
+  const account = pickImportedTradesyncAccount(accounts, draft);
+  const accountId = toStableId(account?.id);
+
+  return {
+    accountId,
+    account
+  };
+};
+
+const normalizeTradesyncSide = (value: unknown): TradesyncTradeRow["side"] => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+
+  if (normalized.includes("buy")) {
+    return "Buy";
+  }
+
+  if (normalized.includes("sell")) {
+    return "Sell";
+  }
+
+  return "Unknown";
+};
+
+const normalizeTradesyncState = (value: unknown, closeTime: unknown): string => {
+  const normalized = typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "";
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return closeTime ? "closed" : "open";
+};
+
+const toTradesyncStatusLabel = (state: string) => {
+  return state
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ") || "Unknown";
+};
+
+const buildTradesyncTradeRow = (trade: TradesyncTrade, index: number): TradesyncTradeRow => {
+  const closeTime = typeof trade.close_time === "string" && trade.close_time.trim()
+    ? trade.close_time.trim()
+    : null;
+  const openTime = typeof trade.open_time === "string" && trade.open_time.trim()
+    ? trade.open_time.trim()
+    : closeTime ?? "";
+  const state = normalizeTradesyncState(trade.state, closeTime);
+  const id =
+    toStableId(trade.id) ??
+    toStableId(trade.ticket) ??
+    `${toStableId(trade.account_id) ?? "account"}-${openTime || "trade"}-${index}`;
+
+  return {
+    id,
+    accountId: toStableId(trade.account_id),
+    ticket: toStableId(trade.ticket),
+    state,
+    symbol: typeof trade.symbol === "string" && trade.symbol.trim() ? trade.symbol.trim().toUpperCase() : "Unknown",
+    side: normalizeTradesyncSide(trade.type),
+    quantity: toFiniteNumber(trade.lots),
+    openTime,
+    openPrice: toFiniteNumber(trade.open_price),
+    closeTime,
+    closePrice: toFiniteNumber(trade.close_price),
+    stopLoss: toFiniteNumber(trade.stop_loss),
+    takeProfit: toFiniteNumber(trade.take_profit),
+    profit: toFiniteNumber(trade.profit),
+    commission: toFiniteNumber(trade.commission),
+    swap: toFiniteNumber(trade.swap),
+    status: toTradesyncStatusLabel(state),
+    active: state !== "closed" && !closeTime
+  };
+};
+
+export const fetchTradesyncTrades = async (
+  rawDraft: AccountSyncDraft,
+  limit = 80
+): Promise<TradesyncTradesResponse> => {
+  const draft = sanitizeAccountSyncDraft(rawDraft);
+  const parsedLimit = Number.isFinite(limit) ? Math.floor(limit) : 80;
+  const safeLimit = Math.max(1, Math.min(200, parsedLimit));
+
+  try {
+    if (draft.provider !== "tradesyncer") {
+      throw new ProviderError("Add TradeSyncer API details before loading trades.");
+    }
+
+    validateDraft(draft);
+
+    const authHeader = makeTradesyncAuthHeader(draft);
+    const { accountId, account } = await getRequestedTradesyncAccountId(rawDraft, draft, authHeader);
+
+    if (!accountId) {
+      throw new ProviderError(
+        draft.accountNumber || draft.accountLabel
+          ? "Trade Sync authenticated, but that account was not found."
+          : "Trade Sync authenticated, but no accounts were returned.",
+        draft.accountNumber || draft.accountLabel
+          ? {
+              fieldErrors: {
+                accountNumber: "That account was not returned by Trade Sync."
+              }
+            }
+          : undefined
+      );
+    }
+
+    const params = new URLSearchParams();
+    params.set("limit", String(safeLimit));
+    params.set("account_id", accountId);
+    const tradesResponse = await tradesyncFetch(`/trades?${params.toString()}`, authHeader);
+    const tradesData = await assertTradesyncSuccess<TradesyncTrade[]>(
+      tradesResponse,
+      "Trade Sync did not return trades."
+    );
+    const rawTrades = Array.isArray(tradesData.data) ? tradesData.data : [];
+    const trades = rawTrades
+      .map((trade, index) => buildTradesyncTradeRow(trade, index))
+      .sort((a, b) => {
+        const aTime = Date.parse(a.closeTime ?? a.openTime);
+        const bTime = Date.parse(b.closeTime ?? b.openTime);
+
+        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+      })
+      .slice(0, safeLimit);
+
+    return {
+      ok: true,
+      trades,
+      meta: {
+        accountLabel:
+          account?.account_name ||
+          (rawDraft as Partial<SavedAccountSync>).providerAccountName ||
+          draft.accountLabel ||
+          draft.connectionLabel,
+        accountId,
+        fetchedAt: new Date().toISOString(),
+        totalTrades: rawTrades.length
+      }
+    };
+  } catch (error) {
+    if (error instanceof ProviderError) {
+      return {
+        ok: false,
+        error: error.message,
+        fieldErrors: error.fieldErrors
+      };
+    }
+
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Trade Sync trades could not be loaded."
+    };
+  }
 };
 
 const getTradesyncConnectionState = (account: TradesyncAccount): SavedAccountSync["connectionState"] => {
@@ -1027,12 +1249,7 @@ const verifyTradesyncConnection = async (
   origin?: string | null
 ): Promise<SavedAccountSync> => {
   const authHeader = makeTradesyncAuthHeader(draft);
-  const listResponse = await tradesyncFetch("/accounts/", authHeader);
-  const accountListData = await assertTradesyncSuccess<TradesyncAccount[]>(
-    listResponse,
-    "Trade Sync rejected the API credentials."
-  );
-  const accounts = Array.isArray(accountListData.data) ? accountListData.data : [];
+  const accounts = await readTradesyncAccounts(authHeader, "Trade Sync rejected the API credentials.");
 
   if (isTradesyncImportMode(draft)) {
     const importedAccount = pickImportedTradesyncAccount(accounts, draft);
@@ -1052,7 +1269,7 @@ const verifyTradesyncConnection = async (
       );
     }
 
-    const webhook = await upsertTradesyncWebhook(draft, authHeader, origin);
+    const webhook = draft.webhookUrl ? await upsertTradesyncWebhook(draft, authHeader, origin) : null;
 
     return buildSavedTradesyncConnection(
       draft,
@@ -1190,7 +1407,7 @@ export const verifyBrokerSyncConnection = async (
 
   try {
     validateDraft(draft);
-    const connection = await verifyTradesyncerSetup(draft);
+    const connection = await verifyTradesyncConnection(draft, origin);
 
     return {
       ok: true,

@@ -21,6 +21,63 @@ const tradesyncAccounts = [
   }
 ];
 
+const tradesyncTrades = [
+  {
+    id: 12001,
+    account_id: 9000,
+    ticket: 411112093,
+    state: "open",
+    type: "buy",
+    symbol: "NQ",
+    lots: 2,
+    open_time: "2026-05-13T13:20:00Z",
+    open_price: 18725.25,
+    stop_loss: 18692.25,
+    take_profit: 18795.25,
+    close_time: null,
+    close_price: 18742.5,
+    commission: -4.3,
+    swap: 0,
+    profit: 345
+  },
+  {
+    id: 12000,
+    account_id: 9000,
+    ticket: 411111804,
+    state: "closed",
+    type: "sell",
+    symbol: "ES",
+    lots: 1,
+    open_time: "2026-05-13T10:10:00Z",
+    open_price: 5284.25,
+    stop_loss: 5297.25,
+    take_profit: 5261.25,
+    close_time: "2026-05-13T11:02:00Z",
+    close_price: 5265.75,
+    commission: -2.15,
+    swap: 0,
+    profit: 925
+  },
+  {
+    id: 11999,
+    account_id: 9000,
+    ticket: 411109991,
+    state: "closed",
+    type: "buy",
+    symbol: "GC",
+    lots: 1,
+    open_time: "2026-05-12T16:12:00Z",
+    open_price: 2408.2,
+    stop_loss: 2397.4,
+    take_profit: 2428.8,
+    close_time: "2026-05-12T17:09:00Z",
+    close_price: 2401.6,
+    commission: -2.15,
+    swap: 0,
+    profit: -660
+  }
+];
+
 const tradesyncWebhooks = [];
 
 const sendJson = (response, statusCode, payload) => {
@@ -150,6 +207,26 @@ const server = http.createServer(async (request, response) => {
           last_id: tradesyncAccounts[tradesyncAccounts.length - 1]?.id ?? null
         },
         data: tradesyncAccounts
+      });
+    }
+
+    if ((url.pathname === "/tradesync/trades" || url.pathname === "/tradesync/trades/") && request.method === "GET") {
+      const accountId = url.searchParams.get("account_id");
+      const limit = Number(url.searchParams.get("limit") || tradesyncTrades.length);
+      const filteredTrades = tradesyncTrades
+        .filter((trade) => !accountId || String(trade.account_id) === accountId)
+        .slice(0, Number.isFinite(limit) && limit > 0 ? limit : tradesyncTrades.length);
+
+      return sendJson(response, 200, {
+        result: "success",
+        status: 200,
+        meta: {
+          count: filteredTrades.length,
+          limit: Number.isFinite(limit) && limit > 0 ? limit : 1000,
+          order: "desc",
+          last_id: filteredTrades[filteredTrades.length - 1]?.id ?? null
+        },
+        data: filteredTrades
       });
     }
 

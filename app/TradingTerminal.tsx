@@ -44,9 +44,12 @@ import {
   type SyncProvider,
   type TradovateTradeRow,
   type TradovateTradesResponse,
+  type TradesyncTradeRow,
+  type TradesyncTradesResponse,
   type WebhookAuthMode,
   TRADESYNC_ACCOUNTS_URL,
   TRADESYNC_AUTH_URL,
+  TRADESYNC_TRADES_URL,
   TRADESYNC_WEBHOOKS_URL,
   TRADESYNCER_APP_URL,
   TRADESYNCER_CONNECTION_DETAILS_URL,
@@ -2137,6 +2140,61 @@ const buildActiveTradeFromCandles = (
   };
 };
 
+const parseTradesyncTradeTimeMs = (value: string | null | undefined, fallback: number) => {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const buildHistoryItemFromTradesyncTrade = (trade: TradesyncTradeRow): HistoryItem => {
+  const nowMs = Date.now();
+  const openTimeMs = parseTradesyncTradeTimeMs(trade.openTime, nowMs);
+  const closeTimeMs = parseTradesyncTradeTimeMs(trade.closeTime, openTimeMs);
+  const side: TradeSide = trade.side === "Sell" ? "Short" : "Long";
+  const entryPrice = trade.openPrice > 0 ? trade.openPrice : trade.closePrice || 1;
+  const outcomePrice = trade.closePrice > 0 ? trade.closePrice : entryPrice;
+  const units = Math.max(1, trade.quantity || 1);
+  const netPnl = trade.profit + trade.commission + trade.swap;
+  const pricePnlPct =
+    side === "Long"
+      ? ((outcomePrice - entryPrice) / entryPrice) * 100
+      : ((entryPrice - outcomePrice) / entryPrice) * 100;
+  const cashPnlPct = (netPnl / Math.max(1, Math.abs(entryPrice * units))) * 100;
+  const pnlPct = Number.isFinite(pricePnlPct) && Math.abs(pricePnlPct) > 0.000001
+    ? pricePnlPct
+    : cashPnlPct;
+  const targetPrice = trade.takeProfit > 0
+    ? trade.takeProfit
+    : side === "Long"
+      ? entryPrice * 1.006
+      : Math.max(0.000001, entryPrice * 0.994);
+  const stopPrice = trade.stopLoss > 0
+    ? trade.stopLoss
+    : side === "Long"
+      ? Math.max(0.000001, entryPrice * 0.996)
+      : entryPrice * 1.004;
+
+  return {
+    id: `tradesync-${trade.id}`,
+    symbol: findAssetSymbolForTradovateContract(trade.symbol) ?? trade.symbol,
+    side,
+    result: netPnl >= 0 ? "Win" : "Loss",
+    status: trade.active ? "open" : "closed",
+    pnlPct,
+    pnlUsd: netPnl,
+    entryTime: toUtcTimestamp(openTimeMs),
+    exitTime: toUtcTimestamp(trade.active ? nowMs : closeTimeMs),
+    entryPrice,
+    targetPrice,
+    stopPrice,
+    outcomePrice,
+    units,
+    entryAt: formatDateTime(openTimeMs),
+    exitAt: trade.active ? "Open" : formatDateTime(closeTimeMs),
+    time: formatDateTime(trade.active ? openTimeMs : closeTimeMs)
+  };
+};
+
 const MobileWorkspaceTabIcon = ({ tab }: { tab: MobileWorkspaceTab }) => {
   if (tab === "trade") {
     return (
@@ -2340,6 +2398,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   >("idle");
   const [tradovateTradeError, setTradovateTradeError] = useState<string | null>(null);
   const [tradovateTradesUpdatedAt, setTradovateTradesUpdatedAt] = useState<string | null>(null);
+  const [tradesyncTrades, setTradesyncTrades] = useState<TradesyncTradeRow[]>([]);
+  const [tradesyncTradeStatus, setTradesyncTradeStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [tradesyncTradeError, setTradesyncTradeError] = useState<string | null>(null);
+  const [tradesyncTradesUpdatedAt, setTradesyncTradesUpdatedAt] = useState<string | null>(null);
   const [showYazanAccountMenu, setShowYazanAccountMenu] = useState(false);
   const [yazanAccountMenuPosition, setYazanAccountMenuPosition] = useState<AccountMenuPosition>({
     x: 0,
@@ -4292,7 +4356,27 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     });
   }, [marketCandlesBySymbol, orderedAssets]);
 
+  const tradesyncConnection = yazanAccount?.provider === "tradesyncer" ? yazanAccount : null;
+  const shouldUseConnectedAccountTrades = Boolean(
+    tradesyncConnection && (!hasWorkspaceProfiles || selectedModelId === "yazan")
+  );
+  const tradesyncHistoryItems = useMemo(() => {
+    return tradesyncTrades
+      .map(buildHistoryItemFromTradesyncTrade)
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+  }, [tradesyncTrades]);
+  const tradesyncClosedRows = useMemo(() => {
+    return tradesyncHistoryItems.filter((row) => row.status === "closed");
+  }, [tradesyncHistoryItems]);
+  const tradesyncActiveRows = useMemo(() => {
+    return tradesyncHistoryItems.filter((row) => row.status === "open");
+  }, [tradesyncHistoryItems]);
+
   const historyRows = useMemo(() => {
+    if (shouldUseConnectedAccountTrades) {
+      return tradesyncClosedRows.slice(0, 90);
+    }
+
     if (!chartSimulationEnabled) {
       return [];
     }
@@ -4354,13 +4438,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         return Number(b.exitTime) - Number(a.exitTime);
       })
       .slice(0, 48);
-  }, [chartSimulationEnabled, historyCandlesBySymbol, orderedAssets, selectedTradeOwnerModel, showcaseMode]);
+  }, [
+    chartSimulationEnabled,
+    historyCandlesBySymbol,
+    orderedAssets,
+    selectedTradeOwnerModel,
+    shouldUseConnectedAccountTrades,
+    showcaseMode,
+    tradesyncClosedRows
+  ]);
 
   const currentSymbolHistoryRows = useMemo(() => {
     return historyRows.filter((row) => row.symbol === selectedSymbol);
   }, [historyRows, selectedSymbol]);
 
   const activeTrades = useMemo(() => {
+    if (shouldUseConnectedAccountTrades) {
+      return tradesyncActiveRows.slice(0, 12);
+    }
+
     if (!chartSimulationEnabled) {
       return [];
     }
@@ -4399,7 +4495,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     getProjectedMarketNowMs,
     historyCandlesBySymbol,
     orderedAssets,
-    selectedTradeOwnerModel
+    selectedTradeOwnerModel,
+    shouldUseConnectedAccountTrades,
+    tradesyncActiveRows
   ]);
 
   const selectedHistoryTrade = useMemo(() => {
@@ -6101,6 +6199,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     tradovateTradeStatus === "loading"
       ? "Loading"
       : `${tradovateTrades.length.toLocaleString("en-US")} fills`;
+  const tradesyncTradeCountLabel =
+    tradesyncTradeStatus === "loading"
+      ? "Loading"
+      : `${tradesyncTrades.length.toLocaleString("en-US")} trades`;
   const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
   const publicTradesyncWebhookUrl = browserOrigin
     ? buildPublicTradesyncWebhookUrl(browserOrigin)
@@ -6127,45 +6229,46 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     yazanSyncDraft.tradesyncMode !== "create_or_refresh";
   const connectionSetup = useMemo(() => {
     return {
-      title: "TradeSyncer setup only",
-      summary: "Confirm the copier setup in TradeSyncer, then save the matching reference here.",
+      title: "TradeSyncer account import",
+      summary: "Connect with Trade Sync API credentials, import the selected account, then load its trades here.",
       steps: [
         {
           state: "ready",
-          label: "Broker connection exists",
-          detail: "In TradeSyncer, add or confirm the broker connection and make sure it is healthy."
+          label: "Broker connection stays in TradeSyncer",
+          detail: "Add, reconnect, and activate the broker account inside TradeSyncer before importing it here."
+        },
+        {
+          state: yazanSyncDraft.apiKey && yazanSyncDraft.apiSecret ? "ready" : "todo",
+          label: "API credentials entered",
+          detail: "Use the Trade Sync API key and secret pair from the Trade Sync web app."
         },
         {
           state: "ready",
-          label: "Accounts are active",
-          detail: "Open Connection Details and activate the accounts that should be visible in Cockpit."
+          label: "Account selector optional",
+          detail: "Leave the selector blank for the first returned account, or enter an account ID, number, or name."
+        },
+        {
+          state: yazanSyncDraft.connectionLabel ? "ready" : "todo",
+          label: "Website verifies accounts",
+          detail: "Saving checks the API credentials against Trade Sync and stores the imported account reference."
         },
         {
           state: "ready",
-          label: "Contracts are imported",
-          detail: "Import the contracts or instruments you will trade so TradeSyncer can map orders correctly."
-        },
-        {
-          state: "ready",
-          label: "Leader and followers set",
-          detail: "Assign the lead account and follower accounts in Cockpit or Groups, with no overlapping copier."
-        },
-        {
-          state: yazanSyncDraft.connectionLabel && yazanSyncDraft.accountLabel ? "ready" : "todo",
-          label: "Reference saved here",
-          detail: "This website stores the TradeSyncer setup name/reference only, not broker credentials."
+          label: "Trades load on Yazan",
+          detail: "The active and history tabs read that account's Trade Sync trades when Yazan is selected."
         }
       ],
       links: [
         ["Open TradeSyncer", TRADESYNCER_APP_URL],
-        ["Setup Guide", TRADESYNCER_SETUP_GUIDE_URL],
+        ["API Auth", TRADESYNC_AUTH_URL],
+        ["Get Accounts", TRADESYNC_ACCOUNTS_URL],
+        ["Get Trades", TRADESYNC_TRADES_URL],
         ["Enable Accounts", TRADESYNCER_CONNECTION_DETAILS_URL],
-        ["Cockpit Groups", TRADESYNCER_GROUPS_URL],
         ["Troubleshooting", TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL]
       ]
     };
-  }, [yazanSyncDraft.accountLabel, yazanSyncDraft.connectionLabel]);
-  const connectionSubmitLabel = "Save TradeSyncer Setup";
+  }, [yazanSyncDraft.apiKey, yazanSyncDraft.apiSecret, yazanSyncDraft.connectionLabel]);
+  const connectionSubmitLabel = "Connect TradeSyncer";
 
   const loadTradovateTrades = useCallback(async () => {
     if (!tradovateConnection) {
@@ -6208,6 +6311,60 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       );
     }
   }, [tradovateConnection]);
+
+  const loadTradesyncTrades = useCallback(async () => {
+    if (!tradesyncConnection || !tradesyncConnection.apiKey || !tradesyncConnection.apiSecret) {
+      setTradesyncTrades([]);
+      setTradesyncTradesUpdatedAt(null);
+      setTradesyncTradeStatus("idle");
+      setTradesyncTradeError(null);
+      return;
+    }
+
+    setTradesyncTradeStatus("loading");
+    setTradesyncTradeError(null);
+
+    try {
+      const response = await fetch("/api/broker-sync/tradesync-trades", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          draft: tradesyncConnection,
+          limit: 120
+        })
+      });
+      const result = (await response.json()) as TradesyncTradesResponse;
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? "TradeSyncer trades could not be loaded." : result.error);
+      }
+
+      setTradesyncTrades(result.trades);
+      setTradesyncTradesUpdatedAt(result.meta.fetchedAt);
+      setTradesyncTradeStatus("ready");
+    } catch (error) {
+      setTradesyncTrades([]);
+      setTradesyncTradesUpdatedAt(null);
+      setTradesyncTradeStatus("error");
+      setTradesyncTradeError(
+        error instanceof Error ? error.message : "TradeSyncer trades could not be loaded."
+      );
+    }
+  }, [tradesyncConnection]);
+
+  useEffect(() => {
+    if (!tradesyncConnection) {
+      setTradesyncTrades([]);
+      setTradesyncTradesUpdatedAt(null);
+      setTradesyncTradeStatus("idle");
+      setTradesyncTradeError(null);
+      return;
+    }
+
+    void loadTradesyncTrades();
+  }, [loadTradesyncTrades, tradesyncConnection]);
 
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
     setYazanSyncError(null);
@@ -6383,6 +6540,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         setTradovateTradeError(null);
         setTradovateTradesUpdatedAt(null);
       }
+      if (nextConnection.provider !== "tradesyncer") {
+        setTradesyncTrades([]);
+        setTradesyncTradeStatus("idle");
+        setTradesyncTradeError(null);
+        setTradesyncTradesUpdatedAt(null);
+      }
       setShowYazanSyncDraft(false);
       setShowYazanAccountMenu(false);
     } catch (error) {
@@ -6405,6 +6568,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setTradovateTradeStatus("idle");
     setTradovateTradeError(null);
     setTradovateTradesUpdatedAt(null);
+    setTradesyncTrades([]);
+    setTradesyncTradeStatus("idle");
+    setTradesyncTradeError(null);
+    setTradesyncTradesUpdatedAt(null);
     setShowYazanSyncDraft(false);
     setShowYazanAccountMenu(false);
   };
@@ -7022,7 +7189,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     </span>
                     <h2>No active trades</h2>
                     <p>
-                      {chartSimulationEnabled
+                      {shouldUseConnectedAccountTrades
+                        ? tradesyncTradeStatus === "loading"
+                          ? "Loading TradeSyncer trades..."
+                          : tradesyncTradeStatus === "error"
+                            ? tradesyncTradeError ?? "TradeSyncer trades could not be loaded."
+                            : "Only open TradeSyncer trades for this account will appear here."
+                        : chartSimulationEnabled
                         ? selectedTradeOwnerLabel
                           ? "Only open trades for the current model or connected account will appear here."
                           : "Add or select a model/account to populate the active blotter."
@@ -7048,7 +7221,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <span className="mobile-phone-card-kicker">History</span>
                     <h2>No trades yet</h2>
                     <p>
-                      {chartSimulationEnabled
+                      {shouldUseConnectedAccountTrades
+                        ? tradesyncTradeStatus === "loading"
+                          ? "Loading TradeSyncer trades..."
+                          : tradesyncTradeStatus === "error"
+                            ? tradesyncTradeError ?? "TradeSyncer trades could not be loaded."
+                            : "Only closed TradeSyncer trades for this account will appear here."
+                        : chartSimulationEnabled
                         ? selectedTradeOwnerLabel
                           ? "Only closed trades for the current model or connected account will appear here."
                           : "Add or select a model/account to populate the history."
@@ -9048,15 +9227,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </span>
                     </div>
                     <div className="panel-head-actions">
-                      <button
-                        type="button"
-                        className={`panel-action-btn panel-mode-btn ${
-                          chartSimulationEnabled ? "on" : "off"
-                        }`}
-                        onClick={() => setChartSimulationEnabled((current) => !current)}
-                      >
-                        {simulationToggleLabel}
-                      </button>
+                      {shouldUseConnectedAccountTrades ? (
+                        <button
+                          type="button"
+                          className="panel-action-btn"
+                          onClick={() => void loadTradesyncTrades()}
+                          disabled={tradesyncTradeStatus === "loading"}
+                        >
+                          {tradesyncTradeStatus === "loading" ? "Loading Trades" : "Refresh Trades"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={`panel-action-btn panel-mode-btn ${
+                            chartSimulationEnabled ? "on" : "off"
+                          }`}
+                          onClick={() => setChartSimulationEnabled((current) => !current)}
+                        >
+                          {simulationToggleLabel}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="panel-action-btn"
@@ -9208,7 +9398,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   ) : (
                     <div className="ai-placeholder">
                       <p>
-                        {chartSimulationEnabled
+                        {shouldUseConnectedAccountTrades
+                          ? tradesyncTradeStatus === "loading"
+                            ? "Loading TradeSyncer trades..."
+                            : tradesyncTradeStatus === "error"
+                              ? tradesyncTradeError ?? "TradeSyncer trades could not be loaded."
+                              : "No open TradeSyncer trades were returned for this account."
+                          : chartSimulationEnabled
                           ? selectedTradeOwnerLabel
                             ? "No open trades are available for the current model or connected account."
                             : "Add or select a model/account to populate the active blotter."
@@ -9383,8 +9579,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <>
                       <div className="watchlist-head with-action">
                         <div>
-                          <h2>{yazanSyncDraftMode === "add" ? "Add TradeSyncer Setup" : "Edit TradeSyncer Setup"}</h2>
-                          <p>Save the setup that already exists inside TradeSyncer.</p>
+                          <h2>{yazanSyncDraftMode === "add" ? "Connect TradeSyncer" : "Edit TradeSyncer"}</h2>
+                          <p>Use Trade Sync API credentials to import an existing TradeSyncer account.</p>
                         </div>
                         <button
                           type="button"
@@ -9442,12 +9638,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <div className="sync-note-card sync-storage-card">
                           <strong>Storage</strong>
                           <p>
-                            Saved TradeSyncer setup references are stored in this browser so the admin panel can reopen them after
-                            refresh.
+                            The imported TradeSyncer account and API credentials are stored in this admin browser so
+                            Yazan can reload trades after refresh.
                           </p>
                         </div>
                         <label className="account-editor-row">
-                          <span>Local Label</span>
+                          <span>Connection Label</span>
                           <input
                             className={`account-input ${
                               yazanSyncFieldErrors.connectionLabel ? "input-error" : ""
@@ -9463,26 +9659,25 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
                           ) : null}
                           <small className="sync-field-hint">
-                            A browser-only name for this saved setup.
+                            A browser-only name for this saved TradeSyncer connection.
                           </small>
                         </label>
                         <label className="account-editor-row">
-                          <span>TradeSyncer Setup Name</span>
+                          <span>Account Label (optional)</span>
                           <input
                             className={`account-input ${yazanSyncFieldErrors.accountLabel ? "input-error" : ""}`}
                             value={yazanSyncDraft.accountLabel}
                             onChange={(event) => {
                               updateYazanSyncDraft("accountLabel", event.target.value);
                             }}
-                            placeholder="Exact connection or Cockpit group name"
+                            placeholder="Optional Trade Sync account name"
                             disabled={yazanSyncSaving}
                           />
                           {yazanSyncFieldErrors.accountLabel ? (
                             <small className="sync-field-error">{yazanSyncFieldErrors.accountLabel}</small>
                           ) : null}
                           <small className="sync-field-hint">
-                            Use the name you see in TradeSyncer so this reference maps to the right connection,
-                            account, or group.
+                            Optional. If it matches a Trade Sync account name, this site will import that account.
                           </small>
                         </label>
                         {yazanSyncDraft.provider === "tradovate" ? (
@@ -9733,7 +9928,49 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         ) : (
                           <>
                             <label className="account-editor-row">
-                              <span>Account / Group Reference (optional)</span>
+                              <span>Trade Sync API Key</span>
+                              <input
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.apiKey ? "input-error" : ""
+                                }`}
+                                type="password"
+                                value={yazanSyncDraft.apiKey}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("apiKey", event.target.value);
+                                }}
+                                placeholder="Trade Sync API key"
+                                disabled={yazanSyncSaving}
+                              />
+                              {yazanSyncFieldErrors.apiKey ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.apiKey}</small>
+                              ) : null}
+                              <small className="sync-field-hint">
+                                Generate this key in the Trade Sync web app. This is not your broker login.
+                              </small>
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Trade Sync API Secret</span>
+                              <input
+                                className={`account-input ${
+                                  yazanSyncFieldErrors.apiSecret ? "input-error" : ""
+                                }`}
+                                type="password"
+                                value={yazanSyncDraft.apiSecret}
+                                onChange={(event) => {
+                                  updateYazanSyncDraft("apiSecret", event.target.value);
+                                }}
+                                placeholder="Trade Sync API secret"
+                                disabled={yazanSyncSaving}
+                              />
+                              {yazanSyncFieldErrors.apiSecret ? (
+                                <small className="sync-field-error">{yazanSyncFieldErrors.apiSecret}</small>
+                              ) : null}
+                              <small className="sync-field-hint">
+                                Pair this with the API key from the same Trade Sync credential entry.
+                              </small>
+                            </label>
+                            <label className="account-editor-row">
+                              <span>Account ID / Number / Name (optional)</span>
                               <input
                                 className={`account-input ${
                                   yazanSyncFieldErrors.accountNumber ? "input-error" : ""
@@ -9742,38 +9979,40 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountNumber", event.target.value);
                                 }}
-                                placeholder="Optional account number, account name, or group"
+                                placeholder="Leave blank to import the first Trade Sync account"
                                 disabled={yazanSyncSaving}
                               />
                               {yazanSyncFieldErrors.accountNumber ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
                               ) : null}
                               <small className="sync-field-hint">
-                                Use this only as a local reference for the activated account, copied group, or lead
-                                account inside TradeSyncer.
+                                Matches Trade Sync account ID, account number, account name, client, broker, or server.
                               </small>
                             </label>
                             <div className="sync-note-card">
-                              <strong>TradeSyncer setup notes</strong>
+                              <strong>TradeSyncer account import</strong>
                               <p>
-                                TradeSyncer handles the broker connection, account activation, contract setup, and
-                                copying. This website only saves a local reference to that setup.
+                                TradeSyncer handles broker login, reconnects, account activation, contract setup, and
+                                copying. This website uses the Trade Sync API to import the account and read its trades.
                               </p>
                               <ul className="sync-note-list">
                                 <li>Use a broker connection that is already Healthy or Connected in TradeSyncer.</li>
-                                <li>Activate the account in Connection Details before using it in Cockpit.</li>
-                                <li>Import the contracts you plan to trade so TradeSyncer can map orders correctly.</li>
-                                <li>Choose the leader and followers in Cockpit or Groups, then keep only one copier in control.</li>
+                                <li>Activate the account in Connection Details so it is available through Trade Sync.</li>
+                                <li>Leave the selector blank unless you need one exact account from the account list.</li>
+                                <li>Yazan reads `/accounts` first, then `/trades` for the imported account ID.</li>
                               </ul>
                               <div className="sync-doc-links">
                                 <a href={TRADESYNCER_APP_URL} target="_blank" rel="noreferrer">
                                   Open TradeSyncer
                                 </a>
-                                <a href={TRADESYNCER_SETUP_GUIDE_URL} target="_blank" rel="noreferrer">
-                                  Setup Guide
+                                <a href={TRADESYNC_AUTH_URL} target="_blank" rel="noreferrer">
+                                  API Auth
                                 </a>
-                                <a href={TRADESYNCER_CONNECTION_DETAILS_URL} target="_blank" rel="noreferrer">
-                                  Enable Accounts
+                                <a href={TRADESYNC_ACCOUNTS_URL} target="_blank" rel="noreferrer">
+                                  Accounts
+                                </a>
+                                <a href={TRADESYNC_TRADES_URL} target="_blank" rel="noreferrer">
+                                  Trades
                                 </a>
                                 <a href={TRADESYNCER_GENERAL_INFO_URL} target="_blank" rel="noreferrer">
                                   How Copying Works
@@ -10192,8 +10431,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             type="button"
                             className="panel-action-btn model-add-btn"
                             onClick={() => openYazanSyncDraft("add")}
-                            title="Add TradeSyncer setup"
-                            aria-label="Add TradeSyncer setup"
+                            title="Connect TradeSyncer"
+                            aria-label="Connect TradeSyncer"
                           >
                             <span aria-hidden>+</span>
                           </button>
@@ -10201,7 +10440,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </div>
                       {yazanSyncSuccess ? (
                         <div className="sync-note-card sync-status-card sync-status-card-success">
-                          <strong>TradeSyncer setup saved</strong>
+                          <strong>TradeSyncer connected</strong>
                           <p>{yazanSyncSuccess}</p>
                         </div>
                       ) : null}
@@ -10220,8 +10459,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             </strong>
                             {yazanAccount.providerAccountNumber || yazanAccount.accountNumber ? (
                               <>
-                                <span>{yazanAccount.provider === "tradesyncer" ? "Reference" : "Number"}</span>
+                                <span>{yazanAccount.provider === "tradesyncer" ? "Account number" : "Number"}</span>
                                 <strong>{yazanAccount.providerAccountNumber || yazanAccount.accountNumber}</strong>
+                              </>
+                            ) : null}
+                            {yazanAccount.provider === "tradesyncer" ? (
+                              <>
+                                <span>Trades</span>
+                                <strong>{tradesyncTradeCountLabel}</strong>
                               </>
                             ) : null}
                             {yazanAccount.brokerServerName ? (
@@ -10240,7 +10485,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           {yazanAccount.lastVerifiedAt ? (
                             <small className="sync-field-hint">
                               Last checked {new Date(yazanAccount.lastVerifiedAt).toLocaleString("en-US")}
+                              {tradesyncTradesUpdatedAt
+                                ? ` | Trades loaded ${new Date(tradesyncTradesUpdatedAt).toLocaleString("en-US")}`
+                                : ""}
                             </small>
+                          ) : null}
+                          {tradesyncTradeError ? (
+                            <small className="sync-field-error">{tradesyncTradeError}</small>
                           ) : null}
                         </div>
                       ) : null}
@@ -10303,15 +10554,26 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       <h2>History</h2>
                     </div>
                     <div className="panel-head-actions">
-                      <button
-                        type="button"
-                        className={`panel-action-btn panel-mode-btn ${
-                          chartSimulationEnabled ? "on" : "off"
-                        }`}
-                        onClick={() => setChartSimulationEnabled((current) => !current)}
-                      >
-                        {simulationToggleLabel}
-                      </button>
+                      {shouldUseConnectedAccountTrades ? (
+                        <button
+                          type="button"
+                          className="panel-action-btn"
+                          onClick={() => void loadTradesyncTrades()}
+                          disabled={tradesyncTradeStatus === "loading"}
+                        >
+                          {tradesyncTradeStatus === "loading" ? "Loading Trades" : "Refresh Trades"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={`panel-action-btn panel-mode-btn ${
+                            chartSimulationEnabled ? "on" : "off"
+                          }`}
+                          onClick={() => setChartSimulationEnabled((current) => !current)}
+                        >
+                          {simulationToggleLabel}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="panel-action-btn"
@@ -10375,7 +10637,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                   ) : (
                     <div className="ai-placeholder">
                       <p>
-                        {chartSimulationEnabled
+                        {shouldUseConnectedAccountTrades
+                          ? tradesyncTradeStatus === "loading"
+                            ? "Loading TradeSyncer trades..."
+                            : tradesyncTradeStatus === "error"
+                              ? tradesyncTradeError ?? "TradeSyncer trades could not be loaded."
+                              : "No closed TradeSyncer trades were returned for this account."
+                          : chartSimulationEnabled
                           ? selectedTradeOwnerLabel
                             ? "No closed trades are available for the current model or connected account."
                             : "Add or select a model/account to populate the history."

@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import type { TradovateTradesRequest } from "../../../../lib/brokerSync";
-import { fetchTradovateTrades } from "../../../../lib/server/brokerSyncService";
+import type { TradesyncTradesRequest } from "../../../../lib/brokerSync";
+import { fetchTradesyncTrades } from "../../../../lib/server/brokerSyncService";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  let body: TradovateTradesRequest;
+  let body: TradesyncTradesRequest;
 
   try {
-    body = (await request.json()) as TradovateTradesRequest;
+    body = (await request.json()) as TradesyncTradesRequest;
   } catch {
     return NextResponse.json(
       {
         ok: false,
-        error: "The Tradovate trades request body was invalid."
+        error: "The TradeSyncer trades request body was invalid."
       },
       { status: 400 }
     );
@@ -24,13 +24,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        error: "Missing Tradovate connection details."
+        error: "Missing TradeSyncer connection details."
       },
       { status: 400 }
     );
   }
 
-  const result = await fetchTradovateTrades(body.draft, body.limit ?? 80);
+  const result = await fetchTradesyncTrades(body.draft, body.limit ?? 80);
 
   return NextResponse.json(result, {
     status: result.ok ? 200 : 400
