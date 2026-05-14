@@ -53,6 +53,7 @@ import {
   TRADESYNCER_GENERAL_INFO_URL,
   TRADESYNCER_GROUPS_URL,
   TRADESYNCER_SETUP_GUIDE_URL,
+  TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL,
   TRADOVATE_API_ACCESS_URL,
   TRADOVATE_AUTH_OPTIONS_URL,
   TRADOVATE_MARKET_DATA_URL,
@@ -73,8 +74,7 @@ type PanelTab =
   | "history"
   | "actions"
   | "marketMaker"
-  | "orderFlow"
-  | "tradovate";
+  | "orderFlow";
 type AccountRole = "Admin" | "User";
 type MobileWorkspaceTab = "trade" | "history";
 
@@ -596,7 +596,7 @@ const NOTIFICATION_LIVE_WINDOW_MS = 10 * 60_000;
 const TELEGRAM_GROUP_URL =
   process.env.NEXT_PUBLIC_TELEGRAM_GROUP_URL?.trim() || "https://t.me/RomanCapital";
 const MIN_MULTI_ASSET_TRADE_CANDLES = 40;
-const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = createDefaultSyncDraft("tradovate");
+const DEFAULT_YAZAN_SYNC_DRAFT: AccountSyncDraft = createDefaultSyncDraft("tradesyncer");
 const YAZAN_ACCOUNT_MENU_WIDTH = 188;
 const YAZAN_ACCOUNT_MENU_HEIGHT = 118;
 const CHART_DRAWINGS_STORAGE_KEY = "roman-chart-drawings-v1";
@@ -2241,16 +2241,6 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
     );
   }
 
-  if (tab === "tradovate") {
-    return (
-      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
-        <path d="M6 6.2h12v11.6H6z" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M8.4 9h7.2M8.4 12h7.2M8.4 15h4.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <path d="M5.2 8.2 3.7 9.7l1.5 1.5M18.8 12.8l1.5 1.5-1.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    );
-  }
-
   return (
     <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
       <path
@@ -2432,6 +2422,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       const parsedConnection = normalizeSavedAccountSync(JSON.parse(storedConnection));
 
       if (!parsedConnection) {
+        return;
+      }
+
+      if (parsedConnection.provider !== "tradesyncer") {
+        window.localStorage.removeItem(YAZAN_SYNC_STORAGE_KEY);
+        setYazanSyncDraft(createDefaultSyncDraft("tradesyncer"));
         return;
       }
 
@@ -6130,96 +6126,46 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     yazanSyncDraft.provider === "tradesyncer" &&
     yazanSyncDraft.tradesyncMode !== "create_or_refresh";
   const connectionSetup = useMemo(() => {
-    if (yazanSyncDraft.provider === "tradovate") {
-      const hasCredentialSet =
-        yazanSyncDraft.accessMode === "api_key"
-          ? Boolean(yazanSyncDraft.apiKey)
-          : isTradovateDemoLoginMode
-            ? Boolean(yazanSyncDraft.username && yazanSyncDraft.apiSecret)
-          : Boolean(
-              yazanSyncDraft.username &&
-                yazanSyncDraft.apiKey &&
-                yazanSyncDraft.apiSecret &&
-                yazanSyncDraft.appId
-            );
-
-      return {
-        title: "Tradovate direct API",
-        summary: "Verifies the user, loads accounts, then reads recent fills from Tradovate.",
-        steps: [
-          {
-            state: "ready",
-            label: yazanSyncDraft.environment === "demo" ? "Demo endpoint" : "API access enabled",
-            detail:
-              yazanSyncDraft.environment === "demo"
-                ? "Uses the Tradovate demo token endpoint. Username/password login does not need an API key."
-                : "Live accounts need Tradovate API Access and the required account prerequisites."
-          },
-          {
-            state: hasCredentialSet ? "ready" : "todo",
-            label: "Credentials ready",
-            detail:
-              yazanSyncDraft.accessMode === "api_key"
-                ? "Paste the API key used as the bearer credential."
-                : isTradovateDemoLoginMode
-                  ? "Enter the Tradovate demo username and password."
-                : "Enter username, security key, dedicated password, and app ID."
-          },
-          {
-            state: "ready",
-            label: "Account target",
-            detail: yazanSyncDraft.accountNumber
-              ? "This connection will verify the exact account you entered."
-              : "Leave account number blank to use the first returned Tradovate account."
-          }
-        ],
-        links: [
-          ["API Access", TRADOVATE_API_ACCESS_URL],
-          ["Auth Options", TRADOVATE_AUTH_OPTIONS_URL],
-          ["REST Auth", "https://partner.tradovate.com/api/rest-api-endpoints/authentication/access-token-request"],
-          ["Fill List", "https://partner.tradovate.com/api/rest-api-endpoints/orders/fill-list"]
-        ]
-      };
-    }
-
     return {
-      title: "TradeSyncer existing setup",
-      summary: "Use the account already connected in TradeSyncer, then save a workspace reference here.",
+      title: "TradeSyncer setup only",
+      summary: "Confirm the copier setup in TradeSyncer, then save the matching reference here.",
       steps: [
         {
           state: "ready",
-          label: "Confirm the connection",
-          detail: "Open TradeSyncer and make sure the broker connection already exists and is healthy."
+          label: "Broker connection exists",
+          detail: "In TradeSyncer, add or confirm the broker connection and make sure it is healthy."
         },
         {
           state: "ready",
-          label: "Enable the accounts",
-          detail: "In Connection Details, activate the accounts that should appear in the cockpit."
+          label: "Accounts are active",
+          detail: "Open Connection Details and activate the accounts that should be visible in Cockpit."
         },
         {
           state: "ready",
-          label: "Set the copier",
-          detail: "Import the contracts, then choose the leader and follower accounts in Cockpit."
+          label: "Contracts are imported",
+          detail: "Import the contracts or instruments you will trade so TradeSyncer can map orders correctly."
         },
         {
-          state: yazanSyncDraft.connectionLabel || yazanSyncDraft.accountLabel ? "ready" : "todo",
-          label: "Save the local reference",
-          detail: "This website stores only the TradeSyncer setup name/reference, not broker credentials."
+          state: "ready",
+          label: "Leader and followers set",
+          detail: "Assign the lead account and follower accounts in Cockpit or Groups, with no overlapping copier."
+        },
+        {
+          state: yazanSyncDraft.connectionLabel && yazanSyncDraft.accountLabel ? "ready" : "todo",
+          label: "Reference saved here",
+          detail: "This website stores the TradeSyncer setup name/reference only, not broker credentials."
         }
       ],
       links: [
         ["Open TradeSyncer", TRADESYNCER_APP_URL],
         ["Setup Guide", TRADESYNCER_SETUP_GUIDE_URL],
-        ["How Copying Works", TRADESYNCER_GENERAL_INFO_URL],
         ["Enable Accounts", TRADESYNCER_CONNECTION_DETAILS_URL],
-        ["Groups", TRADESYNCER_GROUPS_URL]
+        ["Cockpit Groups", TRADESYNCER_GROUPS_URL],
+        ["Troubleshooting", TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL]
       ]
     };
-  }, [isTradovateDemoLoginMode, yazanSyncDraft]);
-  const connectionSubmitLabel =
-    yazanSyncDraft.provider === "tradovate"
-      ? "Verify Tradovate"
-      : "Save TradeSyncer Setup";
+  }, [yazanSyncDraft.accountLabel, yazanSyncDraft.connectionLabel]);
+  const connectionSubmitLabel = "Save TradeSyncer Setup";
 
   const loadTradovateTrades = useCallback(async () => {
     if (!tradovateConnection) {
@@ -6263,30 +6209,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
   }, [tradovateConnection]);
 
-  useEffect(() => {
-    if (activePanelTab !== "tradovate" || showYazanSyncDraft) {
-      return;
-    }
-
-    void loadTradovateTrades();
-  }, [activePanelTab, loadTradovateTrades, showYazanSyncDraft]);
-
-  useEffect(() => {
-    if (
-      activePanelTab !== "tradovate" ||
-      !showYazanSyncDraft ||
-      yazanSyncDraft.provider === "tradovate"
-    ) {
-      return;
-    }
-
-    setYazanSyncDraft(createDefaultSyncDraft("tradovate"));
-    setYazanSyncDraftMode("add");
-    setYazanSyncFieldErrors({});
-    setYazanSyncError(null);
-    setYazanSyncSuccess(null);
-  }, [activePanelTab, showYazanSyncDraft, yazanSyncDraft.provider]);
-
   const updateYazanSyncDraft = (field: keyof AccountSyncDraft, value: string) => {
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
@@ -6306,7 +6228,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }));
   };
 
-  const updateYazanSyncProvider = (provider: SyncProvider) => {
+  const updateYazanSyncProvider = (_provider: SyncProvider) => {
+    const provider: SyncProvider = "tradesyncer";
+
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
     setYazanSyncFieldErrors({});
@@ -6330,7 +6254,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
             ? current.accountLabel
             : next.accountLabel,
         accountNumber: current.accountNumber,
-        username: provider === "tradovate" ? current.username : "",
+        username: "",
         webhookUrl: ""
       };
     });
@@ -6338,11 +6262,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
 
   const openYazanSyncDraft = (
     mode: "add" | "edit" = "edit",
-    provider: SyncProvider = yazanAccount?.provider ?? "tradovate"
+    _provider: SyncProvider = "tradesyncer"
   ) => {
     if (!canManageConnections) {
       return;
     }
+
+    const provider: SyncProvider = "tradesyncer";
 
     setShowYazanAccountMenu(false);
     setYazanSyncDraftMode(mode);
@@ -6351,10 +6277,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setYazanSyncFieldErrors({});
     setYazanSyncDraft(
       (() => {
+        const editableConnection = yazanAccount?.provider === "tradesyncer" ? yazanAccount : null;
         const nextDraft =
           mode === "add"
             ? createDefaultSyncDraft(provider)
-            : sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft(provider));
+            : sanitizeAccountSyncDraft(editableConnection ?? createDefaultSyncDraft(provider));
 
         return nextDraft;
       })()
@@ -6409,7 +6336,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
     setYazanSyncFieldErrors({});
-    setYazanSyncDraft(sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft()));
+    setYazanSyncDraft(
+      sanitizeAccountSyncDraft(
+        yazanAccount?.provider === "tradesyncer" ? yazanAccount : createDefaultSyncDraft("tradesyncer")
+      )
+    );
   };
 
   const saveYazanSyncDraft = async () => {
@@ -6466,7 +6397,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const removeYazanAccount = () => {
     setYazanAccount(null);
     setYazanSyncDraftMode("add");
-    setYazanSyncDraft(createDefaultSyncDraft());
+    setYazanSyncDraft(createDefaultSyncDraft("tradesyncer"));
     setYazanSyncError(null);
     setYazanSyncSuccess(null);
     setYazanSyncFieldErrors({});
@@ -6661,7 +6592,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         setYazanSyncError(null);
         setYazanSyncSuccess(null);
         setYazanSyncFieldErrors({});
-        setYazanSyncDraft(sanitizeAccountSyncDraft(yazanAccount ?? createDefaultSyncDraft()));
+        setYazanSyncDraft(
+          sanitizeAccountSyncDraft(
+            yazanAccount?.provider === "tradesyncer" ? yazanAccount : createDefaultSyncDraft("tradesyncer")
+          )
+        );
       }
     };
 
@@ -9448,8 +9383,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                     <>
                       <div className="watchlist-head with-action">
                         <div>
-                          <h2>{yazanSyncDraftMode === "add" ? "Add Connection" : "Edit Connection"}</h2>
-                          <p>Connect a direct broker feed or save the TradeSyncer dashboard setup.</p>
+                          <h2>{yazanSyncDraftMode === "add" ? "Add TradeSyncer Setup" : "Edit TradeSyncer Setup"}</h2>
+                          <p>Save the setup that already exists inside TradeSyncer.</p>
                         </div>
                         <button
                           type="button"
@@ -9467,28 +9402,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                           void saveYazanSyncDraft();
                         }}
                       >
-                        <div className="sync-provider-switch" role="tablist" aria-label="Sync provider">
-                          <button
-                            type="button"
-                            className={`sync-provider-btn ${
-                              yazanSyncDraft.provider === "tradovate" ? "active" : ""
-                            }`}
-                            onClick={() => updateYazanSyncProvider("tradovate")}
-                            disabled={yazanSyncSaving}
-                          >
-                            {yazanSyncDraft.provider === "tradesyncer" ? "Direct Broker" : "Tradovate"}
-                          </button>
-                          <button
-                            type="button"
-                            className={`sync-provider-btn ${
-                              yazanSyncDraft.provider === "tradesyncer" ? "active" : ""
-                            }`}
-                            onClick={() => updateYazanSyncProvider("tradesyncer")}
-                            disabled={yazanSyncSaving}
-                          >
-                            TradeSyncer
-                          </button>
-                        </div>
                         <div className="sync-setup-flow" aria-label="Connection path">
                           <div className="sync-setup-head">
                             <span>Connection path</span>
@@ -9529,12 +9442,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <div className="sync-note-card sync-storage-card">
                           <strong>Storage</strong>
                           <p>
-                            Saved connections are stored in this browser so the admin panel can reopen them after
+                            Saved TradeSyncer setup references are stored in this browser so the admin panel can reopen them after
                             refresh.
                           </p>
                         </div>
                         <label className="account-editor-row">
-                          <span>Connection Label</span>
+                          <span>Local Label</span>
                           <input
                             className={`account-input ${
                               yazanSyncFieldErrors.connectionLabel ? "input-error" : ""
@@ -9543,32 +9456,34 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             onChange={(event) => {
                               updateYazanSyncDraft("connectionLabel", event.target.value);
                             }}
-                            placeholder={
-                              yazanSyncDraft.provider === "tradovate"
-                                ? "Yazan Tradovate"
-                                : "Yazan TradeSyncer"
-                            }
+                            placeholder="Yazan TradeSyncer"
                             disabled={yazanSyncSaving}
                           />
                           {yazanSyncFieldErrors.connectionLabel ? (
                             <small className="sync-field-error">{yazanSyncFieldErrors.connectionLabel}</small>
                           ) : null}
+                          <small className="sync-field-hint">
+                            A browser-only name for this saved setup.
+                          </small>
                         </label>
                         <label className="account-editor-row">
-                          <span>{yazanSyncDraft.provider === "tradesyncer" ? "Setup Name" : "Account Name"}</span>
+                          <span>TradeSyncer Setup Name</span>
                           <input
-                            className="account-input"
+                            className={`account-input ${yazanSyncFieldErrors.accountLabel ? "input-error" : ""}`}
                             value={yazanSyncDraft.accountLabel}
                             onChange={(event) => {
                               updateYazanSyncDraft("accountLabel", event.target.value);
                             }}
-                            placeholder={
-                              yazanSyncDraft.provider === "tradesyncer"
-                                ? "TradeSyncer Copy Group"
-                                : "Roman Capital Primary"
-                            }
+                            placeholder="Exact connection or Cockpit group name"
                             disabled={yazanSyncSaving}
                           />
+                          {yazanSyncFieldErrors.accountLabel ? (
+                            <small className="sync-field-error">{yazanSyncFieldErrors.accountLabel}</small>
+                          ) : null}
+                          <small className="sync-field-hint">
+                            Use the name you see in TradeSyncer so this reference maps to the right connection,
+                            account, or group.
+                          </small>
                         </label>
                         {yazanSyncDraft.provider === "tradovate" ? (
                           <>
@@ -9818,7 +9733,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         ) : (
                           <>
                             <label className="account-editor-row">
-                              <span>TradeSyncer Reference (optional)</span>
+                              <span>Account / Group Reference (optional)</span>
                               <input
                                 className={`account-input ${
                                   yazanSyncFieldErrors.accountNumber ? "input-error" : ""
@@ -9827,15 +9742,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 onChange={(event) => {
                                   updateYazanSyncDraft("accountNumber", event.target.value);
                                 }}
-                                placeholder="Optional: account, copy group, or connection name"
+                                placeholder="Optional account number, account name, or group"
                                 disabled={yazanSyncSaving}
                               />
                               {yazanSyncFieldErrors.accountNumber ? (
                                 <small className="sync-field-error">{yazanSyncFieldErrors.accountNumber}</small>
                               ) : null}
                               <small className="sync-field-hint">
-                                Use this only as a local label so you can match the saved setup to the TradeSyncer
-                                connection or copy group.
+                                Use this only as a local reference for the activated account, copied group, or lead
+                                account inside TradeSyncer.
                               </small>
                             </label>
                             <div className="sync-note-card">
@@ -9845,10 +9760,10 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 copying. This website only saves a local reference to that setup.
                               </p>
                               <ul className="sync-note-list">
-                                <li>Use the account that is already connected in TradeSyncer.</li>
+                                <li>Use a broker connection that is already Healthy or Connected in TradeSyncer.</li>
                                 <li>Activate the account in Connection Details before using it in Cockpit.</li>
                                 <li>Import the contracts you plan to trade so TradeSyncer can map orders correctly.</li>
-                                <li>Choose the leader and followers in Cockpit, then keep only one copier in control.</li>
+                                <li>Choose the leader and followers in Cockpit or Groups, then keep only one copier in control.</li>
                               </ul>
                               <div className="sync-doc-links">
                                 <a href={TRADESYNCER_APP_URL} target="_blank" rel="noreferrer">
@@ -9865,6 +9780,9 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                                 </a>
                                 <a href={TRADESYNCER_GROUPS_URL} target="_blank" rel="noreferrer">
                                   Groups
+                                </a>
+                                <a href={TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL} target="_blank" rel="noreferrer">
+                                  Troubleshoot
                                 </a>
                               </div>
                             </div>
@@ -10257,11 +10175,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             className="account-submit-btn account-editor-submit"
                             disabled={yazanSyncSaving}
                           >
-                            {yazanSyncSaving
-                              ? yazanSyncDraft.provider === "tradesyncer"
-                                ? "Saving..."
-                                : "Verifying..."
-                              : connectionSubmitLabel}
+                            {yazanSyncSaving ? "Saving..." : connectionSubmitLabel}
                           </button>
                         </div>
                       </form>
@@ -10278,8 +10192,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                             type="button"
                             className="panel-action-btn model-add-btn"
                             onClick={() => openYazanSyncDraft("add")}
-                            title="Add connection"
-                            aria-label="Add connection"
+                            title="Add TradeSyncer setup"
+                            aria-label="Add TradeSyncer setup"
                           >
                             <span aria-hidden>+</span>
                           </button>
@@ -10287,7 +10201,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </div>
                       {yazanSyncSuccess ? (
                         <div className="sync-note-card sync-status-card sync-status-card-success">
-                          <strong>Broker connection saved</strong>
+                          <strong>TradeSyncer setup saved</strong>
                           <p>{yazanSyncSuccess}</p>
                         </div>
                       ) : null}
@@ -10295,7 +10209,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                         <div className="sync-note-card sync-storage-card">
                           <strong>{yazanAccount.connectionState === "connected" ? "Connection healthy" : "Connection status"}</strong>
                           <p>{yazanAccount.connectionMessage}</p>
-                          <div className="sync-account-facts" aria-label="Connected broker account">
+                          <div className="sync-account-facts" aria-label="Saved TradeSyncer setup">
                             <span>Provider</span>
                             <strong>{getSyncProviderLabel(yazanAccount.provider)}</strong>
                             <span>Account</span>
@@ -10717,12 +10631,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                       </div>
                     </div>
                   )}
-                </div>
-              ) : null}
-
-              {activePanelTab === "tradovate" ? (
-                <div className="tab-view tradovate-tab">
-                  {showYazanSyncDraft ? renderTradovateEditor() : renderTradovateTrades()}
                 </div>
               ) : null}
 

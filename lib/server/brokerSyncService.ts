@@ -376,58 +376,26 @@ const validateDraft = (draft: AccountSyncDraft) => {
     });
   }
 
-  if (draft.provider === "tradovate") {
-    if (draft.accessMode === "api_key" && !draft.apiKey) {
-      throw new ProviderError("Tradovate needs an API key or security key.", {
+  if (draft.provider !== "tradesyncer") {
+    throw new ProviderError(
+      "Use the TradeSyncer setup path. This website no longer collects direct Tradovate credentials.",
+      {
         fieldErrors: {
-          apiKey: "Enter the Tradovate API key."
+          form: "Save the setup that already exists inside TradeSyncer."
         }
-      });
-    }
-
-    if (draft.accessMode === "api_key_password") {
-      const usesDemoPasswordLogin = usesTradovateDemoPasswordLogin(draft);
-
-      if (!draft.username) {
-        throw new ProviderError("Tradovate needs the account username for token requests.", {
-          fieldErrors: {
-            username: "Enter the Tradovate username."
-          }
-        });
       }
+    );
+  }
 
-      if (!draft.apiSecret) {
-        throw new ProviderError(
-          usesDemoPasswordLogin
-            ? "Tradovate Demo needs the account password."
-            : "Dedicated-password mode needs the dedicated password.",
-          {
-            fieldErrors: {
-              apiSecret: usesDemoPasswordLogin
-                ? "Enter the Tradovate Demo password."
-                : "Enter the Tradovate dedicated password."
-            }
-          }
-        );
+  if (!draft.accountLabel) {
+    throw new ProviderError("Add the TradeSyncer setup name before saving.", {
+      fieldErrors: {
+        accountLabel: "Enter the exact TradeSyncer connection or Cockpit group name."
       }
+    });
+  }
 
-      if (!usesDemoPasswordLogin && !draft.apiKey) {
-        throw new ProviderError("Tradovate Live needs an API key or security key.", {
-          fieldErrors: {
-            apiKey: "Enter the Tradovate API key."
-          }
-        });
-      }
-
-      if (!usesDemoPasswordLogin && !draft.appId) {
-        throw new ProviderError("Tradovate needs an App ID for access-token requests.", {
-          fieldErrors: {
-            appId: "Enter the Tradovate App ID."
-          }
-        });
-      }
-    }
-  } else if (!isTradesyncImportMode(draft)) {
+  if (!isTradesyncImportMode(draft)) {
     if (!draft.accountNumber) {
       throw new ProviderError("Trade Sync needs the MetaTrader account number.", {
         fieldErrors: {
@@ -1222,10 +1190,7 @@ export const verifyBrokerSyncConnection = async (
 
   try {
     validateDraft(draft);
-    const connection =
-      draft.provider === "tradovate"
-        ? await verifyTradovateConnection(draft)
-        : await verifyTradesyncerSetup(draft);
+    const connection = await verifyTradesyncerSetup(draft);
 
     return {
       ok: true,

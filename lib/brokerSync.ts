@@ -132,14 +132,14 @@ export const TRADESYNCER_TROUBLESHOOT_CONNECTIONS_URL =
   "https://help.tradesyncer.com/en/articles/13906150-troubleshoot-connections";
 
 export const createDefaultSyncDraft = (
-  provider: SyncProvider = "tradovate"
+  provider: SyncProvider = "tradesyncer"
 ): AccountSyncDraft => {
   if (provider === "tradesyncer") {
     return {
       provider,
       connectionLabel: "Yazan TradeSyncer",
       environment: "live",
-      accountLabel: "TradeSyncer Copy Group",
+      accountLabel: "",
       accountNumber: "",
       username: "",
       accessMode: "api_key_password",
