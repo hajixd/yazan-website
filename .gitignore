@@ -38,3 +38,4 @@ __pycache__/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.vercel
