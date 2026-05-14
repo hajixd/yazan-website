@@ -1616,13 +1616,130 @@ const createSimulationMarketMeta = (
   updatedAt: new Date(timestampMs).toISOString()
 });
 
+const LIVE_PRICE_DISLOCATION_RATIO = 0.025;
+const LIVE_PRICE_DISLOCATION_TICKS = 240;
+const LIVE_CANDLE_CONTIGUOUS_BUCKET_MULTIPLIER = 1.5;
+
+const isExtremePriceDislocation = (
+  referencePrice: number,
+  nextPrice: number,
+  tickSize: number
+) => {
+  if (
+    !Number.isFinite(referencePrice) ||
+    !Number.isFinite(nextPrice) ||
+    referencePrice <= 0 ||
+    nextPrice <= 0
+  ) {
+    return false;
+  }
+
+  const distance = Math.abs(nextPrice - referencePrice);
+  const maxExpectedDistance = Math.max(
+    Math.max(tickSize, 0.000001) * LIVE_PRICE_DISLOCATION_TICKS,
+    referencePrice * LIVE_PRICE_DISLOCATION_RATIO
+  );
+
+  return distance > maxExpectedDistance;
+};
+
+const repairCandleOutlierWicks = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  tickSize: number
+): Candle[] => {
+  if (candles.length < 2) {
+    return candles;
+  }
+
+  let changed = false;
+  const timeframeMs = getTimeframeMs(timeframe);
+  const repaired = candles.map((candle, index) => {
+    const previous = candles[index - 1];
+    const next = candles[index + 1];
+
+    if (!previous) {
+      return candle;
+    }
+
+    const bodyHigh = Math.max(candle.open, candle.close);
+    const bodyLow = Math.min(candle.open, candle.close);
+    const neighborHigh = Math.max(
+      previous.close,
+      next?.open ?? bodyHigh,
+      next?.close ?? bodyHigh,
+      bodyHigh
+    );
+    const neighborLow = Math.min(
+      previous.close,
+      next?.open ?? bodyLow,
+      next?.close ?? bodyLow,
+      bodyLow
+    );
+    const maxReference = Math.max(bodyHigh, neighborHigh);
+    const minReference = Math.min(bodyLow, neighborLow);
+    const inheritedStaleOpen =
+      candle.time - previous.time > timeframeMs * LIVE_CANDLE_CONTIGUOUS_BUCKET_MULTIPLIER &&
+      !isExtremePriceDislocation(previous.close, candle.open, tickSize) &&
+      isExtremePriceDislocation(previous.close, candle.close, tickSize);
+    const highIsOutlier =
+      candle.high > neighborHigh &&
+      isExtremePriceDislocation(maxReference, candle.high, tickSize);
+    const lowIsOutlier =
+      candle.low < neighborLow &&
+      isExtremePriceDislocation(minReference, candle.low, tickSize);
+
+    if (!highIsOutlier && !lowIsOutlier && !inheritedStaleOpen) {
+      return candle;
+    }
+
+    changed = true;
+
+    if (inheritedStaleOpen) {
+      return {
+        ...candle,
+        open: candle.close,
+        high: candle.close,
+        low: candle.close
+      };
+    }
+
+    return {
+      ...candle,
+      open: candle.open,
+      high:
+        highIsOutlier
+          ? Math.max(
+              bodyHigh,
+              roundToTick(neighborHigh, tickSize)
+            )
+          : candle.high,
+      low:
+        lowIsOutlier
+          ? Math.min(
+              bodyLow,
+              roundToTick(neighborLow, tickSize)
+            )
+          : candle.low
+    };
+  });
+
+  return changed ? repaired : candles;
+};
+
 const applyLiveTradeToCandles = (
   activeSeries: Candle[],
   tradePrice: number,
   tradeTime: number,
-  timeframe: Timeframe
+  timeframe: Timeframe,
+  tickSize: number
 ): Candle[] | null => {
-  if (activeSeries.length === 0) {
+  if (
+    activeSeries.length === 0 ||
+    !Number.isFinite(tradePrice) ||
+    tradePrice <= 0 ||
+    !Number.isFinite(tradeTime)
+  ) {
     return null;
   }
 
@@ -1633,8 +1750,24 @@ const applyLiveTradeToCandles = (
     return null;
   }
 
+  const timeframeMs = getTimeframeMs(timeframe);
+  const bucketGapMs = tradeBucketTime - latestSeriesCandle.time;
+  const isSameBucket = latestSeriesCandle.time === tradeBucketTime;
+  const isContiguousBucket = bucketGapMs <= timeframeMs * LIVE_CANDLE_CONTIGUOUS_BUCKET_MULTIPLIER;
+  const hasExtremeJump = isExtremePriceDislocation(
+    latestSeriesCandle.close,
+    tradePrice,
+    tickSize
+  );
+
+  if (isSameBucket && hasExtremeJump) {
+    return null;
+  }
+
+  const shouldSeedFromLivePrice = !isContiguousBucket || hasExtremeJump;
+  const newCandleOpen = shouldSeedFromLivePrice ? tradePrice : latestSeriesCandle.close;
   const nextLiveCandle =
-    latestSeriesCandle.time === tradeBucketTime
+    isSameBucket
       ? {
           ...latestSeriesCandle,
           high: Math.max(latestSeriesCandle.high, tradePrice),
@@ -1643,9 +1776,9 @@ const applyLiveTradeToCandles = (
         }
       : {
           time: tradeBucketTime,
-          open: latestSeriesCandle.close,
-          high: Math.max(latestSeriesCandle.close, tradePrice),
-          low: Math.min(latestSeriesCandle.close, tradePrice),
+          open: newCandleOpen,
+          high: Math.max(newCandleOpen, tradePrice),
+          low: Math.min(newCandleOpen, tradePrice),
           close: tradePrice
         };
 
@@ -2843,7 +2976,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           return;
         }
 
-        const nextCandles = Array.isArray(payload.candles) ? payload.candles : [];
+        const nextCandles = repairCandleOutlierWicks(
+          Array.isArray(payload.candles) ? payload.candles : [],
+          selectedTimeframe,
+          selectedAsset.tickSize
+        );
 
         if (nextCandles.length === 0) {
           throw new Error("Databento returned no candles for this contract.");
@@ -2888,6 +3025,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     clearMarketClock,
     referenceNowMs,
     selectedAsset.basePrice,
+    selectedAsset.tickSize,
     selectedKey,
     selectedSymbol,
     selectedTimeframe,
@@ -2991,7 +3129,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
               throw new Error(`No candles returned for ${symbol}.`);
             }
 
-            return candles;
+            return repairCandleOutlierWicks(
+              candles,
+              selectedTimeframe,
+              getAssetBySymbol(symbol).tickSize
+            );
           } catch (error) {
             if (cancelled || signal.aborted) {
               throw error;
@@ -3186,7 +3328,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           const key = symbolTimeframeKey(selectedSymbol, timeframe);
 
           if (result.status === "fulfilled" && result.value.candles.length > 0) {
-            next[key] = result.value.candles;
+            next[key] = repairCandleOutlierWicks(
+              result.value.candles,
+              timeframe,
+              selectedAsset.tickSize
+            );
           }
         });
 
@@ -3198,11 +3344,14 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       cancelled = true;
       controller.abort();
     };
-  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, showcaseMode]);
+  }, [referenceNowMs, selectedAsset.basePrice, selectedAsset.tickSize, selectedSymbol, showcaseMode]);
 
   const loadedSelectedCandles = seriesMap[selectedKey];
   const selectedCandles = useMemo(() => loadedSelectedCandles ?? [], [loadedSelectedCandles]);
-  const renderedSelectedCandles = selectedCandles;
+  const renderedSelectedCandles = useMemo(
+    () => repairCandleOutlierWicks(selectedCandles, selectedTimeframe, selectedAsset.tickSize),
+    [selectedAsset.tickSize, selectedCandles, selectedTimeframe]
+  );
   const canDrawOnChart = renderedSelectedCandles.length > 0;
   const selectedDrawing = useMemo(() => {
     return currentChartDrawings.find((drawing) => drawing.id === selectedDrawingId) ?? null;
@@ -3750,7 +3899,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
           activeSeries,
           payload.price,
           payload.time,
-          selectedTimeframe
+          selectedTimeframe,
+          selectedAsset.tickSize
         );
 
         if (!nextSeries) {
@@ -5316,7 +5466,11 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         beforeMs: earliestCandle.time
       })
         .then((payload) => {
-          const olderCandles = Array.isArray(payload.candles) ? payload.candles : [];
+          const olderCandles = repairCandleOutlierWicks(
+            Array.isArray(payload.candles) ? payload.candles : [],
+            selectedTimeframe,
+            selectedAsset.tickSize
+          );
 
           if (olderCandles.length === 0) {
             chartBackfillExhaustedRef.current[selectedKey] = true;
@@ -5370,7 +5524,15 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     return () => {
       timeScale.unsubscribeVisibleLogicalRangeChange(requestEarlierCandles);
     };
-  }, [chartReadyVersion, loadedSelectedCandles, selectedKey, selectedSymbol, selectedTimeframe, showcaseMode]);
+  }, [
+    chartReadyVersion,
+    loadedSelectedCandles,
+    selectedAsset.tickSize,
+    selectedKey,
+    selectedSymbol,
+    selectedTimeframe,
+    showcaseMode
+  ]);
 
   useEffect(() => {
     const overlay = countdownOverlayRef.current;
